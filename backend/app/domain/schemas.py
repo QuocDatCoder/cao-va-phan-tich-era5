@@ -36,6 +36,85 @@ class TimeSeriesResponse(BaseModel):
     data: list[ClimatePoint]
 
 
+class StatisticsResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    mean: float
+    min: float
+    max: float
+    std: float
+    count: int
+
+
+class TrendResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    slope: float
+    direction: Literal["increasing", "decreasing", "stable"]
+    period: str
+    count: int
+
+
+class AnomalyPoint(BaseModel):
+    time: datetime
+    value: float
+    anomaly: float
+
+
+class AnomalyResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    baseline_start: datetime
+    baseline_end: datetime
+    baseline_mean: float
+    data: list[AnomalyPoint]
+
+
+class ComparePeriodSummary(BaseModel):
+    start: datetime
+    end: datetime
+    mean: float
+    count: int
+
+
+class CompareResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    period_a: ComparePeriodSummary
+    period_b: ComparePeriodSummary
+    difference: float
+
+
+class HeatmapCell(BaseModel):
+    year: int
+    month: int
+    value: float
+    count: int
+
+
+class HeatmapResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    data: list[HeatmapCell]
+
+
+class MapPoint(BaseModel):
+    latitude: float
+    longitude: float
+    value: float
+
+
+class MapResponse(BaseModel):
+    variable: str
+    unit: str
+    data: list[MapPoint]
+
+
 class DownloadArea(BaseModel):
     north: float = Field(ge=-90, le=90)
     west: float = Field(ge=-180, le=180)

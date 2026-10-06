@@ -33,6 +33,19 @@ cao-va-phan-tich-era5/
 
 ## ⚡ HƯỚNG DẪN CHẠY ỨNG DỤNG
 
+### FastAPI backend
+```powershell
+uvicorn backend.app.main:app --reload
+```
+
+### Streamlit dashboard
+Dashboard Phase 7 communicates only with the FastAPI backend.
+
+```powershell
+$env:API_BASE_URL="http://localhost:8000"
+streamlit run frontend/dashboard.py
+```
+
 ### Cách 1: Khởi động Web App cực nhanh (Khuyên dùng)
 👉 **Click đúp chuột vào file `run_app.bat`**  
 Ứng dụng sẽ tự động bật trình duyệt web tại địa chỉ: `http://localhost:8501`.

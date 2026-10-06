@@ -21,11 +21,13 @@ __pycache__/
 # CSDL & Dữ liệu lớn
 data/weather.db*
 data/raw/
+data/cache/
 *.zip
 *.download
 
 # File cấu hình bảo mật cá nhân (chứa API Key)
 .cdsapirc
+.env
 
 # IDE & OS
 .vscode/

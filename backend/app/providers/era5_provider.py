@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +8,13 @@ import numpy as np
 import xarray as xr
 
 from backend.app.core.config import Settings
-from backend.app.domain.schemas import ClimatePoint, Location, TimeSeriesResponse
+from backend.app.domain.schemas import (
+    ClimatePoint,
+    DownloadArea,
+    DownloadArtifact,
+    Location,
+    TimeSeriesResponse,
+)
 from backend.app.providers.base import ClimateDataProvider
 from backend.app.providers.errors import (
     ClimateConfigurationError,
@@ -110,6 +116,47 @@ class ERA5ClimateProvider(ClimateDataProvider):
             data=points,
         )
 
+    def download_area(
+        self,
+        variable: str,
+        area: DownloadArea,
+        start_date: date,
+        end_date: date,
+        frequency: str,
+    ) -> DownloadArtifact:
+        if end_date < start_date:
+            raise ValueError("end_date must be greater than or equal to start_date")
+        if frequency != "hourly":
+            raise ClimateDataError("Only hourly ERA5 downloads are supported.")
+
+        variable_spec = self._get_variable(variable)
+        self._validate_time_range(
+            start=datetime.combine(start_date, time.min),
+            end=datetime.combine(end_date, time.max),
+        )
+        target_path = self._area_target_path(
+            variable=variable_spec.cds_name,
+            area=area,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if not target_path.exists():
+            request = self._build_area_request(
+                variable_spec=variable_spec,
+                area=area,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            self._retrieve(request=request, target_path=target_path)
+
+        return DownloadArtifact(
+            file_path=target_path,
+            storage_path=target_path.relative_to(self._settings.data_dir).as_posix(),
+            dataset=self._settings.era5_dataset,
+            variable=variable_spec.cds_name,
+        )
+
     def _get_variable(self, variable: str) -> Era5Variable:
         try:
             return ERA5_VARIABLES[variable]
@@ -148,15 +195,9 @@ class ERA5ClimateProvider(ClimateDataProvider):
         )
 
         try:
-            client = self._client_factory(self._settings)
-            client.retrieve(self._settings.era5_dataset, request, str(target_path))
+            self._retrieve(request=request, target_path=target_path)
         except ClimateProviderError:
             raise
-        except Exception as exc:
-            raise ClimateProviderError("ERA5 data request failed.") from exc
-
-        if not target_path.exists():
-            raise ClimateDataError("ERA5 request completed but no NetCDF file was created.")
 
     def _ensure_configured(self) -> None:
         if not self._settings.cds_url or not self._settings.cds_api_key:
@@ -182,6 +223,46 @@ class ERA5ClimateProvider(ClimateDataProvider):
             "download_format": "unarchived",
             "area": self._area_for_point(latitude=latitude, longitude=longitude),
         }
+
+    def _build_area_request(
+        self,
+        variable_spec: Era5Variable,
+        area: DownloadArea,
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, Any]:
+        return {
+            "product_type": ["reanalysis"],
+            "variable": [variable_spec.cds_name],
+            "date": self._date_parts(
+                start=datetime.combine(start_date, time.min),
+                end=datetime.combine(end_date, time.min),
+            ),
+            "time": [f"{hour:02d}:00" for hour in range(24)],
+            "data_format": "netcdf",
+            "download_format": "unarchived",
+            "area": [
+                round(area.north, 4),
+                round(area.west, 4),
+                round(area.south, 4),
+                round(area.east, 4),
+            ],
+        }
+
+    def _retrieve(self, request: dict[str, Any], target_path: Path) -> None:
+        self._ensure_configured()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            client = self._client_factory(self._settings)
+            client.retrieve(self._settings.era5_dataset, request, str(target_path))
+        except ClimateProviderError:
+            raise
+        except Exception as exc:
+            raise ClimateProviderError("ERA5 data request failed.") from exc
+
+        if not target_path.exists():
+            raise ClimateDataError("ERA5 request completed but no NetCDF file was created.")
 
     def _date_parts(self, start: datetime, end: datetime) -> list[str]:
         days = np.arange(
@@ -315,6 +396,29 @@ class ERA5ClimateProvider(ClimateDataProvider):
             f"lat{latitude:.4f}_lon{longitude:.4f}.nc"
         )
         return self._settings.raw_era5_dir / safe_variable / filename
+
+    def _area_target_path(
+        self,
+        variable: str,
+        area: DownloadArea,
+        start_date: date,
+        end_date: date,
+    ) -> Path:
+        safe_variable = variable.replace("/", "_")
+        filename = (
+            f"{start_date.isoformat()}_{end_date.isoformat()}_"
+            f"{self._bbox_slug(area)}.nc"
+        )
+        return self._settings.raw_era5_dir / safe_variable / str(start_date.year) / filename
+
+    def _bbox_slug(self, area: DownloadArea) -> str:
+        return (
+            f"bbox_s{self._safe_number(area.south)}_w{self._safe_number(area.west)}_"
+            f"n{self._safe_number(area.north)}_e{self._safe_number(area.east)}"
+        )
+
+    def _safe_number(self, value: float) -> str:
+        return f"{value:.4f}".rstrip("0").rstrip(".").replace("-", "m").replace(".", "p")
 
     def _default_client_factory(self, settings: Settings) -> Any:
         import cdsapi

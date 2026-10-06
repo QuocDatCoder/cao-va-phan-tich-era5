@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from shutil import copyfile
 
@@ -7,6 +7,7 @@ import pytest
 import xarray as xr
 
 from backend.app.core.config import Settings, get_settings
+from backend.app.domain.schemas import DownloadArea
 from backend.app.providers.dependencies import get_climate_provider
 from backend.app.providers.era5_provider import ERA5ClimateProvider
 from backend.app.providers.errors import (
@@ -157,6 +158,34 @@ def test_era5_provider_reads_netcdf4_backend_file(tmp_path: Path) -> None:
     )
 
     assert [point.value for point in response.data] == [300.0, 302.0]
+
+
+def test_era5_provider_download_area_uses_bbox_request_and_returns_metadata(tmp_path: Path) -> None:
+    source = tmp_path / "source.nc"
+    write_dataset(source)
+    client = CopyingClient(source)
+    provider = ERA5ClimateProvider(
+        settings=make_settings(tmp_path),
+        client_factory=lambda _: client,
+    )
+
+    artifact = provider.download_area(
+        variable="2m_temperature",
+        area=DownloadArea(north=11, west=106, south=10, east=107),
+        start_date=date(2025, 1, 1),
+        end_date=date(2025, 1, 2),
+        frequency="hourly",
+    )
+
+    assert artifact.file_path.exists()
+    assert artifact.dataset == "reanalysis-era5-single-levels"
+    assert artifact.variable == "2m_temperature"
+    assert artifact.storage_path == (
+        "raw/era5/2m_temperature/2025/"
+        "2025-01-01_2025-01-02_bbox_s10_w106_n11_e107.nc"
+    )
+    assert client.calls[0][1]["area"] == [11, 106, 10, 107]
+    assert client.calls[0][1]["date"] == ["2025-01-01", "2025-01-02"]
 
 
 @pytest.mark.parametrize(

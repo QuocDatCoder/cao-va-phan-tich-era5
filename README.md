@@ -83,6 +83,6 @@ df_result = database.execute_custom_sql_for_ai(ai_sql)
 File cấu hình đã được tạo tự động tại `C:\Users\XXXXXX\.cdsapirc`:
 ```text
 url: https://cds.climate.copernicus.eu/api
-key: 5f0718d4-be68-49a9-bcec-477d480af6cc
+key: <YOUR_CDS_API_KEY>
 ```
 Đã kiểm tra kết nối và tải thành công dữ liệu thật từ máy chủ ECMWF Châu Âu.

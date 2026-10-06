@@ -11,4 +11,4 @@ def get_climate_provider() -> ClimateDataProvider:
     settings = get_settings()
     if settings.climate_provider == "era5":
         return ERA5ClimateProvider(settings=settings)
-    return MockClimateProvider()
+    return MockClimateProvider(data_dir=settings.data_dir)

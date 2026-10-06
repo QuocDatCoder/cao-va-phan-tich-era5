@@ -22,6 +22,10 @@ __pycache__/
 data/weather.db*
 data/raw/
 data/cache/
+data/processed/
+data/*.html
+data/*.sqlite*
+data/*.db*
 *.zip
 *.download
 

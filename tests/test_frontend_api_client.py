@@ -85,21 +85,21 @@ def test_client_raises_user_friendly_error_for_backend_5xx_without_detail() -> N
     session = FakeSession(response=FakeResponse({}, 500))
     client = DashboardApiClient(session=session)
 
-    with pytest.raises(DashboardApiError, match="status 500"):
+    with pytest.raises(DashboardApiError, match="mã 500"):
         client.get_statistics({})
 
 
 def test_client_handles_connection_error() -> None:
     client = DashboardApiClient(session=FakeSession(error=requests.ConnectionError("no route")))
 
-    with pytest.raises(DashboardApiError, match="Backend is unavailable"):
+    with pytest.raises(DashboardApiError, match="Không kết nối"):
         client.health()
 
 
 def test_client_handles_timeout() -> None:
     client = DashboardApiClient(session=FakeSession(error=requests.Timeout("slow")))
 
-    with pytest.raises(DashboardApiError, match="timed out after"):
+    with pytest.raises(DashboardApiError, match="quá thời gian chờ"):
         client.health()
 
 
@@ -113,5 +113,5 @@ def test_client_default_timeout_allows_slow_era5_requests() -> None:
 def test_client_handles_malformed_json() -> None:
     client = DashboardApiClient(session=FakeSession(response=FakeResponse({}, json_error=True)))
 
-    with pytest.raises(DashboardApiError, match="invalid response"):
+    with pytest.raises(DashboardApiError, match="phản hồi không hợp lệ"):
         client.health()

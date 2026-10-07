@@ -57,7 +57,7 @@ class DashboardApiClient:
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
-            raise DashboardApiError("Backend is unavailable.") from exc
+            raise DashboardApiError("Không kết nối được tới máy chủ API.") from exc
         return self._decode_response(response)
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -70,25 +70,25 @@ class DashboardApiClient:
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
-            raise DashboardApiError("Backend is unavailable.") from exc
+            raise DashboardApiError("Không kết nối được tới máy chủ API.") from exc
         return self._decode_response(response)
 
     def _decode_response(self, response: requests.Response) -> dict[str, Any]:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise DashboardApiError("Backend returned an invalid response.") from exc
+            raise DashboardApiError("Máy chủ API trả về phản hồi không hợp lệ.") from exc
 
         if not response.ok:
             detail = payload.get("detail") if isinstance(payload, dict) else None
             if isinstance(detail, list):
-                detail = "Invalid request. Check the selected filters."
+                detail = "Yêu cầu không hợp lệ. Vui lòng kiểm tra bộ lọc đã chọn."
             if not isinstance(detail, str) or not detail:
-                detail = f"Backend request failed with status {response.status_code}."
+                detail = f"Yêu cầu tới máy chủ API thất bại với mã {response.status_code}."
             raise DashboardApiError(detail)
 
         if not isinstance(payload, dict):
-            raise DashboardApiError("Backend returned an unexpected response.")
+            raise DashboardApiError("Máy chủ API trả về phản hồi ngoài dự kiến.")
         return payload
 
     def _url(self, path: str) -> str:
@@ -99,7 +99,7 @@ class DashboardApiClient:
 
     def _timeout_message(self) -> str:
         return (
-            f"Backend request timed out after {self.timeout_seconds:g} seconds. "
-            "ERA5 requests can take longer the first time; increase API_TIMEOUT_SECONDS "
-            "or create a download job first."
+            f"Yêu cầu tới máy chủ API đã quá thời gian chờ sau {self.timeout_seconds:g} giây. "
+            "Yêu cầu ERA5 lần đầu có thể lâu hơn; hãy tăng API_TIMEOUT_SECONDS "
+            "hoặc tạo tác vụ tải dữ liệu trước."
         )

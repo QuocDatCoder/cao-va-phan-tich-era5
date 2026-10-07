@@ -17,10 +17,10 @@ def timeseries_frame(payload: dict[str, Any]) -> pd.DataFrame:
 def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
     frame = timeseries_frame(payload)
     unit = payload.get("unit", "")
-    variable = payload.get("variable", "value")
+    variable = payload.get("variable", "giá trị")
     fig = px.line(frame, x="time", y="value", markers=True)
     fig.update_layout(
-        xaxis_title="Time",
+        xaxis_title="Thời gian",
         yaxis_title=f"{variable} ({unit})" if unit else variable,
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
@@ -37,8 +37,8 @@ def anomaly_figure(payload: dict[str, Any]) -> go.Figure:
     unit = payload.get("unit", "")
     fig = px.bar(frame, x="time", y="anomaly")
     fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title=f"Anomaly ({unit})" if unit else "Anomaly",
+        xaxis_title="Thời gian",
+        yaxis_title=f"Độ lệch ({unit})" if unit else "Độ lệch",
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
     return fig
@@ -47,15 +47,15 @@ def anomaly_figure(payload: dict[str, Any]) -> go.Figure:
 def comparison_figure(payload: dict[str, Any]) -> go.Figure:
     frame = pd.DataFrame(
         [
-            {"period": "Period A", "mean": payload.get("period_a", {}).get("mean")},
-            {"period": "Period B", "mean": payload.get("period_b", {}).get("mean")},
+            {"period": "Giai đoạn A", "mean": payload.get("period_a", {}).get("mean")},
+            {"period": "Giai đoạn B", "mean": payload.get("period_b", {}).get("mean")},
         ]
     )
     unit = payload.get("unit", "")
     fig = px.bar(frame, x="period", y="mean", text="mean")
     fig.update_layout(
-        xaxis_title="Period",
-        yaxis_title=f"Mean ({unit})" if unit else "Mean",
+        xaxis_title="Giai đoạn",
+        yaxis_title=f"Trung bình ({unit})" if unit else "Trung bình",
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
     return fig
@@ -73,7 +73,7 @@ def heatmap_figure(payload: dict[str, Any]) -> go.Figure:
     unit = payload.get("unit", "")
     fig = px.imshow(
         pivot,
-        labels={"x": "Month", "y": "Year", "color": unit or "Value"},
+        labels={"x": "Tháng", "y": "Năm", "color": unit or "Giá trị"},
         aspect="auto",
     )
     fig.update_layout(margin={"l": 10, "r": 10, "t": 30, "b": 10})
@@ -90,7 +90,7 @@ def map_figure(payload: dict[str, Any]) -> go.Figure:
         "lon": float(frame["longitude"].mean()) if not frame.empty else 106.6297,
     }
     unit = payload.get("unit", "")
-    colorbar_title = f"value ({unit})" if unit else "value"
+    colorbar_title = f"giá trị ({unit})" if unit else "giá trị"
 
     lat_padding = 1.0
     lon_padding = 1.0

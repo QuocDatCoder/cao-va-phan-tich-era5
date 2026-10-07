@@ -1,4 +1,5 @@
 from functools import lru_cache
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -19,6 +20,18 @@ class Settings(BaseSettings):
     era5_dataset: str = "reanalysis-era5-single-levels"
     era5_max_days_per_request: int = Field(default=7, ge=1, le=31)
     era5_point_buffer_degrees: float = Field(default=0.25, gt=0, le=2)
+
+    era5_sync_enabled: bool = False
+    era5_sync_interval_hours: int = Field(default=6, ge=1)
+    era5_sync_availability_lag_days: int = Field(default=5, ge=0)
+    era5_sync_max_days_per_run: int = Field(default=7, ge=1, le=31)
+    era5_sync_variable: str = "2m_temperature"
+    era5_sync_start_date: date = date(2025, 1, 1)
+    era5_sync_area_north: float = Field(default=11.0, ge=-90, le=90)
+    era5_sync_area_west: float = Field(default=106.0, ge=-180, le=180)
+    era5_sync_area_south: float = Field(default=10.0, ge=-90, le=90)
+    era5_sync_area_east: float = Field(default=107.0, ge=-180, le=180)
+    era5_sync_frequency: Literal["hourly"] = "hourly"
 
     @property
     def raw_era5_dir(self) -> Path:

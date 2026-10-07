@@ -179,3 +179,43 @@ class DownloadJob(BaseModel):
     dataset: str | None = None
     file_path: str | None = None
     error: str | None = None
+
+
+class SynchronizationStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    UP_TO_DATE = "up_to_date"
+    FAILED = "failed"
+
+
+class SynchronizationRequest(BaseModel):
+    variable: str = Field(min_length=1)
+    start_date: date
+    area: DownloadArea
+    frequency: Literal["hourly"] = "hourly"
+    latest_available_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_latest_available_date(self) -> "SynchronizationRequest":
+        if self.latest_available_date is not None and self.latest_available_date < self.start_date:
+            raise ValueError("latest_available_date must be greater than or equal to start_date")
+        return self
+
+
+class SynchronizationState(BaseModel):
+    sync_id: str
+    variable: str
+    start_date: date
+    area: DownloadArea
+    frequency: Literal["hourly"]
+    latest_available_date: date | None = None
+    last_synced_date: date | None = None
+    job_start_date: date | None = None
+    job_end_date: date | None = None
+    job_id: str | None = None
+    status: SynchronizationStatus
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None

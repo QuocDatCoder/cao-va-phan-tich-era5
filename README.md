@@ -46,6 +46,25 @@ $env:API_BASE_URL="http://localhost:8000"
 streamlit run frontend/dashboard.py
 ```
 
+### Phase 8 ERA5 synchronization
+Phase 8 adds near-real-time synchronization with newly available ERA5 data through the FastAPI service layer. The scheduler is disabled by default for offline-safe development. Enable it with environment variables:
+
+```powershell
+$env:ERA5_SYNC_ENABLED="true"
+$env:ERA5_SYNC_INTERVAL_HOURS="6"
+$env:ERA5_SYNC_MAX_DAYS_PER_RUN="7"
+uvicorn backend.app.main:app --reload
+```
+
+Manual synchronization is also available through the API:
+
+```http
+POST /api/v1/synchronization/run
+GET  /api/v1/synchronization/status/{sync_id}
+```
+
+The synchronization endpoint creates or reuses backend download jobs and stores sync metadata in the existing SQLite metadata database. Normal tests use the mock provider and do not call live CDS.
+
 ### Cách 1: Khởi động Web App cực nhanh (Khuyên dùng)
 👉 **Click đúp chuột vào file `run_app.bat`**  
 Ứng dụng sẽ tự động bật trình duyệt web tại địa chỉ: `http://localhost:8501`.

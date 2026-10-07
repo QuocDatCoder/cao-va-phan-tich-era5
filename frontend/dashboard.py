@@ -1,5 +1,4 @@
 import os
-from datetime import date
 from typing import Any, Callable
 
 import pandas as pd
@@ -45,43 +44,100 @@ def main() -> None:
 
     tabs = st.tabs(
         [
+            "Overview",
             "Time Series",
-            "Statistics",
-            "Trend",
-            "Anomaly",
-            "Comparison",
-            "Heatmap",
-            "Map",
-            "Downloads",
+            "Spatial",
+            "Data Jobs",
         ]
     )
 
     with tabs[0]:
-        _render_timeseries(client, params)
+        _render_overview(client, params, comparison_params)
     with tabs[1]:
-        _render_statistics(client, params)
+        _render_temporal_analysis(client, params, baseline_params)
     with tabs[2]:
-        _render_trend(client, params)
-    with tabs[3]:
-        _render_anomaly(client, params, baseline_params)
-    with tabs[4]:
-        _render_comparison(client, params, comparison_params)
-    with tabs[5]:
-        _render_heatmap(client, params)
-    with tabs[6]:
         _render_map(client, params)
-    with tabs[7]:
+    with tabs[3]:
         _render_downloads(client, params)
 
 
-def _render_timeseries(client: DashboardApiClient, params: dict[str, Any]) -> None:
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key: tuple) -> dict[str, Any]:
+    client = DashboardApiClient(base_url=base_url, timeout_seconds=timeout_seconds)
+    params = dict(params_key)
+    if endpoint == "timeseries":
+        return client.get_timeseries(params)
+    if endpoint == "statistics":
+        return client.get_statistics(params)
+    if endpoint == "trend":
+        return client.get_trend(params)
+    if endpoint == "anomaly":
+        return client.get_anomaly(params)
+    if endpoint == "compare":
+        return client.get_compare(params)
+    if endpoint == "heatmap":
+        return client.get_heatmap(params)
+    if endpoint == "map":
+        return client.get_map(params)
+    raise DashboardApiError(f"Unsupported dashboard endpoint: {endpoint}")
+
+
+def _params_key(params: dict[str, Any]) -> tuple:
+    return tuple(sorted(params.items()))
+
+
+def _load_cached(client: DashboardApiClient, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+    return _cached_get(
+        base_url=client.base_url,
+        timeout_seconds=client.timeout_seconds,
+        endpoint=endpoint,
+        params_key=_params_key(params),
+    )
+
+
+def _render_overview(
+    client: DashboardApiClient,
+    params: dict[str, Any],
+    comparison_params: dict[str, str],
+) -> None:
+    st.subheader("Overview")
+    left, right = st.columns([3, 2])
+    with left:
+        _render_statistics(client, params)
+    with right:
+        _render_trend(client, params)
+    st.divider()
+    _render_comparison(client, params, comparison_params)
+
+
+def _render_temporal_analysis(
+    client: DashboardApiClient,
+    params: dict[str, Any],
+    baseline_params: dict[str, str],
+) -> None:
     st.subheader("Time series")
-    if st.button("Load time series", key="load_timeseries"):
-        _run_request(
-            "Time series",
-            lambda: client.get_timeseries(params),
-            lambda payload: _show_timeseries(payload),
-        )
+    _render_timeseries(client, params, show_title=False)
+    st.divider()
+    _render_anomaly(client, params, baseline_params)
+    st.divider()
+    _render_heatmap(client, params)
+
+
+def _render_timeseries(
+    client: DashboardApiClient,
+    params: dict[str, Any],
+    show_title: bool = True,
+) -> None:
+    if show_title:
+        st.subheader("Time series")
+    _run_request(
+        "Time series",
+        lambda: _load_cached(client, "timeseries", params),
+        lambda payload: _show_timeseries(payload),
+    )
+    if st.button("Refresh time series", key="refresh_timeseries"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_timeseries(payload: dict[str, Any]) -> None:
@@ -94,12 +150,14 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
 
 def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Statistics")
-    if st.button("Load statistics", key="load_statistics"):
-        _run_request(
-            "Statistics",
-            lambda: client.get_statistics(params),
-            lambda payload: _show_statistics(payload),
-        )
+    _run_request(
+        "Statistics",
+        lambda: _load_cached(client, "statistics", params),
+        lambda payload: _show_statistics(payload),
+    )
+    if st.button("Refresh statistics", key="refresh_statistics"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_statistics(payload: dict[str, Any]) -> None:
@@ -112,12 +170,14 @@ def _show_statistics(payload: dict[str, Any]) -> None:
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Trend")
-    if st.button("Load trend", key="load_trend"):
-        _run_request(
-            "Trend",
-            lambda: client.get_trend(params),
-            lambda payload: _show_trend(payload),
-        )
+    _run_request(
+        "Trend",
+        lambda: _load_cached(client, "trend", params),
+        lambda payload: _show_trend(payload),
+    )
+    if st.button("Refresh trend", key="refresh_trend"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_trend(payload: dict[str, Any]) -> None:
@@ -134,13 +194,15 @@ def _render_anomaly(
     baseline_params: dict[str, str],
 ) -> None:
     st.subheader("Anomaly")
-    if st.button("Load anomaly", key="load_anomaly"):
-        request_params = {**params, **baseline_params}
-        _run_request(
-            "Anomaly",
-            lambda: client.get_anomaly(request_params),
-            lambda payload: _show_anomaly(payload),
-        )
+    request_params = {**params, **baseline_params}
+    _run_request(
+        "Anomaly",
+        lambda: _load_cached(client, "anomaly", request_params),
+        lambda payload: _show_anomaly(payload),
+    )
+    if st.button("Refresh anomaly", key="refresh_anomaly"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_anomaly(payload: dict[str, Any]) -> None:
@@ -158,20 +220,22 @@ def _render_comparison(
     comparison_params: dict[str, str],
 ) -> None:
     st.subheader("Period comparison")
-    if st.button("Compare periods", key="load_compare"):
-        request_params = {
-            "variable": params["variable"],
-            "latitude": params["latitude"],
-            "longitude": params["longitude"],
-            "period_a_start": params["start"],
-            "period_a_end": params["end"],
-            **comparison_params,
-        }
-        _run_request(
-            "Comparison",
-            lambda: client.get_compare(request_params),
-            lambda payload: _show_comparison(payload),
-        )
+    request_params = {
+        "variable": params["variable"],
+        "latitude": params["latitude"],
+        "longitude": params["longitude"],
+        "period_a_start": params["start"],
+        "period_a_end": params["end"],
+        **comparison_params,
+    }
+    _run_request(
+        "Comparison",
+        lambda: _load_cached(client, "compare", request_params),
+        lambda payload: _show_comparison(payload),
+    )
+    if st.button("Refresh comparison", key="refresh_compare"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_comparison(payload: dict[str, Any]) -> None:
@@ -182,12 +246,14 @@ def _show_comparison(payload: dict[str, Any]) -> None:
 
 def _render_heatmap(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Month-by-year heatmap")
-    if st.button("Load heatmap", key="load_heatmap"):
-        _run_request(
-            "Heatmap",
-            lambda: client.get_heatmap(params),
-            lambda payload: _show_heatmap(payload),
-        )
+    _run_request(
+        "Heatmap",
+        lambda: _load_cached(client, "heatmap", params),
+        lambda payload: _show_heatmap(payload),
+    )
+    if st.button("Refresh heatmap", key="refresh_heatmap"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_heatmap(payload: dict[str, Any]) -> None:
@@ -200,12 +266,14 @@ def _show_heatmap(payload: dict[str, Any]) -> None:
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Map")
     st.caption("The backend currently returns point-based map data for the selected location.")
-    if st.button("Load map", key="load_map"):
-        _run_request(
-            "Map",
-            lambda: client.get_map(params),
-            lambda payload: _show_map(payload),
-        )
+    _run_request(
+        "Map",
+        lambda: _load_cached(client, "map", params),
+        lambda payload: _show_map(payload),
+    )
+    if st.button("Refresh map", key="refresh_map"):
+        _cached_get.clear()
+        st.rerun()
 
 
 def _show_map(payload: dict[str, Any]) -> None:

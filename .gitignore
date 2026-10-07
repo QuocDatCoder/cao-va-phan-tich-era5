@@ -28,6 +28,7 @@ data/*.sqlite*
 data/*.db*
 *.zip
 *.download
+*.nc
 
 # File cấu hình bảo mật cá nhân (chứa API Key)
 .cdsapirc

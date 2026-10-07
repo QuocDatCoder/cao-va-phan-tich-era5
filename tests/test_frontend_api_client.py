@@ -1,7 +1,7 @@
 import requests
 import pytest
 
-from frontend.api_client import DashboardApiClient, DashboardApiError
+from frontend.api_client import DEFAULT_TIMEOUT_SECONDS, DashboardApiClient, DashboardApiError
 
 
 class FakeResponse:
@@ -99,8 +99,15 @@ def test_client_handles_connection_error() -> None:
 def test_client_handles_timeout() -> None:
     client = DashboardApiClient(session=FakeSession(error=requests.Timeout("slow")))
 
-    with pytest.raises(DashboardApiError, match="timed out"):
+    with pytest.raises(DashboardApiError, match="timed out after"):
         client.health()
+
+
+def test_client_default_timeout_allows_slow_era5_requests() -> None:
+    client = DashboardApiClient()
+
+    assert client.timeout_seconds == DEFAULT_TIMEOUT_SECONDS
+    assert client.timeout_seconds >= 180
 
 
 def test_client_handles_malformed_json() -> None:

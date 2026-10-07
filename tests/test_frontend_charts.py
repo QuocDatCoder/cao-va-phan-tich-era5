@@ -1,4 +1,6 @@
-from frontend.components.charts import heatmap_frame, timeseries_frame
+import plotly.graph_objects as go
+
+from frontend.components.charts import heatmap_frame, map_figure, timeseries_frame
 
 
 def test_timeseries_frame_sorts_observations_chronologically() -> None:
@@ -26,3 +28,29 @@ def test_heatmap_frame_pivots_backend_year_month_values() -> None:
 
     assert frame.loc[2025, 1] == 2.0
     assert frame.loc[2025, 2] == 5.0
+
+
+def test_map_figure_renders_backend_point_payload() -> None:
+    payload = {
+        "unit": "K",
+        "data": [
+            {
+                "latitude": 10.8231,
+                "longitude": 106.6297,
+                "value": 299.15,
+            }
+        ],
+    }
+
+    figure = map_figure(payload)
+
+    assert isinstance(figure, go.Figure)
+    assert figure.data[0].type == "scattergeo"
+    assert list(figure.data[0].lat) == [10.8231]
+    assert list(figure.data[0].lon) == [106.6297]
+    assert list(figure.data[0].marker.color) == [299.15]
+    assert figure.data[0].marker.size == 18
+    assert figure.layout.geo.lataxis.range == (9.8231, 11.8231)
+    assert figure.layout.geo.lonaxis.range == (105.6297, 107.6297)
+    assert figure.layout.geo.showland is True
+    assert figure.layout.geo.showocean is True

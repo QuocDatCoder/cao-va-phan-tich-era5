@@ -8,10 +8,13 @@ class DashboardApiError(Exception):
     pass
 
 
+DEFAULT_TIMEOUT_SECONDS = 180.0
+
+
 @dataclass(frozen=True)
 class DashboardApiClient:
     base_url: str = "http://localhost:8000"
-    timeout_seconds: float = 10.0
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     session: requests.Session | None = None
 
     def health(self) -> dict[str, Any]:
@@ -52,7 +55,7 @@ class DashboardApiClient:
                 timeout=self.timeout_seconds,
             )
         except requests.Timeout as exc:
-            raise DashboardApiError("Backend request timed out.") from exc
+            raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
             raise DashboardApiError("Backend is unavailable.") from exc
         return self._decode_response(response)
@@ -65,7 +68,7 @@ class DashboardApiClient:
                 timeout=self.timeout_seconds,
             )
         except requests.Timeout as exc:
-            raise DashboardApiError("Backend request timed out.") from exc
+            raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
             raise DashboardApiError("Backend is unavailable.") from exc
         return self._decode_response(response)
@@ -93,3 +96,10 @@ class DashboardApiClient:
 
     def _session(self) -> requests.Session:
         return self.session or requests.Session()
+
+    def _timeout_message(self) -> str:
+        return (
+            f"Backend request timed out after {self.timeout_seconds:g} seconds. "
+            "ERA5 requests can take longer the first time; increase API_TIMEOUT_SECONDS "
+            "or create a download job first."
+        )

@@ -9,7 +9,7 @@ import xarray as xr
 from backend.app.core.config import Settings, get_settings
 from backend.app.domain.schemas import DownloadArea
 from backend.app.providers.dependencies import get_climate_provider
-from backend.app.providers.era5_provider import ERA5ClimateProvider
+from backend.app.providers.era5_provider import ERA5ClimateProvider, ERA5_REGULAR_GRID_DEGREES
 from backend.app.providers.errors import (
     ClimateConfigurationError,
     ClimateDataError,
@@ -139,6 +139,7 @@ def test_era5_provider_reads_netcdf_and_selects_nearest_point_and_time(tmp_path:
     assert client.calls[0][1]["data_format"] == "netcdf"
     assert client.calls[0][1]["variable"] == ["2m_temperature"]
     assert client.calls[0][1]["date"] == ["2025-01-01"]
+    assert client.calls[0][1]["area"] == [10.5, 106.25, 9.75, 107.0]
 
 
 def test_era5_provider_reads_netcdf4_backend_file(tmp_path: Path) -> None:
@@ -186,6 +187,44 @@ def test_era5_provider_download_area_uses_bbox_request_and_returns_metadata(tmp_
     )
     assert client.calls[0][1]["area"] == [11, 106, 10, 107]
     assert client.calls[0][1]["date"] == ["2025-01-01", "2025-01-02"]
+
+
+def test_era5_point_request_uses_non_degenerate_grid_aligned_area(tmp_path: Path) -> None:
+    provider = ERA5ClimateProvider(settings=make_settings(tmp_path))
+
+    request = provider._build_request(
+        variable_spec=provider._get_variable("temperature"),
+        latitude=10.8231,
+        longitude=106.6297,
+        start=datetime(2024, 1, 1, 0),
+        end=datetime(2024, 1, 1, 1),
+    )
+
+    area = request["area"]
+    north, west, south, east = area
+    assert area != [10.8231, 106.6297, 10.8231, 106.6297]
+    assert area == [11.25, 106.25, 10.5, 107.0]
+    assert north > south
+    assert east > west
+    assert -90 <= south < north <= 90
+    assert -180 <= west < east <= 180
+    assert north - south >= ERA5_REGULAR_GRID_DEGREES
+    assert east - west >= ERA5_REGULAR_GRID_DEGREES
+
+
+def test_era5_point_area_handles_latitude_longitude_boundaries(tmp_path: Path) -> None:
+    provider = ERA5ClimateProvider(settings=make_settings(tmp_path))
+
+    north_east_area = provider._area_for_point(latitude=90.0, longitude=180.0)
+    south_west_area = provider._area_for_point(latitude=-90.0, longitude=-180.0)
+
+    assert north_east_area == [90.0, 179.75, 89.75, 180.0]
+    assert south_west_area == [-89.75, -180.0, -90.0, -179.75]
+    for north, west, south, east in (north_east_area, south_west_area):
+        assert north > south
+        assert east > west
+        assert -90 <= south < north <= 90
+        assert -180 <= west < east <= 180
 
 
 @pytest.mark.parametrize(
@@ -337,13 +376,26 @@ def test_era5_provider_handles_cds_failure(tmp_path: Path) -> None:
         client_factory=lambda _: FailingClient(),
     )
 
-    with pytest.raises(ClimateProviderError):
+    with pytest.raises(ClimateProviderError, match="network unavailable"):
         provider.get_timeseries(
             variable="temperature",
             latitude=10.2,
             longitude=106.6,
             start=datetime(2025, 1, 1, 0),
             end=datetime(2025, 1, 1, 1),
+        )
+
+
+def test_era5_provider_rejects_dates_after_configured_availability_lag(tmp_path: Path) -> None:
+    provider = ERA5ClimateProvider(settings=make_settings(tmp_path))
+
+    with pytest.raises(ClimateDataError, match="Latest configured available date"):
+        provider.get_timeseries(
+            variable="temperature",
+            latitude=10.2,
+            longitude=106.6,
+            start=datetime(2099, 1, 1, 0),
+            end=datetime(2099, 1, 1, 1),
         )
 
 

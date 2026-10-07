@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
+from math import ceil, floor
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,8 @@ ERA5_VARIABLES: dict[str, Era5Variable] = {
         scale=1000.0,
     ),
 }
+
+ERA5_REGULAR_GRID_DEGREES = 0.25
 
 
 class ERA5ClimateProvider(ClimateDataProvider):
@@ -173,6 +176,15 @@ class ERA5ClimateProvider(ClimateDataProvider):
                 "ERA5 requests are limited to "
                 f"{self._settings.era5_max_days_per_request} days for Phase 4."
             )
+        latest_available = self._latest_available_date()
+        if end.date() > latest_available:
+            raise ClimateDataError(
+                "ERA5 data is not normally available for the requested end date "
+                f"{end.date().isoformat()}. Latest configured available date is "
+                f"{latest_available.isoformat()} based on "
+                f"ERA5_SYNC_AVAILABILITY_LAG_DAYS={self._settings.era5_sync_availability_lag_days}. "
+                "Choose an earlier end date or adjust the configured lag if needed."
+            )
 
     def _download(
         self,
@@ -259,10 +271,23 @@ class ERA5ClimateProvider(ClimateDataProvider):
         except ClimateProviderError:
             raise
         except Exception as exc:
-            raise ClimateProviderError("ERA5 data request failed.") from exc
+            raise ClimateProviderError(
+                f"ERA5 data request failed: {self._safe_provider_error(exc)}"
+            ) from exc
 
         if not target_path.exists():
             raise ClimateDataError("ERA5 request completed but no NetCDF file was created.")
+
+    def _latest_available_date(self) -> date:
+        return datetime.now(UTC).date() - timedelta(
+            days=self._settings.era5_sync_availability_lag_days
+        )
+
+    def _safe_provider_error(self, exc: Exception) -> str:
+        message = str(exc).strip() or exc.__class__.__name__
+        if self._settings.cds_api_key:
+            message = message.replace(self._settings.cds_api_key, "<redacted>")
+        return message
 
     def _date_parts(self, start: datetime, end: datetime) -> list[str]:
         days = np.arange(
@@ -273,12 +298,18 @@ class ERA5ClimateProvider(ClimateDataProvider):
         return [str(day) for day in days]
 
     def _area_for_point(self, latitude: float, longitude: float) -> list[float]:
-        buffer = self._settings.era5_point_buffer_degrees
-        north = min(90.0, latitude + buffer)
-        south = max(-90.0, latitude - buffer)
-        west = max(-180.0, longitude - buffer)
-        east = min(180.0, longitude + buffer)
+        buffer = max(self._settings.era5_point_buffer_degrees, ERA5_REGULAR_GRID_DEGREES)
+        north = min(90.0, self._round_up_to_grid(latitude + buffer))
+        south = max(-90.0, self._round_down_to_grid(latitude - buffer))
+        west = max(-180.0, self._round_down_to_grid(longitude - buffer))
+        east = min(180.0, self._round_up_to_grid(longitude + buffer))
         return [round(north, 4), round(west, 4), round(south, 4), round(east, 4)]
+
+    def _round_down_to_grid(self, value: float) -> float:
+        return floor(value / ERA5_REGULAR_GRID_DEGREES) * ERA5_REGULAR_GRID_DEGREES
+
+    def _round_up_to_grid(self, value: float) -> float:
+        return ceil(value / ERA5_REGULAR_GRID_DEGREES) * ERA5_REGULAR_GRID_DEGREES
 
     def _read_timeseries(
         self,

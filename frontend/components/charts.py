@@ -84,17 +84,45 @@ def map_figure(payload: dict[str, Any]) -> go.Figure:
     frame = pd.DataFrame(payload.get("data", []))
     if frame.empty:
         frame = pd.DataFrame(columns=["latitude", "longitude", "value"])
-    fig = px.scatter_mapbox(
+
+    center = {
+        "lat": float(frame["latitude"].mean()) if not frame.empty else 10.8231,
+        "lon": float(frame["longitude"].mean()) if not frame.empty else 106.6297,
+    }
+    unit = payload.get("unit", "")
+    colorbar_title = f"value ({unit})" if unit else "value"
+
+    lat_padding = 1.0
+    lon_padding = 1.0
+    lat_range = [center["lat"] - lat_padding, center["lat"] + lat_padding]
+    lon_range = [center["lon"] - lon_padding, center["lon"] + lon_padding]
+
+    fig = px.scatter_geo(
         frame,
         lat="latitude",
         lon="longitude",
         color="value",
-        size="value",
-        zoom=7,
-        height=420,
+        height=520,
+        color_continuous_scale="Viridis",
+        labels={"value": colorbar_title},
+    )
+    fig.update_traces(marker={"size": 18})
+    fig.update_geos(
+        lataxis_range=lat_range,
+        lonaxis_range=lon_range,
+        showland=True,
+        landcolor="#eef2e6",
+        showocean=True,
+        oceancolor="#d8ecff",
+        showlakes=True,
+        lakecolor="#d8ecff",
+        showcountries=True,
+        countrycolor="#6b7280",
+        showcoastlines=True,
+        coastlinecolor="#6b7280",
+        resolution=50,
     )
     fig.update_layout(
-        mapbox_style="open-street-map",
-        margin={"l": 0, "r": 0, "t": 20, "b": 0},
+        margin={"l": 0, "r": 0, "t": 10, "b": 0},
     )
     return fig

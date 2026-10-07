@@ -5,7 +5,7 @@ from typing import Any, Callable
 import pandas as pd
 import streamlit as st
 
-from frontend.api_client import DashboardApiClient, DashboardApiError
+from frontend.api_client import DEFAULT_TIMEOUT_SECONDS, DashboardApiClient, DashboardApiError
 from frontend.components.charts import (
     anomaly_figure,
     comparison_figure,
@@ -23,7 +23,7 @@ from frontend.components.controls import (
 def build_client() -> DashboardApiClient:
     return DashboardApiClient(
         base_url=os.getenv("API_BASE_URL", "http://localhost:8000"),
-        timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", "10")),
+        timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
     )
 
 

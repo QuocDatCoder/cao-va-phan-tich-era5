@@ -5,10 +5,10 @@ import streamlit as st
 
 
 VARIABLES = {
-    "Nhiệt độ": "temperature",
-    "Nhiệt độ 2m": "2m_temperature",
+    "Nhiệt độ không khí 2m": "temperature",
+    "Nhiệt độ 2m (ERA5)": "2m_temperature",
     "Lượng mưa": "precipitation",
-    "Tổng lượng mưa": "total_precipitation",
+    "Tổng lượng mưa (ERA5)": "total_precipitation",
 }
 
 
@@ -17,12 +17,12 @@ def render_filter_controls() -> dict[str, Any]:
     default_end = date(2025, 1, 2)
 
     with st.sidebar:
-        st.header("Truy vấn")
-        variable_label = st.selectbox("Biến khí hậu", list(VARIABLES), index=0)
+        st.header("Chọn dữ liệu cần phân tích")
+        variable_label = st.selectbox("Muốn xem yếu tố nào?", list(VARIABLES), index=0)
         start_date = st.date_input("Ngày bắt đầu", value=default_start)
         end_date = st.date_input("Ngày kết thúc", value=default_end)
-        latitude = st.number_input("Vĩ độ", min_value=-90.0, max_value=90.0, value=10.8231)
-        longitude = st.number_input("Kinh độ", min_value=-180.0, max_value=180.0, value=106.6297)
+        latitude = st.number_input("Vĩ độ của điểm cần xem", min_value=-90.0, max_value=90.0, value=10.8231)
+        longitude = st.number_input("Kinh độ của điểm cần xem", min_value=-180.0, max_value=180.0, value=106.6297)
 
     start = datetime.combine(start_date, time.min)
     end = datetime.combine(end_date, time(hour=23))
@@ -37,7 +37,7 @@ def render_filter_controls() -> dict[str, Any]:
 
 def render_baseline_controls() -> dict[str, str]:
     with st.sidebar:
-        st.header("Mốc nền")
+        st.header("Mốc so sánh cho độ lệch")
         baseline_start = st.date_input("Ngày bắt đầu mốc nền", value=date(2024, 12, 30))
         baseline_end = st.date_input("Ngày kết thúc mốc nền", value=date(2024, 12, 31))
     return {
@@ -48,7 +48,7 @@ def render_baseline_controls() -> dict[str, str]:
 
 def render_comparison_controls() -> dict[str, str]:
     with st.sidebar:
-        st.header("So sánh")
+        st.header("Giai đoạn B để so sánh")
         period_b_start = st.date_input("Ngày bắt đầu giai đoạn B", value=date(2025, 1, 3))
         period_b_end = st.date_input("Ngày kết thúc giai đoạn B", value=date(2025, 1, 4))
     return {

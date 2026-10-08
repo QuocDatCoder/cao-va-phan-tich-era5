@@ -28,8 +28,7 @@ def build_client() -> DashboardApiClient:
 
 def main() -> None:
     st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
-    st.title("Bảng điều khiển khí hậu ERA5")
-    st.caption("Bảng điều khiển phân tích dữ liệu khí hậu kết nối qua FastAPI")
+    st.title("Phân tích dữ liệu khí hậu ERA5")
 
     client = build_client()
     params = render_filter_controls()
@@ -42,12 +41,14 @@ def main() -> None:
         if st.button("Kiểm tra máy chủ"):
             _run_request("trạng thái máy chủ", client.health, lambda _: st.success("Đang hoạt động"))
 
+    _render_current_selection(params, client.base_url)
+
     tabs = st.tabs(
         [
             "Tổng quan",
-            "Chuỗi thời gian",
-            "Không gian",
-            "Dữ liệu",
+            "Diễn biến theo thời gian",
+            "Vị trí trên bản đồ",
+            "Tải thêm dữ liệu",
         ]
     )
 
@@ -100,7 +101,8 @@ def _render_overview(
     params: dict[str, Any],
     comparison_params: dict[str, str],
 ) -> None:
-    st.subheader("Tổng quan")
+    st.subheader("Hiểu nhanh")
+    st.caption("Phần này trả lời nhanh: giá trị cao/thấp ra sao, xu hướng thế nào, và khác gì so với giai đoạn khác.")
     left, right = st.columns([3, 2])
     with left:
         _render_statistics(client, params)
@@ -115,7 +117,8 @@ def _render_temporal_analysis(
     params: dict[str, Any],
     baseline_params: dict[str, str],
 ) -> None:
-    st.subheader("Chuỗi thời gian")
+    st.subheader("Diễn biến theo thời gian")
+    st.caption("Xem giá trị thay đổi từng giờ, lệch bao nhiêu so với mốc nền, và mẫu theo tháng/năm.")
     _render_timeseries(client, params, show_title=False)
     st.divider()
     _render_anomaly(client, params, baseline_params)
@@ -129,13 +132,16 @@ def _render_timeseries(
     show_title: bool = True,
 ) -> None:
     if show_title:
-        st.subheader("Chuỗi thời gian")
+        st.subheader("Giá trị thay đổi theo từng giờ")
+    else:
+        st.markdown("#### Giá trị thay đổi theo từng giờ")
+    st.caption("Biểu đồ này cho thấy biến khí hậu đã tăng, giảm hoặc dao động như thế nào trong khoảng thời gian đã chọn.")
     _run_request(
-        "chuỗi thời gian",
+        "diễn biến theo thời gian",
         lambda: _load_cached(client, "timeseries", params),
         lambda payload: _show_timeseries(payload),
     )
-    if st.button("Làm mới chuỗi thời gian", key="refresh_timeseries"):
+    if st.button("Làm mới diễn biến theo thời gian", key="refresh_timeseries"):
         _cached_get.clear()
         st.rerun()
 
@@ -144,21 +150,24 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
     if not payload.get("data"):
         st.info("Không có quan sát nào cho bộ lọc đã chọn.")
         return
+    _show_unit_note(payload)
+    _show_short_period_note(payload)
     st.plotly_chart(timeseries_figure(payload), use_container_width=True)
     st.dataframe(
-        pd.DataFrame(payload["data"]).rename(columns={"time": "Thời gian", "value": "Giá trị"}),
+        pd.DataFrame(payload["data"]).rename(columns={"time": "Thời gian", "value": "Giá trị đo được"}),
         use_container_width=True,
     )
 
 
 def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Thống kê")
+    st.subheader("Các giá trị chính")
+    st.caption("Tóm tắt giá trị trung bình, thấp nhất, cao nhất và mức dao động trong khoảng thời gian đã chọn.")
     _run_request(
-        "thống kê",
+        "các con số chính",
         lambda: _load_cached(client, "statistics", params),
         lambda payload: _show_statistics(payload),
     )
-    if st.button("Làm mới thống kê", key="refresh_statistics"):
+    if st.button("Làm mới các con số chính", key="refresh_statistics"):
         _cached_get.clear()
         st.rerun()
 
@@ -171,7 +180,7 @@ def _show_statistics(payload: dict[str, Any]) -> None:
         ("Nhỏ nhất", "min"),
         ("Lớn nhất", "max"),
         ("Độ lệch chuẩn", "std"),
-        ("Số quan sát", "count"),
+        ("Số giờ có dữ liệu", "count"),
     ]
     for column, (label, key) in zip(cols, labels):
         value = _format_value(payload.get(key), unit) if key != "count" else _format_number(payload.get(key), 0)
@@ -179,7 +188,8 @@ def _show_statistics(payload: dict[str, Any]) -> None:
 
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Xu hướng")
+    st.subheader("Xu hướng tổng quát")
+    st.caption("Cho biết dữ liệu trong giai đoạn này nghiêng về tăng, giảm hay gần như ổn định.")
     _run_request(
         "xu hướng",
         lambda: _load_cached(client, "trend", params),
@@ -193,9 +203,9 @@ def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
 def _show_trend(payload: dict[str, Any]) -> None:
     col1, col2, col3 = st.columns(3)
     col1.metric("Chiều hướng", _translate_direction(payload.get("direction")))
-    col2.metric("Hệ số dốc", _format_number(payload.get("slope"), 4))
-    col3.metric("Số quan sát", _format_number(payload.get("count"), 0))
-    st.caption("Hệ số dốc được tính ở backend và không tự đổi nhãn thành theo ngày/tháng/năm.")
+    col2.metric("Mức thay đổi ước tính", _format_number(payload.get("slope"), 4))
+    col3.metric("Số giờ có dữ liệu", _format_number(payload.get("count"), 0))
+    st.caption("Mức thay đổi ước tính được backend tính từ chuỗi thời gian, dùng để đọc nhanh chiều hướng dữ liệu.")
 
 
 def _render_anomaly(
@@ -203,27 +213,28 @@ def _render_anomaly(
     params: dict[str, Any],
     baseline_params: dict[str, str],
 ) -> None:
-    st.subheader("Độ lệch so với mốc nền")
+    st.subheader("Lệch bao nhiêu so với mốc nền")
+    st.caption("Mỗi cột cho biết giá trị tại thời điểm đó cao hơn hoặc thấp hơn mức trung bình của giai đoạn nền.")
     request_params = {**params, **baseline_params}
     _run_request(
-        "độ lệch",
+        "độ lệch so với mốc nền",
         lambda: _load_cached(client, "anomaly", request_params),
         lambda payload: _show_anomaly(payload),
     )
-    if st.button("Làm mới độ lệch", key="refresh_anomaly"):
+    if st.button("Làm mới độ lệch so với mốc nền", key="refresh_anomaly"):
         _cached_get.clear()
         st.rerun()
 
 
 def _show_anomaly(payload: dict[str, Any]) -> None:
-    st.metric("Trung bình mốc nền", _format_value(payload.get("baseline_mean"), payload.get("unit", "")))
+    st.metric("Giá trị trung bình của mốc nền", _format_value(payload.get("baseline_mean"), payload.get("unit", "")))
     if not payload.get("data"):
         st.info("Không có giá trị độ lệch nào được trả về.")
         return
     st.plotly_chart(anomaly_figure(payload), use_container_width=True)
     st.dataframe(
         pd.DataFrame(payload["data"]).rename(
-            columns={"time": "Thời gian", "value": "Giá trị", "anomaly": "Độ lệch"}
+            columns={"time": "Thời gian", "value": "Giá trị đo được", "anomaly": "Độ lệch so với mốc nền"}
         ),
         use_container_width=True,
     )
@@ -234,7 +245,8 @@ def _render_comparison(
     params: dict[str, Any],
     comparison_params: dict[str, str],
 ) -> None:
-    st.subheader("So sánh giai đoạn")
+    st.subheader("So sánh hai giai đoạn")
+    st.caption("So sánh giai đoạn đang chọn với giai đoạn B để xem trung bình khác nhau bao nhiêu.")
     request_params = {
         "variable": params["variable"],
         "latitude": params["latitude"],
@@ -255,20 +267,21 @@ def _render_comparison(
 
 def _show_comparison(payload: dict[str, Any]) -> None:
     st.metric(
-        "Trung bình giai đoạn A - giai đoạn B",
+        "Chênh lệch trung bình",
         _format_value(payload.get("difference"), payload.get("unit", ""), decimals=3),
     )
     st.plotly_chart(comparison_figure(payload), use_container_width=True)
 
 
 def _render_heatmap(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ nhiệt theo tháng và năm")
+    st.subheader("Mẫu theo tháng và năm")
+    st.caption("Gom dữ liệu theo tháng/năm để nhìn nhanh mùa vụ hoặc bất thường dài hạn. Nếu dữ liệu ít ngày, biểu đồ này chỉ mang tính minh họa.")
     _run_request(
-        "bản đồ nhiệt",
+        "mẫu theo tháng và năm",
         lambda: _load_cached(client, "heatmap", params),
         lambda payload: _show_heatmap(payload),
     )
-    if st.button("Làm mới bản đồ nhiệt", key="refresh_heatmap"):
+    if st.button("Làm mới mẫu theo tháng và năm", key="refresh_heatmap"):
         _cached_get.clear()
         st.rerun()
 
@@ -281,8 +294,8 @@ def _show_heatmap(payload: dict[str, Any]) -> None:
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ")
-    st.caption("Máy chủ API hiện trả dữ liệu bản đồ theo một điểm tọa độ đã chọn.")
+    st.subheader("Vị trí đang phân tích")
+    st.caption("Bản đồ hiển thị giá trị tại tọa độ đã chọn. Đây chưa phải bản đồ phủ kín toàn vùng.")
     _run_request(
         "bản đồ",
         lambda: _load_cached(client, "map", params),
@@ -300,17 +313,17 @@ def _show_map(payload: dict[str, Any]) -> None:
     st.plotly_chart(map_figure(payload), use_container_width=True)
     st.dataframe(
         pd.DataFrame(payload["data"]).rename(
-            columns={"latitude": "Vĩ độ", "longitude": "Kinh độ", "value": "Giá trị"}
+            columns={"latitude": "Vĩ độ", "longitude": "Kinh độ", "value": "Giá trị đo được"}
         ),
         use_container_width=True,
     )
 
 
 def _render_downloads(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Tác vụ tải dữ liệu")
-    st.caption("Tạo tác vụ tải dữ liệu ở backend và hiển thị trạng thái xử lý.")
+    st.subheader("Tải dữ liệu ERA5 cho lựa chọn hiện tại")
+    st.caption("Backend sẽ tải NetCDF theo biến, ngày và vùng nhỏ quanh tọa độ đang chọn, rồi lưu trạng thái xử lý.")
 
-    if st.button("Tạo tác vụ tải dữ liệu", key="create_download"):
+    if st.button("Tải dữ liệu ERA5 cho vùng quanh tọa độ này", key="create_download"):
         payload = _download_payload(params)
         _run_request(
             "tác vụ tải dữ liệu",
@@ -427,6 +440,43 @@ def _job_status_frame(payload: dict[str, Any]) -> pd.DataFrame:
     if payload.get("error"):
         rows.append({"Thông tin": "Lỗi", "Giá trị": payload.get("error")})
     return pd.DataFrame(rows)
+
+
+def _render_current_selection(params: dict[str, Any], base_url: str) -> None:
+    st.info(
+        "Đang phân tích "
+        f"{_variable_label(params.get('variable'))} tại "
+        f"{_format_number(params.get('latitude'), 4)}, {_format_number(params.get('longitude'), 4)} "
+        f"trong giai đoạn {_date_only(params.get('start'))} đến {_date_only(params.get('end'))}. "
+        f"Dữ liệu được lấy qua API: {base_url}."
+    )
+
+
+def _variable_label(variable: Any) -> str:
+    labels = {
+        "temperature": "nhiệt độ 2m",
+        "2m_temperature": "nhiệt độ 2m",
+        "dewpoint": "điểm sương 2m",
+        "2m_dewpoint_temperature": "điểm sương 2m",
+        "precipitation": "lượng mưa",
+        "total_precipitation": "tổng lượng mưa",
+    }
+    return labels.get(str(variable), str(variable))
+
+
+def _date_only(value: Any) -> str:
+    return str(value)[:10] if value is not None else "-"
+
+
+def _show_unit_note(payload: dict[str, Any]) -> None:
+    if payload.get("unit") == "K":
+        st.caption("ERA5 đang trả nhiệt độ theo Kelvin (K); dashboard hiện giữ nguyên đơn vị từ backend.")
+
+
+def _show_short_period_note(payload: dict[str, Any]) -> None:
+    data = payload.get("data") or []
+    if len(data) < 72:
+        st.info("Khoảng dữ liệu đang khá ngắn, nên xu hướng chỉ nên đọc như mô tả nhanh, chưa phải kết luận khí hậu dài hạn.")
 
 
 if __name__ == "__main__":

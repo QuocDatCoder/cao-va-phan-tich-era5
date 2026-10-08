@@ -174,7 +174,8 @@ def _show_statistics(payload: dict[str, Any]) -> None:
         ("Số quan sát", "count"),
     ]
     for column, (label, key) in zip(cols, labels):
-        column.metric(label, f"{payload.get(key)} {unit}" if key != "count" else payload.get(key))
+        value = _format_value(payload.get(key), unit) if key != "count" else _format_number(payload.get(key), 0)
+        column.metric(label, value)
 
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
@@ -192,8 +193,8 @@ def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
 def _show_trend(payload: dict[str, Any]) -> None:
     col1, col2, col3 = st.columns(3)
     col1.metric("Chiều hướng", _translate_direction(payload.get("direction")))
-    col2.metric("Hệ số dốc", payload.get("slope"))
-    col3.metric("Số quan sát", payload.get("count"))
+    col2.metric("Hệ số dốc", _format_number(payload.get("slope"), 4))
+    col3.metric("Số quan sát", _format_number(payload.get("count"), 0))
     st.caption("Hệ số dốc được tính ở backend và không tự đổi nhãn thành theo ngày/tháng/năm.")
 
 
@@ -215,7 +216,7 @@ def _render_anomaly(
 
 
 def _show_anomaly(payload: dict[str, Any]) -> None:
-    st.metric("Trung bình mốc nền", f"{payload.get('baseline_mean')} {payload.get('unit', '')}")
+    st.metric("Trung bình mốc nền", _format_value(payload.get("baseline_mean"), payload.get("unit", "")))
     if not payload.get("data"):
         st.info("Không có giá trị độ lệch nào được trả về.")
         return
@@ -253,7 +254,10 @@ def _render_comparison(
 
 
 def _show_comparison(payload: dict[str, Any]) -> None:
-    st.metric("Trung bình giai đoạn A - giai đoạn B", f"{payload.get('difference')} {payload.get('unit', '')}")
+    st.metric(
+        "Trung bình giai đoạn A - giai đoạn B",
+        _format_value(payload.get("difference"), payload.get("unit", ""), decimals=3),
+    )
     st.plotly_chart(comparison_figure(payload), use_container_width=True)
 
 
@@ -390,6 +394,23 @@ def _translate_status(status: Any) -> str:
         "cancelled": "Đã hủy",
     }
     return translations.get(str(status), str(status))
+
+
+def _format_number(value: Any, decimals: int = 2) -> str:
+    if value is None:
+        return "-"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if decimals <= 0:
+        return str(int(round(number)))
+    return f"{number:.{decimals}f}".rstrip("0").rstrip(".")
+
+
+def _format_value(value: Any, unit: str = "", decimals: int = 2) -> str:
+    formatted = _format_number(value, decimals)
+    return f"{formatted} {unit}".strip()
 
 
 def _job_status_frame(payload: dict[str, Any]) -> pd.DataFrame:

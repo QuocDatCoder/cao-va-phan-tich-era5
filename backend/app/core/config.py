@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    climate_provider: Literal["mock", "era5"] = "mock"
+    climate_provider: Literal["mock", "era5"] = "era5"
     data_dir: Path = Path("data")
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
 

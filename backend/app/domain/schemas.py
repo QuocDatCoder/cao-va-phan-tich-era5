@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from backend.app.domain.time_utils import to_utc_naive
+
 
 class Location(BaseModel):
     latitude: float = Field(ge=-90, le=90)
@@ -19,12 +21,12 @@ class ClimatePoint(BaseModel):
 class TimeSeriesRequest(BaseModel):
     variable: str = Field(min_length=1)
     location: Location
-    start: datetime
-    end: datetime
+    start: datetime = Field(description="ISO 8601 datetime; omitted offset means UTC.")
+    end: datetime = Field(description="ISO 8601 datetime; omitted offset means UTC.")
 
     @model_validator(mode="after")
     def validate_date_range(self) -> "TimeSeriesRequest":
-        if self.end < self.start:
+        if to_utc_naive(self.end) < to_utc_naive(self.start):
             raise ValueError("end must be greater than or equal to start")
         return self
 

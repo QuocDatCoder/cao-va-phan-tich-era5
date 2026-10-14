@@ -23,15 +23,15 @@ def test_timeseries_endpoint_returns_mock_data() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "variable": "temperature",
-        "unit": "K",
+        "unit": "°C",
         "location": {
             "latitude": 10.8231,
             "longitude": 106.6297,
         },
         "data": [
-            {"time": "2025-01-01T00:00:00", "value": 299.15},
-            {"time": "2025-01-01T01:00:00", "value": 300.444},
-            {"time": "2025-01-01T02:00:00", "value": 301.65},
+            {"time": "2025-01-01T07:00:00+07:00", "value": 26.0},
+            {"time": "2025-01-01T08:00:00+07:00", "value": 27.294},
+            {"time": "2025-01-01T09:00:00+07:00", "value": 28.5},
         ],
     }
 
@@ -48,6 +48,27 @@ def test_timeseries_endpoint_rejects_invalid_latitude() -> None:
         },
     )
 
+    assert response.status_code == 422
+
+
+def test_timeseries_endpoint_accepts_local_day_and_returns_explicit_offset():
+    response = client.get("/api/v1/climate/timeseries", params={
+        "variable": "temperature", "latitude": 10.8231, "longitude": 106.6297,
+        "start": "2025-02-01T00:00:00+07:00", "end": "2025-02-01T23:00:00+07:00",
+    })
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unit"] == "°C"
+    assert len(payload["data"]) == 24
+    assert payload["data"][0]["time"] == "2025-02-01T00:00:00+07:00"
+    assert payload["data"][-1]["time"] == "2025-02-01T23:00:00+07:00"
+
+
+def test_timeseries_endpoint_validates_mixed_naive_and_offset_datetimes():
+    response = client.get("/api/v1/climate/timeseries", params={
+        "variable": "temperature", "latitude": 10.8231, "longitude": 106.6297,
+        "start": "2025-02-01T00:00:00", "end": "2025-02-01T01:00:00+07:00",
+    })
     assert response.status_code == 422
 
 

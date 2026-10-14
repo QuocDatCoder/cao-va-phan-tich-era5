@@ -415,8 +415,8 @@ def test_era5_provider_handles_missing_downloaded_file(tmp_path: Path) -> None:
         )
 
 
-def test_provider_dependency_defaults_to_mock(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CLIMATE_PROVIDER", raising=False)
+def test_provider_dependency_can_select_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLIMATE_PROVIDER", "mock")
     get_settings.cache_clear()
     get_climate_provider.cache_clear()
 
@@ -427,6 +427,15 @@ def test_provider_dependency_defaults_to_mock(monkeypatch: pytest.MonkeyPatch) -
     get_settings.cache_clear()
 
 
+def test_seven_vietnam_days_can_cross_eight_utc_dates(tmp_path):
+    provider = ERA5ClimateProvider(settings=make_settings(tmp_path))
+    provider._validate_time_range(
+        start=datetime(2025, 1, 31, 17), end=datetime(2025, 2, 7, 16)
+    )
+    with pytest.raises(ClimateDataError, match="limited"):
+        provider._validate_time_range(
+            start=datetime(2025, 1, 31, 17), end=datetime(2025, 2, 7, 17)
+        )
 def test_provider_dependency_can_select_era5(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLIMATE_PROVIDER", "era5")
     monkeypatch.setenv("CDS_URL", "https://example.test/api")

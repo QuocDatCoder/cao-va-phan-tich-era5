@@ -5,12 +5,17 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
+def vietnam_display_times(values: pd.Series) -> pd.Series:
+    # Plotly receives local wall times so browser timezone cannot shift the chart.
+    return pd.to_datetime(values, utc=True).dt.tz_convert("Asia/Ho_Chi_Minh").dt.tz_localize(None)
+
+
 def timeseries_frame(payload: dict[str, Any]) -> pd.DataFrame:
     data = payload.get("data", [])
     frame = pd.DataFrame(data)
     if frame.empty:
         return pd.DataFrame(columns=["time", "value"])
-    frame["time"] = pd.to_datetime(frame["time"])
+    frame["time"] = vietnam_display_times(frame["time"])
     return frame.sort_values("time")
 
 
@@ -20,7 +25,7 @@ def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
     variable = payload.get("variable", "giá trị")
     fig = px.line(frame, x="time", y="value", markers=True)
     fig.update_layout(
-        xaxis_title="Thời gian",
+        xaxis_title="Thời gian Việt Nam (UTC+7)",
         yaxis_title=f"{variable} ({unit})" if unit else variable,
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
@@ -32,12 +37,12 @@ def anomaly_figure(payload: dict[str, Any]) -> go.Figure:
     if frame.empty:
         frame = pd.DataFrame(columns=["time", "anomaly"])
     else:
-        frame["time"] = pd.to_datetime(frame["time"])
+        frame["time"] = vietnam_display_times(frame["time"])
         frame = frame.sort_values("time")
     unit = payload.get("unit", "")
     fig = px.bar(frame, x="time", y="anomaly")
     fig.update_layout(
-        xaxis_title="Thời gian",
+        xaxis_title="Thời gian Việt Nam (UTC+7)",
         yaxis_title=f"Độ lệch ({unit})" if unit else "Độ lệch",
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )

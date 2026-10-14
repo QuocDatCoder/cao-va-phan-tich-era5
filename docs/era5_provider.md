@@ -35,6 +35,20 @@ Do not commit real credentials. `.env` is ignored; `.env.example` contains place
 
 Precipitation is converted from ERA5 metres to millimetres.
 
+## API units and timezone
+
+The provider keeps temperatures in Kelvin and timestamps in UTC. The service layer
+returns temperature/dewpoint in `°C` and observation timestamps with `+07:00`.
+Statistics, anomalies, comparisons and heatmaps use this normalized series.
+Raw downloads remain in their source units.
+
+API query datetimes accept ISO 8601 offsets. A datetime without an offset means
+UTC for compatibility. To query February 1 in Vietnam, use
+`start=2025-02-01T00:00:00+07:00` and `end=2025-02-01T23:00:00+07:00`.
+The backend requests January 31 17:00 through February 1 16:00 UTC.
+The dashboard sends these offsets for all date filters and displays Vietnam
+wall times consistently in tables and charts.
+
 ## Geographic Selection
 
 The current API accepts a latitude/longitude point. The ERA5 provider requests a small bounding box around that point, then selects the nearest available ERA5 grid point with xarray. ERA5 does not necessarily contain the exact requested coordinate.

@@ -170,8 +170,8 @@ class ERA5ClimateProvider(ClimateDataProvider):
             ) from exc
 
     def _validate_time_range(self, start: datetime, end: datetime) -> None:
-        days_requested = (end.date() - start.date()).days + 1
-        if days_requested > self._settings.era5_max_days_per_request:
+        # A Vietnam day crosses two UTC dates; limit elapsed time, not date count.
+        if end - start >= timedelta(days=self._settings.era5_max_days_per_request):
             raise ClimateDataError(
                 "ERA5 requests are limited to "
                 f"{self._settings.era5_max_days_per_request} days for Phase 4."

@@ -26,8 +26,8 @@ def get_timeseries_request(
     variable: Annotated[str, Query(min_length=1)],
     latitude: Annotated[float, Query(ge=-90, le=90)],
     longitude: Annotated[float, Query(ge=-180, le=180)],
-    start: datetime,
-    end: datetime,
+    start: Annotated[datetime, Query(description="ISO 8601; use +07:00 for Vietnam time. No offset means UTC.")],
+    end: Annotated[datetime, Query(description="ISO 8601; use +07:00 for Vietnam time. No offset means UTC.")],
 ) -> TimeSeriesRequest:
     try:
         return TimeSeriesRequest(

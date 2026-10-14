@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 import pandas as pd
@@ -11,6 +12,8 @@ from frontend.components.charts import (
     heatmap_figure,
     map_figure,
     timeseries_figure,
+    timeseries_frame,
+    vietnam_display_times,
 )
 from frontend.components.controls import (
     render_baseline_controls,
@@ -29,7 +32,7 @@ def build_client() -> DashboardApiClient:
 def main() -> None:
     st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
     st.title("Bảng điều khiển khí hậu ERA5")
-    st.caption("Bảng điều khiển phân tích dữ liệu khí hậu kết nối qua FastAPI")
+    st.caption("Dữ liệu hiển thị theo giờ Việt Nam (UTC+7); nhiệt độ và điểm sương dùng °C.")
 
     client = build_client()
     params = render_filter_controls()
@@ -146,7 +149,7 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
         return
     st.plotly_chart(timeseries_figure(payload), use_container_width=True)
     st.dataframe(
-        pd.DataFrame(payload["data"]).rename(columns={"time": "Thời gian", "value": "Giá trị"}),
+        timeseries_frame(payload).rename(columns={"time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị"}),
         use_container_width=True,
     )
 
@@ -221,9 +224,11 @@ def _show_anomaly(payload: dict[str, Any]) -> None:
         st.info("Không có giá trị độ lệch nào được trả về.")
         return
     st.plotly_chart(anomaly_figure(payload), use_container_width=True)
+    frame = pd.DataFrame(payload["data"])
+    frame["time"] = vietnam_display_times(frame["time"])
     st.dataframe(
-        pd.DataFrame(payload["data"]).rename(
-            columns={"time": "Thời gian", "value": "Giá trị", "anomaly": "Độ lệch"}
+        frame.rename(
+            columns={"time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "anomaly": "Độ lệch"}
         ),
         use_container_width=True,
     )
@@ -334,8 +339,8 @@ def _download_payload(params: dict[str, Any]) -> dict[str, Any]:
     longitude = float(params["longitude"])
     return {
         "variable": params["variable"],
-        "start_date": str(params["start"])[:10],
-        "end_date": str(params["end"])[:10],
+        "start_date": _utc_date(params["start"]),
+        "end_date": _utc_date(params["end"]),
         "area": {
             "north": min(90.0, latitude + 0.25),
             "west": max(-180.0, longitude - 0.25),
@@ -344,6 +349,13 @@ def _download_payload(params: dict[str, Any]) -> dict[str, Any]:
         },
         "frequency": "hourly",
     }
+
+
+def _utc_date(value: str) -> str:
+    timestamp = datetime.fromisoformat(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC).date().isoformat()
 
 
 def _remember_job(payload: dict[str, Any]) -> None:

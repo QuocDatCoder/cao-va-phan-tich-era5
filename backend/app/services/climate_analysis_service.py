@@ -18,6 +18,7 @@ from backend.app.domain.schemas import (
     TrendResponse,
 )
 from backend.app.services.climate_service import ClimateService
+from backend.app.domain.time_utils import to_vietnam_time
 
 
 class ClimateAnalysisError(Exception):
@@ -57,7 +58,7 @@ class ClimateAnalysisService:
             location=series.location,
             slope=self._round(slope),
             direction=self._trend_direction(slope),
-            period=f"{request.start.date().isoformat()}-{request.end.date().isoformat()}",
+            period=f"{to_vietnam_time(request.start).date().isoformat()}-{to_vietnam_time(request.end).date().isoformat()}",
             count=len(values),
         )
 
@@ -83,8 +84,8 @@ class ClimateAnalysisService:
             variable=series.variable,
             unit=series.unit,
             location=series.location,
-            baseline_start=baseline_request.start,
-            baseline_end=baseline_request.end,
+            baseline_start=to_vietnam_time(baseline_request.start),
+            baseline_end=to_vietnam_time(baseline_request.end),
             baseline_mean=self._round(baseline_mean),
             data=data,
         )
@@ -105,14 +106,14 @@ class ClimateAnalysisService:
             unit=period_a.unit,
             location=period_a.location,
             period_a=ComparePeriodSummary(
-                start=period_a_request.start,
-                end=period_a_request.end,
+                start=to_vietnam_time(period_a_request.start),
+                end=to_vietnam_time(period_a_request.end),
                 mean=self._round(mean_a),
                 count=len(period_a.data),
             ),
             period_b=ComparePeriodSummary(
-                start=period_b_request.start,
-                end=period_b_request.end,
+                start=to_vietnam_time(period_b_request.start),
+                end=to_vietnam_time(period_b_request.end),
                 mean=self._round(mean_b),
                 count=len(period_b.data),
             ),

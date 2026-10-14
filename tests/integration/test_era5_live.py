@@ -58,5 +58,7 @@ def test_live_era5_provider_downloads_netcdf_and_returns_timeseries(tmp_path):
         )
     )
     assert service_response.variable == response.variable
-    assert service_response.unit == response.unit
+    assert service_response.unit == "°C"
+    assert service_response.data[0].value == pytest.approx(response.data[0].value - 273.15)
+    assert service_response.data[0].time.utcoffset().total_seconds() == 7 * 3600
     assert service_response.data

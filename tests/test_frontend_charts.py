@@ -16,6 +16,16 @@ def test_timeseries_frame_sorts_observations_chronologically() -> None:
     assert list(frame["value"]) == [1.0, 3.0]
 
 
+def test_chart_preserves_local_midnight_without_browser_timezone_conversion():
+    frame = timeseries_frame({"data": [
+        {"time": "2025-02-01T00:00:00+07:00", "value": 26.0},
+        {"time": "2025-01-31T18:00:00Z", "value": 27.0},
+    ]})
+    assert list(frame["time"].dt.hour) == [0, 1]
+    assert list(frame["time"].dt.day) == [1, 1]
+    assert frame["time"].dt.tz is None
+
+
 def test_heatmap_frame_pivots_backend_year_month_values() -> None:
     payload = {
         "data": [

@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from math import ceil, floor
 from pathlib import Path
+import logging
+import sqlite3
 from typing import Any
 
 import numpy as np
@@ -23,6 +25,10 @@ from backend.app.providers.errors import (
     ClimateProviderError,
     UnsupportedVariableError,
 )
+from backend.app.storage.climate_repository import ClimateRepository
+from backend.app.domain.time_utils import hourly_timestamps, missing_hour_ranges, to_utc_naive
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -68,9 +74,11 @@ class ERA5ClimateProvider(ClimateDataProvider):
         self,
         settings: Settings,
         client_factory: Callable[[Settings], Any] | None = None,
+        repository: ClimateRepository | None = None,
     ) -> None:
         self._settings = settings
         self._client_factory = client_factory or self._default_client_factory
+        self._repository = repository
 
     def get_timeseries(
         self,
@@ -80,11 +88,62 @@ class ERA5ClimateProvider(ClimateDataProvider):
         start: datetime,
         end: datetime,
     ) -> TimeSeriesResponse:
+        start, end = to_utc_naive(start), to_utc_naive(end)
         if end < start:
             raise ValueError("end must be greater than or equal to start")
 
         variable_spec = self._get_variable(variable)
         self._validate_time_range(start=start, end=end)
+        if not hourly_timestamps(start, end):
+            raise ClimateDataError("The requested interval contains no hourly ERA5 observations.")
+        location = Location(latitude=latitude, longitude=longitude)
+        if self._repository is None:
+            points = self._load_point_data(variable, variable_spec, location, start, end)
+        else:
+            try:
+                points = self._get_stored_or_download(variable, variable_spec, location, start, end)
+            except sqlite3.Error as exc:
+                raise ClimateDataError("Unable to read or persist ERA5 climate observations.") from exc
+        return TimeSeriesResponse(variable=variable, unit=variable_spec.unit, location=location, data=points)
+
+    def _get_stored_or_download(
+        self, variable: str, spec: Era5Variable, location: Location,
+        start: datetime, end: datetime,
+    ) -> list[ClimatePoint]:
+        assert self._repository is not None
+        query = dict(dataset=self._settings.era5_dataset, variable=spec.cds_name,
+                     location=location, unit=spec.unit, start=start, end=end)
+        points = self._repository.get_series(**query)
+        gaps = missing_hour_ranges(start, end, {point.time for point in points})
+        if not gaps:
+            logger.info("ERA5 SQLite hit: variable=%s observations=%s", spec.cds_name, len(points))
+            return points
+
+        # Import an existing exact-query file before planning new CDS requests.
+        existing_path = self._target_path(variable, location.latitude, location.longitude, start, end)
+        if existing_path.exists():
+            self._load_point_data(variable, spec, location, start, end)
+            points = self._repository.get_series(**query)
+            gaps = missing_hour_ranges(start, end, {point.time for point in points})
+
+        for gap_start, gap_end in gaps:
+            logger.info("ERA5 missing range: variable=%s UTC=%s..%s", spec.cds_name, gap_start, gap_end)
+            self._load_point_data(variable, spec, location, gap_start, gap_end)
+
+        points = self._repository.get_series(**query)
+        remaining = missing_hour_ranges(start, end, {point.time for point in points})
+        if remaining:
+            raise ClimateDataError(
+                "ERA5 data is still incomplete after downloading missing ranges. "
+                f"First missing UTC hour: {remaining[0][0].isoformat()}."
+            )
+        return points
+
+    def _load_point_data(
+        self, variable: str, variable_spec: Era5Variable, location: Location,
+        start: datetime, end: datetime,
+    ) -> list[ClimatePoint]:
+        latitude, longitude = location.latitude, location.longitude
         target_path = self._target_path(
             variable=variable,
             latitude=latitude,
@@ -103,7 +162,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
                 target_path=target_path,
             )
 
-        points = self._read_timeseries(
+        points, grid_location = self._read_timeseries(
             file_path=target_path,
             variable_spec=variable_spec,
             latitude=latitude,
@@ -111,13 +170,15 @@ class ERA5ClimateProvider(ClimateDataProvider):
             start=start,
             end=end,
         )
+        if self._repository is not None:
+            self._repository.save(
+                dataset=self._settings.era5_dataset, variable=variable_spec.cds_name,
+                requested_location=location, grid_location=grid_location,
+                unit=variable_spec.unit, points=points,
+            )
+            logger.info("ERA5 SQLite saved: variable=%s observations=%s", variable_spec.cds_name, len(points))
 
-        return TimeSeriesResponse(
-            variable=variable,
-            unit=variable_spec.unit,
-            location=Location(latitude=latitude, longitude=longitude),
-            data=points,
-        )
+        return points
 
     def download_area(
         self,
@@ -153,12 +214,64 @@ class ERA5ClimateProvider(ClimateDataProvider):
             )
             self._retrieve(request=request, target_path=target_path)
 
+        if self._repository is not None:
+            self._import_area(target_path, variable_spec, area, start_date, end_date)
+
         return DownloadArtifact(
             file_path=target_path,
             storage_path=target_path.relative_to(self._settings.data_dir).as_posix(),
             dataset=self._settings.era5_dataset,
             variable=variable_spec.cds_name,
         )
+
+    def _import_area(
+        self, file_path: Path, spec: Era5Variable, area: DownloadArea,
+        start_date: date, end_date: date,
+    ) -> None:
+        assert self._repository is not None
+        try:
+            with xr.open_dataset(file_path) as dataset:
+                time_coord = self._find_coordinate(dataset, ("valid_time", "time"))
+                lat_coord = self._find_coordinate(dataset, ("latitude", "lat"))
+                lon_coord = self._find_coordinate(dataset, ("longitude", "lon"))
+                dimensions = (time_coord, lat_coord, lon_coord)
+                data = dataset[self._find_data_variable(dataset, spec)]
+                for dimension in tuple(data.dims):
+                    if dimension not in dimensions:
+                        if data.sizes[dimension] != 1:
+                            raise ClimateDataError("ERA5 area has an unsupported extra dimension.")
+                        data = data.isel({dimension: 0}, drop=True)
+                data = data.transpose(*dimensions).sortby(time_coord)
+                start = datetime.combine(start_date, time.min)
+                end = datetime.combine(end_date, time(hour=23))
+                data = data.sel({time_coord: slice(np.datetime64(start), np.datetime64(end))})
+                timestamps = [self._to_datetime(value) for value in data[time_coord].values]
+                if timestamps != hourly_timestamps(start, end):
+                    raise ClimateDataError("ERA5 area is missing requested hourly timestamps.")
+                latitudes = [float(value) for value in data[lat_coord].values]
+                longitudes = [float(value) for value in data[lon_coord].values]
+                if not latitudes or not longitudes or not all(
+                    np.isfinite(value) for value in latitudes + longitudes
+                ) or any(abs(value) > 90 for value in latitudes):
+                    raise ClimateDataError("ERA5 area contains invalid grid coordinates.")
+
+                def records():
+                    # Read one time slice at a time; do not flatten the full area into RAM.
+                    for index, timestamp in enumerate(timestamps):
+                        values = data.isel({time_coord: index}).values
+                        for (lat_index, lon_index), raw_value in np.ndenumerate(values):
+                            yield (latitudes[lat_index], (longitudes[lon_index] + 180) % 360 - 180,
+                                   timestamp, round(float(raw_value) * spec.scale, 6))
+
+                count = self._repository.save_area(
+                    dataset=self._settings.era5_dataset, variable=spec.cds_name, unit=spec.unit,
+                    area=area, latitudes=latitudes, longitudes=longitudes, records=records(),
+                )
+                logger.info("ERA5 area imported to SQLite: variable=%s observations=%s", spec.cds_name, count)
+        except ClimateProviderError:
+            raise
+        except Exception as exc:
+            raise ClimateDataError("Unable to import ERA5 area observations into SQLite.") from exc
 
     def _get_variable(self, variable: str) -> Era5Variable:
         try:
@@ -226,11 +339,14 @@ class ERA5ClimateProvider(ClimateDataProvider):
         end: datetime,
     ) -> dict[str, Any]:
         dates = self._date_parts(start=start, end=end)
+        hours = range(24)
+        if start.date() == end.date():
+            hours = [stamp.hour for stamp in hourly_timestamps(start, end)]
         return {
             "product_type": ["reanalysis"],
             "variable": [variable_spec.cds_name],
             "date": dates,
-            "time": [f"{hour:02d}:00" for hour in range(24)],
+            "time": [f"{hour:02d}:00" for hour in hours],
             "data_format": "netcdf",
             "download_format": "unarchived",
             "area": self._area_for_point(latitude=latitude, longitude=longitude),
@@ -319,7 +435,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
         longitude: float,
         start: datetime,
         end: datetime,
-    ) -> list[ClimatePoint]:
+    ) -> tuple[list[ClimatePoint], Location]:
         if not file_path.exists():
             raise ClimateDataError("NetCDF file does not exist.")
 
@@ -346,7 +462,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
         longitude: float,
         start: datetime,
         end: datetime,
-    ) -> list[ClimatePoint]:
+    ) -> tuple[list[ClimatePoint], Location]:
         data_var = self._find_data_variable(dataset=dataset, variable_spec=variable_spec)
         time_coord = self._find_coordinate(dataset=dataset, candidates=("valid_time", "time"))
         lat_coord = self._find_coordinate(dataset=dataset, candidates=("latitude", "lat"))
@@ -356,6 +472,10 @@ class ERA5ClimateProvider(ClimateDataProvider):
         selected = dataset[data_var].sel(
             {lat_coord: latitude, lon_coord: requested_lon},
             method="nearest",
+        )
+        grid_location = Location(
+            latitude=float(selected[lat_coord].values),
+            longitude=((float(selected[lon_coord].values) + 180) % 360) - 180,
         )
         selected = selected.sel({time_coord: slice(np.datetime64(start), np.datetime64(end))})
         selected = selected.squeeze(drop=False)
@@ -371,7 +491,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
         points: list[ClimatePoint] = []
         for time_value, raw_value in zip(time_values, data_values):
             value = float(raw_value)
-            if np.isnan(value):
+            if not np.isfinite(value):
                 continue
             points.append(
                 ClimatePoint(
@@ -382,7 +502,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
 
         if not points:
             raise ClimateDataError("ERA5 result contains no valid data values.")
-        return points
+        return points, grid_location
 
     def _find_data_variable(self, dataset: xr.Dataset, variable_spec: Era5Variable) -> str:
         for name in variable_spec.data_names:
@@ -426,7 +546,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
             f"{safe_variable}_{start:%Y%m%d%H}_{end:%Y%m%d%H}_"
             f"lat{latitude:.4f}_lon{longitude:.4f}.nc"
         )
-        return self._settings.raw_era5_dir / safe_variable / filename
+        return self._dataset_raw_dir() / safe_variable / filename
 
     def _area_target_path(
         self,
@@ -440,7 +560,16 @@ class ERA5ClimateProvider(ClimateDataProvider):
             f"{start_date.isoformat()}_{end_date.isoformat()}_"
             f"{self._bbox_slug(area)}.nc"
         )
-        return self._settings.raw_era5_dir / safe_variable / str(start_date.year) / filename
+        return self._dataset_raw_dir() / safe_variable / str(start_date.year) / filename
+
+    def _dataset_raw_dir(self) -> Path:
+        # Preserve existing files for the original dataset; isolate other datasets.
+        if self._settings.era5_dataset == "reanalysis-era5-single-levels":
+            return self._settings.raw_era5_dir
+        safe_dataset = self._settings.era5_dataset.replace("/", "_").replace("\\", "_")
+        if safe_dataset in {"", ".", ".."}:
+            raise ClimateConfigurationError("Invalid ERA5 dataset name.")
+        return self._settings.raw_era5_dir / safe_dataset
 
     def _bbox_slug(self, area: DownloadArea) -> str:
         return (

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     climate_provider: Literal["mock", "era5"] = "era5"
     data_dir: Path = Path("data")
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
+    climate_data_db_path: Path = Path("data/cache/climate.sqlite3")
 
     cds_url: str | None = None
     cds_api_key: str | None = None

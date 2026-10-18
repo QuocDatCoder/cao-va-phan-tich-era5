@@ -21,14 +21,25 @@ __pycache__/
 # CSDL & Dữ liệu lớn
 data/weather.db*
 data/raw/
+data/cache/
+data/processed/
+data/*.html
+data/*.sqlite*
+data/*.db*
 *.zip
 *.download
+*.nc
 
 # File cấu hình bảo mật cá nhân (chứa API Key)
 .cdsapirc
+.env
 
 # IDE & OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+#architecture
+AGENTS.md
+APIPlan.md

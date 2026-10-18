@@ -147,7 +147,7 @@ CSDL được lưu tại: `D:\cao-va-phan-tich-era5\data\weather.db`
 
 ### 5.1 Xác thực kết nối máy chủ ECMWF Copernicus CDS API
 - **Tài khoản cá nhân:** Đã được liên kết thành công vào hệ điều hành qua file `.cdsapirc`.
-- **Request ID thực tế:** `9d36e408-d0c7-4cba-9386-6241d00577e4`
+- **Request ID thực tế:** `<REQUEST_ID>`
 - **Trạng thái:** `accepted` $\rightarrow$ `successful` $\rightarrow$ Tải thành công tệp dữ liệu thật từ Châu Âu về máy:
   - File gốc: `reanalysis-era5-land-timeseries-sfc-2m-temperature42gkuzor.csv`
   - Đọc và quy đổi thành công nhiệt độ từ Kelvin sang độ C ($296.71 K \rightarrow 23.56 ^\circ C$) và chuyển múi giờ từ UTC+0 sang UTC+7.

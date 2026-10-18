@@ -1,7 +1,19 @@
 """
 Kiểm tra kết nối thực tế tới máy chủ Copernicus CDS API
 """
+import os
+
 import cdsapi
+import pytest
+
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.getenv("RUN_CDS_INTEGRATION") != "1",
+        reason="Live CDS integration test requires RUN_CDS_INTEGRATION=1.",
+    ),
+]
 
 def test_connection():
     print("[1] Khởi tạo CDS API Client...")

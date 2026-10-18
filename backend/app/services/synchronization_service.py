@@ -189,6 +189,9 @@ class SynchronizationService:
             raise SynchronizationNotFoundError(f"Synchronization '{sync_id}' was not found.")
         return state
 
+    def list_states(self, limit: int = 100) -> list[SynchronizationState]:
+        return self._repository.list_states(limit)
+
     def synchronize_configured(self, settings: Settings) -> SynchronizationState:
         return self.synchronize(
             SynchronizationRequest(

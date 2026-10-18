@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from backend.app.core.config import Settings, get_settings
 
 from backend.app.domain.schemas import (
     SynchronizationRequest,
@@ -8,9 +9,33 @@ from backend.app.domain.schemas import (
     SynchronizationStatus,
 )
 from backend.app.services.dependencies import get_synchronization_service
-from backend.app.services.synchronization_service import SynchronizationService
+from backend.app.services.synchronization_service import SynchronizationService, LatestAvailableDateProvider
 
 router = APIRouter(prefix="/api/v1/synchronization", tags=["synchronization"])
+
+
+@router.get("")
+def list_synchronizations(
+    service: Annotated[SynchronizationService, Depends(get_synchronization_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> dict[str, list[SynchronizationState]]:
+    return {"states": service.list_states(limit)}
+
+
+@router.get("/config")
+def synchronization_config(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict:
+    return {
+        "provider": settings.climate_provider,
+        "scheduler_enabled": settings.era5_sync_enabled,
+        "interval_hours": settings.era5_sync_interval_hours,
+        "latest_available_date": LatestAvailableDateProvider(
+            settings.era5_sync_availability_lag_days
+        ).latest_available_date().isoformat(),
+        "max_days_per_request": settings.era5_max_days_per_request,
+        "max_days_per_run": settings.era5_sync_max_days_per_run,
+    }
 
 
 @router.post("/run", response_model=SynchronizationState, status_code=202)

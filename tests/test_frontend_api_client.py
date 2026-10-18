@@ -73,6 +73,19 @@ def test_client_gets_job_status() -> None:
     assert session.calls == [("GET", "http://api.test/api/v1/jobs/job-1", None, 2)]
 
 
+def test_client_reads_sync_status_and_starts_sync():
+    session = FakeSession()
+    client = DashboardApiClient(base_url="http://api.test", session=session)
+    client.get_sync_config()
+    client.list_synchronizations()
+    client.run_synchronization({"variable": "temperature"})
+    assert [call[1] for call in session.calls] == [
+        "http://api.test/api/v1/synchronization/config",
+        "http://api.test/api/v1/synchronization",
+        "http://api.test/api/v1/synchronization/run",
+    ]
+
+
 def test_client_raises_user_friendly_error_for_backend_4xx() -> None:
     session = FakeSession(response=FakeResponse({"detail": "invalid latitude"}, 422))
     client = DashboardApiClient(session=session)

@@ -140,6 +140,28 @@ def test_synchronization_queues_and_runs_missing_range(tmp_path: Path) -> None:
     assert provider.calls[0].end_date == date(2025, 1, 3)
 
 
+def test_list_endpoint_exposes_sync_completion_for_dashboard(tmp_path):
+    service, provider = make_service(tmp_path)
+    state = service.synchronize(make_sync_request())
+    service.run_synchronization(state.sync_id)
+    app.dependency_overrides[get_synchronization_service] = lambda: service
+    try:
+        response = TestClient(app).get("/api/v1/synchronization")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["states"][0]["last_synced_date"] == "2025-01-03"
+    assert response.json()["states"][0]["status"] == "completed"
+
+
+def test_config_endpoint_does_not_expose_cds_credentials():
+    response = TestClient(app).get("/api/v1/synchronization/config")
+    assert response.status_code == 200
+    assert "latest_available_date" in response.json()
+    assert "cds_api_key" not in response.json()
+    assert "cds_url" not in response.json()
+
+
 def test_synchronization_reuses_in_flight_duplicate_request(tmp_path: Path) -> None:
     service, _ = make_service(tmp_path)
 

@@ -22,7 +22,7 @@ def local_date_range(start_date: date, end_date: date) -> tuple[str, str]:
     )
 
 
-def render_filter_controls() -> dict[str, Any]:
+def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
     default_start = date(2025, 1, 1)
     default_end = date(2025, 1, 2)
 
@@ -30,8 +30,8 @@ def render_filter_controls() -> dict[str, Any]:
         st.header("Truy vấn")
         st.caption("Các ngày được chọn theo giờ Việt Nam (UTC+7).")
         variable_label = st.selectbox("Biến khí hậu", list(VARIABLES), index=0)
-        start_date = st.date_input("Ngày bắt đầu", value=default_start)
-        end_date = st.date_input("Ngày kết thúc", value=default_end)
+        start_date = st.date_input("Ngày bắt đầu", value=default_start, disabled=follow_latest)
+        end_date = st.date_input("Ngày kết thúc", value=default_end, disabled=follow_latest)
         latitude = st.number_input("Vĩ độ", min_value=-90.0, max_value=90.0, value=10.8231)
         longitude = st.number_input("Kinh độ", min_value=-180.0, max_value=180.0, value=106.6297)
 

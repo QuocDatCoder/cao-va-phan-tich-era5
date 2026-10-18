@@ -99,8 +99,34 @@ all imported rows if processing fails.
 Download and synchronization `start_date`/`end_date` are UTC calendar dates.
 For a full Vietnam day on February 1, download January 31 and February 1 UTC,
 then query `2025-02-01T00:00:00+07:00` through `2025-02-01T23:00:00+07:00`.
-Dashboard data is visible after a manual refresh; automatic chart refresh is
-not included in this step. Mock downloads remain separate from real observations.
+Mock downloads remain separate from real observations.
+
+## Dashboard updates
+
+The sidebar polls synchronization states and the dashboard's current download job
+every 15 seconds using a Streamlit fragment (Streamlit >=1.37). A newly observed
+successful completion changes the cache revision and reruns the charts/statistics.
+History mode keeps the selected date range. Polling failures show an error while
+retaining the last known data, and failed/running syncs do not invalidate completed
+data. `GET /api/v1/synchronization` lists up to 100 recent states;
+`GET /api/v1/synchronization/config` exposes public runtime limits and the estimated
+latest available date, without credentials.
+
+Enable **Theo dõi dữ liệu mới nhất** for a sliding window of complete Vietnam
+calendar days ending at the latest synced UTC date. Enable **Tự đồng bộ khi theo dõi**
+to start a recent-window synchronization and repeat it at the configured interval
+(default 6 hours) while the dashboard session is open. This checkbox is off by
+default. **Đồng bộ khoảng đang chọn** starts a manual sync. History mode limits
+manual synchronization to the selected dates, rather than backfilling to today.
+The follow window is capped to leave room for the preceding UTC day within the
+backend's per-run/per-request limits. If no matching completed data exists, follow
+mode waits instead of starting chart queries before the sync finishes.
+
+The backend scheduler is independent and continues only when `ERA5_SYNC_ENABLED`
+is enabled. It synchronizes the variable/region configured in its environment,
+not arbitrary dashboard selections. Polling detects matching scheduler/API syncs
+as well as syncs started from the dashboard. The UI's automatic sync runs only
+while the page is open. Raw download/sync dates remain UTC dates.
 
 Previously downloaded point NetCDF files are imported on their first matching
 query. There is no automatic bulk migration of old files or `weather.db`.

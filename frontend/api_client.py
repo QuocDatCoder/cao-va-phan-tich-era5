@@ -47,6 +47,15 @@ class DashboardApiClient:
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/jobs/{job_id}")
 
+    def get_sync_config(self) -> dict[str, Any]:
+        return self._get("/api/v1/synchronization/config")
+
+    def list_synchronizations(self) -> dict[str, Any]:
+        return self._get("/api/v1/synchronization")
+
+    def run_synchronization(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/synchronization/run", payload)
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             response = self._session().get(

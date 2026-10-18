@@ -25,6 +25,13 @@ class SynchronizationRepository:
             return None
         return self._row_to_state(row)
 
+    def list_states(self, limit: int = 100) -> list[SynchronizationState]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM synchronization_states ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._row_to_state(row) for row in rows]
+
     def upsert_queued(
         self,
         sync_id: str,

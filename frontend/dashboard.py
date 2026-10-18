@@ -1,11 +1,15 @@
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
 
 from frontend.api_client import DEFAULT_TIMEOUT_SECONDS, DashboardApiClient, DashboardApiError
+from frontend.live_updates import (
+    completion_events, follow_window, latest_synced_date, matching_states, revision_key,
+)
 from frontend.components.charts import (
     anomaly_figure,
     comparison_figure,
@@ -35,7 +39,11 @@ def main() -> None:
     st.caption("Dữ liệu hiển thị theo giờ Việt Nam (UTC+7); nhiệt độ và điểm sương dùng °C.")
 
     client = build_client()
-    params = render_filter_controls()
+    with st.sidebar:
+        follow = st.toggle("Theo dõi dữ liệu mới nhất", value=False)
+        days = st.number_input("Số ngày theo dõi", min_value=1, max_value=6, value=2, disabled=not follow)
+        auto_sync = st.checkbox("Tự đồng bộ khi theo dõi", value=False, disabled=not follow)
+    params = render_filter_controls(follow_latest=follow)
     baseline_params = render_baseline_controls()
     comparison_params = render_comparison_controls()
 
@@ -44,6 +52,15 @@ def main() -> None:
         st.code(client.base_url)
         if st.button("Kiểm tra máy chủ"):
             _run_request("trạng thái máy chủ", client.health, lambda _: st.success("Đang hoạt động"))
+        _render_live_updates(client, params, follow, int(days), auto_sync)
+
+    if follow:
+        synced = latest_synced_date(st.session_state.get("live_states", []))
+        if not synced:
+            st.info("Đang chờ đồng bộ dữ liệu cho vị trí này. Trạng thái tự cập nhật mỗi 15 giây.")
+            return
+        params = follow_window(params, synced, int(days))
+        st.caption(f"Đang theo dõi: {params['start'][:10]} đến {params['end'][:10]} (UTC+7).")
 
     tabs = st.tabs(
         [
@@ -65,7 +82,7 @@ def main() -> None:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key: tuple) -> dict[str, Any]:
+def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key: tuple, revision: str = "") -> dict[str, Any]:
     client = DashboardApiClient(base_url=base_url, timeout_seconds=timeout_seconds)
     params = dict(params_key)
     if endpoint == "timeseries":
@@ -95,7 +112,77 @@ def _load_cached(client: DashboardApiClient, endpoint: str, params: dict[str, An
         timeout_seconds=client.timeout_seconds,
         endpoint=endpoint,
         params_key=_params_key(params),
+        revision=st.session_state.get("live_revision", ""),
     )
+
+
+@st.fragment(run_every=15)
+def _render_live_updates(client, params, follow, days, auto_sync):
+    st.subheader("Đồng bộ dữ liệu")
+    context = (client.base_url, params["variable"], params["latitude"], params["longitude"],
+               follow, days, params["start"] if not follow else None, params["end"] if not follow else None)
+    if st.session_state.get("live_context") != context:
+        st.session_state["live_context"] = context
+        st.session_state["live_events"] = {}
+        st.session_state["live_revision"] = None
+        st.session_state["live_last_attempt"] = None
+        st.session_state["live_states"] = []
+    try:
+        config = client.get_sync_config()
+        states = matching_states(client.list_synchronizations()["states"], params)
+        limit = min(config["max_days_per_request"], config["max_days_per_run"])
+        if follow and days + 1 > limit:
+            st.warning(f"Hãy chọn tối đa {max(0, limit-1)} ngày theo dõi theo cấu hình máy chủ.")
+            st.session_state["live_states"] = []
+            return
+        target = follow_window(params, config["latest_available_date"], days) if follow else params
+        payload = _download_payload(target)
+        payload["latest_available_date"] = payload.pop("end_date")
+        in_flight = any(state["status"] in {"queued", "running"} for state in states)
+        manual = st.button("Đồng bộ khoảng đang chọn", disabled=in_flight)
+        last_attempt = st.session_state.get("live_last_attempt")
+        due = last_attempt is None or monotonic() - last_attempt >= config["interval_hours"] * 3600
+        if manual or (follow and auto_sync and due and not in_flight):
+            st.session_state["live_last_attempt"] = monotonic()
+            response = client.run_synchronization(payload)
+            states = [response] + [state for state in states if state["sync_id"] != response["sync_id"]]
+
+        job_id = st.session_state.get("download_job_id")
+        job = client.get_job(job_id) if job_id else None
+        if job:
+            st.caption(f"Tác vụ tải: {_translate_status(job['status'])}")
+            if job["status"] == "failed":
+                st.error(job.get("error") or "Tác vụ tải thất bại.")
+        events = completion_events(st.session_state.get("live_events", {}), states, job)
+        old_revision = st.session_state.get("live_revision")
+        revision = revision_key(config["provider"], events)
+        previous_latest = latest_synced_date(st.session_state.get("live_states", []))
+        st.session_state["live_states"] = states
+        st.session_state["live_events"] = events
+        st.session_state["live_revision"] = revision
+        st.caption(f"Kiểm tra trạng thái mỗi 15 giây; đồng bộ tự động mỗi {config['interval_hours']} giờ khi bật theo dõi.")
+        st.caption("Lịch đồng bộ backend: " + ("đang bật" if config["scheduler_enabled"] else "đang tắt"))
+        if states:
+            current = states[0]
+            st.write("Trạng thái: " + _translate_status(current["status"]))
+            if current.get("error"):
+                st.error(current["error"])
+            synced = latest_synced_date(states)
+            if synced:
+                st.caption(f"Đã đồng bộ đến ngày {synced} UTC; theo dõi hiển thị các ngày Việt Nam trọn vẹn.")
+            completed_at = current.get("completed_at")
+            if completed_at:
+                timestamp = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                st.caption("Lần kết thúc gần nhất: " + timestamp.astimezone(
+                    timezone(timedelta(hours=7))
+                ).strftime("%d/%m/%Y %H:%M UTC+7"))
+        else:
+            st.info("Chưa có tác vụ đồng bộ cho vị trí và biến này.")
+        if ((old_revision is not None and old_revision != revision)
+            or (follow and previous_latest != latest_synced_date(states))):
+            st.rerun(scope="app")
+    except DashboardApiError as exc:
+        st.error("Không đọc được trạng thái đồng bộ: " + str(exc))
 
 
 def _render_overview(
@@ -404,6 +491,7 @@ def _translate_status(status: Any) -> str:
         "completed": "Hoàn tất",
         "failed": "Thất bại",
         "cancelled": "Đã hủy",
+        "up_to_date": "Đã cập nhật đủ",
     }
     return translations.get(str(status), str(status))
 

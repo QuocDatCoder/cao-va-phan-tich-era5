@@ -16,7 +16,7 @@ from backend.app.storage.synchronization_repository import SynchronizationReposi
 
 @lru_cache
 def get_climate_service() -> ClimateService:
-    return ClimateService(provider=get_climate_provider())
+    return ClimateService(provider=get_climate_provider(), max_query_days=get_settings().era5_max_query_days)
 
 
 @lru_cache

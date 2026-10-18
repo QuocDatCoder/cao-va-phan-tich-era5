@@ -34,6 +34,7 @@ def synchronization_config(
             settings.era5_sync_availability_lag_days
         ).latest_available_date().isoformat(),
         "max_days_per_request": settings.era5_max_days_per_request,
+        "max_query_days": settings.era5_max_query_days,
         "max_days_per_run": settings.era5_sync_max_days_per_run,
     }
 

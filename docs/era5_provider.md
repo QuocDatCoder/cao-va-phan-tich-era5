@@ -33,8 +33,31 @@ Do not commit real credentials. `.env` is ignored; `.env.example` contains place
 - `2m_dewpoint_temperature`
 - `precipitation`
 - `total_precipitation`
+- `wind_u`, `u10`, `10m_u_component_of_wind`
+- `wind_v`, `v10`, `10m_v_component_of_wind`
+- `wind_speed`, `wind_direction`
+- `solar_radiation`, `ssrd`, `surface_solar_radiation_downwards`
 
 Precipitation is converted from ERA5 metres to millimetres.
+Solar radiation is converted from J/m² to MJ/m² once at the provider boundary;
+SQLite stores MJ/m². For the configured ERA5 single-levels hourly reanalysis,
+these are hourly accumulated energies, not W/m² fluxes.
+
+Point wind speed/direction are derived from time-aligned u/v source series in m/s.
+SQLite retains source components, which are reused for both derived variables.
+Area jobs for either derived variable request both CDS components in one file
+and import each before reporting completion. Each source import is atomic;
+if the second source fails, the job fails without advancing synchronization,
+while the first source's successfully imported data remains available.
+The mock provider supports the same variable names and units, using synthetic data.
+
+Direction is meteorological (where wind comes from); calm hours have no direction
+and are omitted. Direction statistics use an unweighted circular mean/std,
+with null min/max. Opposing directions can yield null mean/std. Linear
+trend/anomaly/compare reject direction with 422. The dashboard shows circular
+statistics and markers at 0–360° without joining points across north.
+See [ECMWF wind convention](https://confluence.ecmwf.int/pages/viewpage.action?pageId=690456538)
+and [ERA5 accumulation units](https://confluence.ecmwf.int/pages/viewpage.action?pageId=414588701).
 
 ## API units and timezone
 
@@ -143,9 +166,43 @@ ERA5 responses are requested as NetCDF and read with `xarray.open_dataset`. The 
 
 ## Limits
 
-ERA5 requests are limited by `ERA5_MAX_DAYS_PER_REQUEST` (default 7 days).
-Area downloads and synchronization imports also respect this per-request limit.
+Total queries are bounded by `ERA5_MAX_QUERY_DAYS` (default 366 complete days,
+configurable up to 3660). Individual CDS downloads remain bounded by
+`ERA5_MAX_DAYS_PER_REQUEST` (default 7). Missing full UTC days can be batched;
+partial boundary days stay separate to avoid extra date/hour combinations.
+Point queries without SQLite are also split. Existing SQLite observations and
+successful download chunks survive failures and are reused on retry.
+
+Long area downloads create multiple NetCDF chunks, import each, and return a
+`.manifest.json` artifact listing their relative storage paths. Short jobs still
+return a single NetCDF artifact. The job completes only after all chunks succeed.
+Synchronization continues to advance one configured batch per run.
 Keep test regions small: an area imports every grid point, not just its centre.
+
+## Calendar aggregation
+
+`GET /api/v1/climate/aggregate` adds `frequency=hourly|daily|monthly|yearly` and
+`aggregation=auto|mean|min|max|sum`. Auto uses sums for precipitation/radiation,
+means for scalar instantaneous variables, and unweighted circular means for
+wind direction. Temperature and wind-speed results include hourly min/max.
+Sum is rejected for other variables; direction rejects min/max/sum.
+
+Calendar buckets use Vietnam time, with leap-year/month lengths handled by
+calendar boundaries. Each result has an exclusive period_end, observation count,
+requested-hour expected_count, coverage, partial_period and complete flags.
+Partial months/years are not advertised as full-period totals. Undefined circular
+means return null. Calm hours omitted from wind direction reduce its count.
+
+ERA5 accumulated variables represent the hour ending at validity time. The
+aggregate service queries sources +1 hour and relabels to the hour start before
+calendar grouping (`time_basis=hour_start`). The legacy timeseries endpoint keeps
+original validity timestamps. This alignment applies to the configured ERA5
+single-levels product, not indiscriminately to all ERA5-Land products.
+
+The dashboard's period selector affects the timeseries chart/table; overview
+statistics, trend, comparison and anomaly remain hourly analyses. Monthly heatmap
+uses sums for precipitation/radiation and means for other variables; it covers
+only the requested dates, which may be a partial month.
 
 ## Tests
 

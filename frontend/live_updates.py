@@ -7,7 +7,11 @@ from frontend.components.controls import local_date_range
 
 
 ALIASES = {"temperature": "2m_temperature", "precipitation": "total_precipitation",
-           "dewpoint": "2m_dewpoint_temperature"}
+           "dewpoint": "2m_dewpoint_temperature",
+           "wind_u": "10m_u_component_of_wind", "u10": "10m_u_component_of_wind",
+           "wind_v": "10m_v_component_of_wind", "v10": "10m_v_component_of_wind",
+           "solar_radiation": "surface_solar_radiation_downwards",
+           "ssrd": "surface_solar_radiation_downwards"}
 
 
 def matching_states(states: list[dict], params: dict) -> list[dict]:
@@ -15,7 +19,9 @@ def matching_states(states: list[dict], params: dict) -> list[dict]:
     matches = []
     for state in states:
         area = state["area"]
-        if (ALIASES.get(state["variable"], state["variable"]) == variable
+        state_variable = ALIASES.get(state["variable"], state["variable"])
+        equivalent_wind = variable in {"wind_speed", "wind_direction"} and state_variable in {"wind_speed", "wind_direction"}
+        if ((state_variable == variable or equivalent_wind)
             and area["south"] <= params["latitude"] <= area["north"]
             and area["west"] <= params["longitude"] <= area["east"]):
             matches.append(state)

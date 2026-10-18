@@ -3,6 +3,7 @@ from math import isfinite, sqrt
 
 from backend.app.domain.schemas import (
     AnomalyPoint,
+    AggregationRequest,
     AnomalyResponse,
     ClimatePoint,
     ComparePeriodSummary,
@@ -19,6 +20,8 @@ from backend.app.domain.schemas import (
 )
 from backend.app.services.climate_service import ClimateService
 from backend.app.domain.time_utils import to_vietnam_time
+from backend.app.domain.wind import circular_statistics
+from backend.app.services.aggregation import ACCUMULATED_VARIABLES
 
 
 class ClimateAnalysisError(Exception):
@@ -32,6 +35,10 @@ class ClimateAnalysisService:
     def statistics(self, request: TimeSeriesRequest) -> StatisticsResponse:
         series = self._get_non_empty_series(request)
         values = self._values(series.data)
+        if series.unit == "°":
+            mean, std = circular_statistics(values)
+            return StatisticsResponse(variable=series.variable, unit=series.unit, location=series.location,
+                                      mean=mean, std=std, min=None, max=None, count=len(values))
         mean = self._mean(values)
         return StatisticsResponse(
             variable=series.variable,
@@ -45,6 +52,7 @@ class ClimateAnalysisService:
         )
 
     def trend(self, request: TimeSeriesRequest) -> TrendResponse:
+        self._reject_direction(request)
         series = self._get_non_empty_series(request)
         points = self._sorted_points(series.data)
         if len(points) < 2:
@@ -67,6 +75,7 @@ class ClimateAnalysisService:
         request: TimeSeriesRequest,
         baseline_request: TimeSeriesRequest,
     ) -> AnomalyResponse:
+        self._reject_direction(request)
         series = self._get_non_empty_series(request)
         baseline = self._get_non_empty_series(baseline_request)
         self._ensure_compatible(series=series, other=baseline)
@@ -95,6 +104,7 @@ class ClimateAnalysisService:
         period_a_request: TimeSeriesRequest,
         period_b_request: TimeSeriesRequest,
     ) -> CompareResponse:
+        self._reject_direction(period_a_request)
         period_a = self._get_non_empty_series(period_a_request)
         period_b = self._get_non_empty_series(period_b_request)
         self._ensure_compatible(series=period_a, other=period_b)
@@ -121,6 +131,17 @@ class ClimateAnalysisService:
         )
 
     def heatmap(self, request: TimeSeriesRequest) -> HeatmapResponse:
+        if request.variable in ACCUMULATED_VARIABLES:
+            aggregate = self._climate_service.get_aggregate(AggregationRequest(
+                **request.model_dump(), frequency="monthly", aggregation="auto",
+            ))
+            return HeatmapResponse(
+                variable=aggregate.variable, unit=aggregate.unit, location=aggregate.location,
+                aggregation=aggregate.aggregation,
+                data=[HeatmapCell(year=point.time.year, month=point.time.month,
+                                  value=point.value, count=point.count)
+                      for point in aggregate.data if point.value is not None],
+            )
         series = self._get_non_empty_series(request)
         grouped: dict[tuple[int, int], list[float]] = defaultdict(list)
         for point in self._sorted_points(series.data):
@@ -130,7 +151,7 @@ class ClimateAnalysisService:
             HeatmapCell(
                 year=year,
                 month=month,
-                value=self._round(self._mean(values)),
+                value=self._round(self._mean_for_unit(values, series.unit)),
                 count=len(values),
             )
             for (year, month), values in sorted(grouped.items())
@@ -139,6 +160,7 @@ class ClimateAnalysisService:
             variable=series.variable,
             unit=series.unit,
             location=series.location,
+            aggregation="circular_mean" if series.unit == "°" else "mean",
             data=cells,
         )
 
@@ -152,7 +174,7 @@ class ClimateAnalysisService:
                 MapPoint(
                     latitude=series.location.latitude,
                     longitude=series.location.longitude,
-                    value=self._round(self._mean(values)),
+                    value=self._round(self._mean_for_unit(values, series.unit)),
                 )
             ],
         )
@@ -185,6 +207,20 @@ class ClimateAnalysisService:
 
     def _mean(self, values: list[float]) -> float:
         return sum(values) / len(values)
+
+    def _mean_for_unit(self, values: list[float], unit: str) -> float:
+        if unit == "°":
+            mean, _ = circular_statistics(values)
+            if mean is None:
+                raise ClimateAnalysisError("Mean wind direction is undefined for these opposing directions.")
+            return mean
+        return self._mean(values)
+
+    def _reject_direction(self, request: TimeSeriesRequest) -> None:
+        if request.variable == "wind_direction":
+            raise ClimateAnalysisError(
+                "Wind direction is circular. Use timeseries or circular statistics instead of linear trend/anomaly/compare."
+            )
 
     def _population_std(self, values: list[float], mean: float) -> float:
         return sqrt(sum((value - mean) ** 2 for value in values) / len(values))

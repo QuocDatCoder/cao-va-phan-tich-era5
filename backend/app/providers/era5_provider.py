@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from math import ceil, floor
 from pathlib import Path
 import logging
+import json
 import sqlite3
 from typing import Any
 
@@ -26,7 +27,10 @@ from backend.app.providers.errors import (
     UnsupportedVariableError,
 )
 from backend.app.storage.climate_repository import ClimateRepository
-from backend.app.domain.time_utils import hourly_timestamps, missing_hour_ranges, to_utc_naive
+from backend.app.domain.time_utils import (
+    batch_missing_ranges, hourly_timestamps, missing_hour_ranges, request_chunks, to_utc_naive,
+)
+from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS, derive_wind
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,21 @@ ERA5_VARIABLES: dict[str, Era5Variable] = {
     ),
 }
 
+ERA5_VARIABLES.update({
+    "10m_u_component_of_wind": Era5Variable("10m_u_component_of_wind", ("u10", "10m_u_component_of_wind"), "m/s"),
+    "10m_v_component_of_wind": Era5Variable("10m_v_component_of_wind", ("v10", "10m_v_component_of_wind"), "m/s"),
+    "surface_solar_radiation_downwards": Era5Variable(
+        "surface_solar_radiation_downwards", ("ssrd", "surface_solar_radiation_downwards"), "MJ/m²", scale=1e-6,
+    ),
+})
+for alias, name in {"wind_u": WIND_COMPONENTS[0], "u10": WIND_COMPONENTS[0],
+                    "wind_v": WIND_COMPONENTS[1], "v10": WIND_COMPONENTS[1],
+                    "solar_radiation": "surface_solar_radiation_downwards",
+                    "ssrd": "surface_solar_radiation_downwards"}.items():
+    ERA5_VARIABLES[alias] = ERA5_VARIABLES[name]
+for name, unit in DERIVED_WIND_UNITS.items():
+    ERA5_VARIABLES[name] = Era5Variable(name, (), unit)
+
 ERA5_REGULAR_GRID_DEGREES = 0.25
 
 
@@ -93,12 +112,20 @@ class ERA5ClimateProvider(ClimateDataProvider):
             raise ValueError("end must be greater than or equal to start")
 
         variable_spec = self._get_variable(variable)
-        self._validate_time_range(start=start, end=end)
+        self._validate_query_range(start, end)
         if not hourly_timestamps(start, end):
             raise ClimateDataError("The requested interval contains no hourly ERA5 observations.")
+        if variable in DERIVED_WIND_UNITS:
+            components = [self.get_timeseries(name, latitude, longitude, start, end) for name in WIND_COMPONENTS]
+            try:
+                return derive_wind(variable, *components)
+            except ValueError as exc:
+                raise ClimateDataError(str(exc)) from exc
         location = Location(latitude=latitude, longitude=longitude)
         if self._repository is None:
-            points = self._load_point_data(variable, variable_spec, location, start, end)
+            points = []
+            for chunk_start, chunk_end in request_chunks(start, end, self._settings.era5_max_days_per_request):
+                points.extend(self._load_point_data(variable, variable_spec, location, chunk_start, chunk_end))
         else:
             try:
                 points = self._get_stored_or_download(variable, variable_spec, location, start, end)
@@ -126,7 +153,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
             points = self._repository.get_series(**query)
             gaps = missing_hour_ranges(start, end, {point.time for point in points})
 
-        for gap_start, gap_end in gaps:
+        for gap_start, gap_end in batch_missing_ranges(gaps, self._settings.era5_max_days_per_request):
             logger.info("ERA5 missing range: variable=%s UTC=%s..%s", spec.cds_name, gap_start, gap_end)
             self._load_point_data(variable, spec, location, gap_start, gap_end)
 
@@ -153,6 +180,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
         )
 
         if not target_path.exists():
+            self._validate_time_range(start, end)
             self._download(
                 variable_spec=variable_spec,
                 latitude=latitude,
@@ -194,6 +222,24 @@ class ERA5ClimateProvider(ClimateDataProvider):
             raise ClimateDataError("Only hourly ERA5 downloads are supported.")
 
         variable_spec = self._get_variable(variable)
+        self._validate_query_range(datetime.combine(start_date, time.min), datetime.combine(end_date, time(hour=23)))
+        if (end_date - start_date).days + 1 > self._settings.era5_max_days_per_request:
+            files = []
+            current = start_date
+            while current <= end_date:
+                chunk_end = min(end_date, current + timedelta(days=self._settings.era5_max_days_per_request - 1))
+                artifact = self.download_area(variable, area, current, chunk_end, frequency)
+                files.append(artifact.storage_path)
+                current = chunk_end + timedelta(days=1)
+            manifest = self._area_target_path(variable_spec.cds_name, area, start_date, end_date).with_suffix(".manifest.json")
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps({
+                "dataset": self._settings.era5_dataset, "variable": variable_spec.cds_name,
+                "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+                "area": area.model_dump(), "files": files,
+            }, indent=2), encoding="utf-8")
+            return DownloadArtifact(file_path=manifest, storage_path=manifest.relative_to(self._settings.data_dir).as_posix(),
+                                    dataset=self._settings.era5_dataset, variable=variable_spec.cds_name)
         self._validate_time_range(
             start=datetime.combine(start_date, time.min),
             end=datetime.combine(end_date, time.max),
@@ -215,7 +261,9 @@ class ERA5ClimateProvider(ClimateDataProvider):
             self._retrieve(request=request, target_path=target_path)
 
         if self._repository is not None:
-            self._import_area(target_path, variable_spec, area, start_date, end_date)
+            specs = [self._get_variable(name) for name in WIND_COMPONENTS] if variable in DERIVED_WIND_UNITS else [variable_spec]
+            for spec in specs:
+                self._import_area(target_path, spec, area, start_date, end_date)
 
         return DownloadArtifact(
             file_path=target_path,
@@ -289,6 +337,11 @@ class ERA5ClimateProvider(ClimateDataProvider):
                 "ERA5 requests are limited to "
                 f"{self._settings.era5_max_days_per_request} days for Phase 4."
             )
+        self._validate_query_range(start, end)
+
+    def _validate_query_range(self, start: datetime, end: datetime) -> None:
+        if end - start >= timedelta(days=self._settings.era5_max_query_days):
+            raise ClimateDataError(f"Climate queries are limited to {self._settings.era5_max_query_days} days.")
         latest_available = self._latest_available_date()
         if end.date() > latest_available:
             raise ClimateDataError(
@@ -344,7 +397,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
             hours = [stamp.hour for stamp in hourly_timestamps(start, end)]
         return {
             "product_type": ["reanalysis"],
-            "variable": [variable_spec.cds_name],
+            "variable": list(WIND_COMPONENTS) if variable_spec.cds_name in DERIVED_WIND_UNITS else [variable_spec.cds_name],
             "date": dates,
             "time": [f"{hour:02d}:00" for hour in hours],
             "data_format": "netcdf",
@@ -361,7 +414,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
     ) -> dict[str, Any]:
         return {
             "product_type": ["reanalysis"],
-            "variable": [variable_spec.cds_name],
+            "variable": list(WIND_COMPONENTS) if variable_spec.cds_name in DERIVED_WIND_UNITS else [variable_spec.cds_name],
             "date": self._date_parts(
                 start=datetime.combine(start_date, time.min),
                 end=datetime.combine(end_date, time.min),

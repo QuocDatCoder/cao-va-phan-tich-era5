@@ -119,3 +119,28 @@ def test_auto_follow_starts_sync_once_and_then_renders_completed_window(live_app
     assert ui.session_state["live_states"][0]["status"] == "completed"
     synced = ui.session_state["live_states"][0]["last_synced_date"]
     assert timeseries_calls(calls)[-1]["end"] == synced + "T23:00:00+07:00"
+
+
+@pytest.mark.parametrize("label,variable", [
+    ("Điểm sương 2m", "dewpoint"), ("Tốc độ gió 10m", "wind_speed"),
+    ("Hướng gió 10m", "wind_direction"), ("Bức xạ mặt trời", "solar_radiation"),
+])
+def test_weather_variable_renders_in_dashboard(live_app, label, variable):
+    ui, sync, calls = live_app
+    ui.run(timeout=30)
+    ui.selectbox[0].select(label).run(timeout=30)
+    assert not ui.exception
+    assert not ui.error
+    assert timeseries_calls(calls)[-1]["variable"] == variable
+
+
+@pytest.mark.parametrize("label", ["Nhiệt độ", "Lượng mưa", "Hướng gió 10m", "Bức xạ mặt trời"])
+def test_daily_aggregation_renders_in_dashboard(live_app, label):
+    ui, sync, calls = live_app
+    ui.run(timeout=30)
+    ui.selectbox[0].select(label).run(timeout=30)
+    ui.selectbox[1].select("Theo ngày").run(timeout=30)
+    assert not ui.exception
+    assert not ui.error
+    aggregate_calls = [params for path, params in calls if path.endswith("/climate/aggregate")]
+    assert aggregate_calls[-1]["frequency"] == "daily"

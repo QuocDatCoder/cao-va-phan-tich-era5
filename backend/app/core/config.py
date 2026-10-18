@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     era5_dataset: str = "reanalysis-era5-single-levels"
     era5_max_days_per_request: int = Field(default=7, ge=1, le=31)
+    era5_max_query_days: int = Field(default=366, ge=1, le=3660)
     era5_point_buffer_degrees: float = Field(default=0.25, gt=0, le=2)
 
     era5_sync_enabled: bool = False

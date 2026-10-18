@@ -44,6 +44,10 @@ def main() -> None:
         days = st.number_input("Số ngày theo dõi", min_value=1, max_value=6, value=2, disabled=not follow)
         auto_sync = st.checkbox("Tự đồng bộ khi theo dõi", value=False, disabled=not follow)
     params = render_filter_controls(follow_latest=follow)
+    if params["variable"] == "wind_direction":
+        st.caption("Hướng gió khí tượng: Bắc 0°, Đông 90°, Nam 180°, Tây 270°. Giờ lặng gió không có hướng và được bỏ qua.")
+    elif params["variable"] == "solar_radiation":
+        st.caption("Bức xạ là năng lượng tích lũy trong từng giờ, đơn vị MJ/m².")
     baseline_params = render_baseline_controls()
     comparison_params = render_comparison_controls()
 
@@ -86,6 +90,8 @@ def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key
     client = DashboardApiClient(base_url=base_url, timeout_seconds=timeout_seconds)
     params = dict(params_key)
     if endpoint == "timeseries":
+        if params.get("frequency", "hourly") != "hourly":
+            return client.get_aggregate(params)
         return client.get_timeseries(params)
     if endpoint == "statistics":
         return client.get_statistics(params)
@@ -207,6 +213,9 @@ def _render_temporal_analysis(
 ) -> None:
     st.subheader("Chuỗi thời gian")
     _render_timeseries(client, params, show_title=False)
+    if params["variable"] == "wind_direction":
+        st.info("Hướng gió là đại lượng vòng tròn; xem trung bình vòng tròn trong tab Tổng quan.")
+        return
     st.divider()
     _render_anomaly(client, params, baseline_params)
     st.divider()
@@ -234,15 +243,28 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
     if not payload.get("data"):
         st.info("Không có quan sát nào cho bộ lọc đã chọn.")
         return
+    if "aggregation" in payload:
+        st.caption(f"Tổng hợp: {payload['aggregation']} · Múi giờ: UTC+7. Min/max trong bảng là cực trị của các quan sát giờ.")
+        if any(point.get("partial_period") for point in payload["data"]):
+            st.info("Có kỳ chưa trọn ngày/tháng/năm vì khoảng truy vấn chỉ bao phủ một phần kỳ đó.")
+        if any(point.get("coverage", 1) < 1 for point in payload["data"]):
+            st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
     st.plotly_chart(timeseries_figure(payload), use_container_width=True)
     st.dataframe(
-        timeseries_frame(payload).rename(columns={"time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị"}),
+        timeseries_frame(payload).rename(columns={
+            "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
+            "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
+            "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
+            "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
+        }),
         use_container_width=True,
     )
 
 
 def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Thống kê")
+    if params.get("frequency", "hourly") != "hourly":
+        st.caption("Thống kê tổng quan vẫn tính trên các quan sát giờ; lựa chọn chu kỳ áp dụng cho biểu đồ Chuỗi thời gian.")
     _run_request(
         "thống kê",
         lambda: _load_cached(client, "statistics", params),
@@ -263,6 +285,9 @@ def _show_statistics(payload: dict[str, Any]) -> None:
         ("Độ lệch chuẩn", "std"),
         ("Số quan sát", "count"),
     ]
+    if unit == "°":
+        labels = [("Trung bình vòng tròn", "mean"), ("Độ phân tán góc", "std"), ("Số quan sát", "count")]
+        st.caption("Dấu — nghĩa là không xác định được hướng trung bình cho tập hướng đối nhau.")
     for column, (label, key) in zip(cols, labels):
         value = _format_value(payload.get(key), unit) if key != "count" else _format_number(payload.get(key), 0)
         column.metric(label, value)
@@ -270,6 +295,9 @@ def _show_statistics(payload: dict[str, Any]) -> None:
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Xu hướng")
+    if params["variable"] == "wind_direction":
+        st.info("Không áp dụng hồi quy tuyến tính trực tiếp cho góc hướng gió.")
+        return
     _run_request(
         "xu hướng",
         lambda: _load_cached(client, "trend", params),
@@ -327,6 +355,9 @@ def _render_comparison(
     comparison_params: dict[str, str],
 ) -> None:
     st.subheader("So sánh giai đoạn")
+    if params["variable"] == "wind_direction":
+        st.info("So sánh tuyến tính hiện dành cho các biến vô hướng như tốc độ gió, nhiệt độ và mưa.")
+        return
     request_params = {
         "variable": params["variable"],
         "latitude": params["latitude"],
@@ -369,11 +400,16 @@ def _show_heatmap(payload: dict[str, Any]) -> None:
     if not payload.get("data"):
         st.info("Không có ô dữ liệu nào cho bản đồ nhiệt.")
         return
+    st.caption("Phép tổng hợp: " + payload.get("aggregation", "mean")
+               + ". Mỗi ô chỉ bao phủ khoảng ngày đã chọn, có thể chưa trọn tháng.")
     st.plotly_chart(heatmap_figure(payload), use_container_width=True)
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Bản đồ")
+    if params["variable"] == "wind_direction":
+        st.info("Xem hướng gió theo giờ trong tab Chuỗi thời gian.")
+        return
     st.caption("Máy chủ API hiện trả dữ liệu bản đồ theo một điểm tọa độ đã chọn.")
     _run_request(
         "bản đồ",

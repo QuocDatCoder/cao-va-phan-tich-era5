@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from math import pi, sin
+from math import cos, pi, sin
 from pathlib import Path
 
 from backend.app.domain.schemas import (
@@ -10,6 +10,7 @@ from backend.app.domain.schemas import (
     TimeSeriesResponse,
 )
 from backend.app.providers.base import ClimateDataProvider
+from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS, derive_wind
 
 
 class MockClimateProvider(ClimateDataProvider):
@@ -25,6 +26,19 @@ class MockClimateProvider(ClimateDataProvider):
         "precipitation": "total_precipitation",
         "total_precipitation": "total_precipitation",
     }
+    for _alias, _name, _unit in [
+        ("dewpoint", "2m_dewpoint_temperature", "K"),
+        ("wind_u", WIND_COMPONENTS[0], "m/s"),
+        ("u10", WIND_COMPONENTS[0], "m/s"),
+        ("wind_v", WIND_COMPONENTS[1], "m/s"),
+        ("v10", WIND_COMPONENTS[1], "m/s"),
+        ("solar_radiation", "surface_solar_radiation_downwards", "MJ/m²"),
+        ("ssrd", "surface_solar_radiation_downwards", "MJ/m²"),
+        ("wind_speed", "wind_speed", "m/s"),
+        ("wind_direction", "wind_direction", "°"),
+    ]:
+        _UNITS[_alias] = _UNITS[_name] = _unit
+        _STORAGE_NAMES[_alias] = _STORAGE_NAMES[_name] = _name
 
     def __init__(self, data_dir: Path = Path("data")) -> None:
         self._data_dir = data_dir.resolve()
@@ -39,6 +53,9 @@ class MockClimateProvider(ClimateDataProvider):
     ) -> TimeSeriesResponse:
         if end < start:
             raise ValueError("end must be greater than or equal to start")
+        if variable in DERIVED_WIND_UNITS:
+            components = [self.get_timeseries(name, latitude, longitude, start, end) for name in WIND_COMPONENTS]
+            return derive_wind(variable, *components)
 
         points: list[ClimatePoint] = []
         current = start
@@ -59,6 +76,7 @@ class MockClimateProvider(ClimateDataProvider):
         )
 
     def _value_for(self, variable: str, timestamp: datetime) -> float:
+        variable = self._STORAGE_NAMES.get(variable, variable)
         hour_angle = 2 * pi * (timestamp.hour / 24)
 
         if variable in {"temperature", "2m_temperature"}:
@@ -66,6 +84,14 @@ class MockClimateProvider(ClimateDataProvider):
 
         if variable in {"precipitation", "total_precipitation"}:
             return round(max(0.0, 2 * sin(hour_angle)), 3)
+        if variable == "2m_dewpoint_temperature":
+            return round(294.15 + 4 * sin(hour_angle), 3)
+        if variable == WIND_COMPONENTS[0]:
+            return round(3 * cos(hour_angle), 6)
+        if variable == WIND_COMPONENTS[1]:
+            return round(4 * sin(hour_angle), 6)
+        if variable == "surface_solar_radiation_downwards":
+            return round(max(0.0, 2.5 * sin(2 * pi * ((timestamp.hour + 7) % 24 - 6) / 24)), 6)
 
         return round(sin(hour_angle), 3)
 

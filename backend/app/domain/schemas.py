@@ -38,14 +38,43 @@ class TimeSeriesResponse(BaseModel):
     data: list[ClimatePoint]
 
 
+class AggregationRequest(TimeSeriesRequest):
+    frequency: Literal["hourly", "daily", "monthly", "yearly"] = "daily"
+    aggregation: Literal["auto", "mean", "min", "max", "sum"] = "auto"
+
+
+class AggregatedPoint(BaseModel):
+    time: datetime
+    period_end: datetime
+    value: float | None
+    min: float | None
+    max: float | None
+    count: int
+    expected_count: int
+    coverage: float
+    partial_period: bool
+    complete: bool
+
+
+class AggregationResponse(BaseModel):
+    variable: str
+    unit: str
+    location: Location
+    frequency: str
+    aggregation: str
+    timezone: str = "UTC+7"
+    time_basis: Literal["observation_time", "hour_start"] = "observation_time"
+    data: list[AggregatedPoint]
+
+
 class StatisticsResponse(BaseModel):
     variable: str
     unit: str
     location: Location
-    mean: float
-    min: float
-    max: float
-    std: float
+    mean: float | None
+    min: float | None
+    max: float | None
+    std: float | None
     count: int
 
 
@@ -102,6 +131,7 @@ class HeatmapResponse(BaseModel):
     variable: str
     unit: str
     location: Location
+    aggregation: str = "mean"
     data: list[HeatmapCell]
 
 

@@ -1,11 +1,13 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import ValidationError
 
 from backend.app.domain.schemas import (
     AnomalyResponse,
+    AggregationRequest,
+    AggregationResponse,
     CompareResponse,
     HeatmapResponse,
     Location,
@@ -90,6 +92,19 @@ def get_statistics(
     service: Annotated[ClimateAnalysisService, Depends(get_climate_analysis_service)],
 ) -> StatisticsResponse:
     return service.statistics(request)
+
+
+@router.get("/aggregate", response_model=AggregationResponse)
+def get_aggregate(
+    request: Annotated[TimeSeriesRequest, Depends(get_timeseries_request)],
+    service: Annotated[ClimateService, Depends(get_climate_service)],
+    frequency: Literal["hourly", "daily", "monthly", "yearly"] = "daily",
+    aggregation: Literal["auto", "mean", "min", "max", "sum"] = "auto",
+) -> AggregationResponse:
+    try:
+        return service.get_aggregate(AggregationRequest(**request.model_dump(), frequency=frequency, aggregation=aggregation))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/trend", response_model=TrendResponse)

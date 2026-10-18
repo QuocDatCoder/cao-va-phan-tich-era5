@@ -26,6 +26,9 @@ class DashboardApiClient:
     def get_statistics(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._get("/api/v1/climate/statistics", params=params)
 
+    def get_aggregate(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._get("/api/v1/climate/aggregate", params=params)
+
     def get_trend(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._get("/api/v1/climate/trend", params=params)
 

@@ -23,7 +23,19 @@ def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
     frame = timeseries_frame(payload)
     unit = payload.get("unit", "")
     variable = payload.get("variable", "giá trị")
-    fig = px.line(frame, x="time", y="value", markers=True)
+    if payload.get("aggregation") == "sum":
+        fig = px.bar(frame, x="time", y="value")
+    else:
+        fig = px.line(frame, x="time", y="value", markers=True)
+    if payload.get("aggregation") == "mean" and unit not in {"mm", "MJ/m²", "°"}:
+        for column, label in (("min", "Nhỏ nhất trong kỳ"), ("max", "Lớn nhất trong kỳ")):
+            if column in frame:
+                fig.add_trace(go.Scatter(x=frame["time"], y=frame[column], mode="lines",
+                                         name=label, line={"dash": "dot"}))
+    if payload.get("variable") == "wind_direction":
+        fig.update_traces(mode="markers")
+        fig.update_yaxes(range=[0, 360], tickvals=[0, 90, 180, 270, 360],
+                         ticktext=["Bắc 0°", "Đông 90°", "Nam 180°", "Tây 270°", "Bắc 360°"])
     fig.update_layout(
         xaxis_title="Thời gian Việt Nam (UTC+7)",
         yaxis_title=f"{variable} ({unit})" if unit else variable,

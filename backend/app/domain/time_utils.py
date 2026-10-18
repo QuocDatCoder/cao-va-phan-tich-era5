@@ -48,3 +48,22 @@ def missing_hour_ranges(
         else:
             ranges.append((hour, hour))
     return ranges
+
+
+def batch_missing_ranges(ranges: list[tuple[datetime, datetime]], max_days: int) -> list[tuple[datetime, datetime]]:
+    """Combine consecutive complete UTC days, never partial boundary days."""
+    batches: list[tuple[datetime, datetime]] = []
+    for start, end in ranges:
+        if (batches and start.hour == 0 and end.hour == 23
+            and batches[-1][0].hour == 0 and batches[-1][1].hour == 23
+            and batches[-1][1] + timedelta(hours=1) == start
+            and (end.date() - batches[-1][0].date()).days < max_days):
+            batches[-1] = (batches[-1][0], end)
+        else:
+            batches.append((start, end))
+    return batches
+
+
+def request_chunks(start: datetime, end: datetime, max_days: int):
+    """Disjoint inclusive hourly request windows bounded by elapsed duration."""
+    yield from batch_missing_ranges(missing_hour_ranges(start, end, set()), max_days)

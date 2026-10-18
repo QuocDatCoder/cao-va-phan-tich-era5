@@ -9,6 +9,12 @@ VARIABLES = {
     "Nhiệt độ 2m": "2m_temperature",
     "Lượng mưa": "precipitation",
     "Tổng lượng mưa": "total_precipitation",
+    "Điểm sương 2m": "dewpoint",
+    "Tốc độ gió 10m": "wind_speed",
+    "Hướng gió 10m": "wind_direction",
+    "Thành phần gió u (Đông–Tây)": "wind_u",
+    "Thành phần gió v (Bắc–Nam)": "wind_v",
+    "Bức xạ mặt trời": "solar_radiation",
 }
 
 VIETNAM_TIMEZONE = timezone(timedelta(hours=7))
@@ -30,6 +36,15 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
         st.header("Truy vấn")
         st.caption("Các ngày được chọn theo giờ Việt Nam (UTC+7).")
         variable_label = st.selectbox("Biến khí hậu", list(VARIABLES), index=0)
+        frequencies = {"Theo giờ": "hourly", "Theo ngày": "daily", "Theo tháng": "monthly", "Theo năm": "yearly"}
+        frequency = frequencies[st.selectbox("Chu kỳ hiển thị", list(frequencies))]
+        methods = {"Tự động theo biến": "auto", "Trung bình": "mean", "Nhỏ nhất": "min", "Lớn nhất": "max"}
+        variable = VARIABLES[variable_label]
+        if variable in {"precipitation", "total_precipitation", "solar_radiation"}:
+            methods["Tổng"] = "sum"
+        if variable == "wind_direction":
+            methods = {"Trung bình vòng tròn": "auto"}
+        aggregation = methods[st.selectbox("Phép tổng hợp", list(methods), disabled=frequency == "hourly")]
         start_date = st.date_input("Ngày bắt đầu", value=default_start, disabled=follow_latest)
         end_date = st.date_input("Ngày kết thúc", value=default_end, disabled=follow_latest)
         latitude = st.number_input("Vĩ độ", min_value=-90.0, max_value=90.0, value=10.8231)
@@ -42,6 +57,8 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
         "longitude": longitude,
         "start": start,
         "end": end,
+        "frequency": frequency,
+        "aggregation": aggregation if frequency != "hourly" else "auto",
     }
 
 

@@ -66,22 +66,22 @@ def main() -> None:
         params = follow_window(params, synced, int(days))
         st.caption(f"Đang theo dõi: {params['start'][:10]} đến {params['end'][:10]} (UTC+7).")
 
-    tabs = st.tabs(
-        [
-            "Tổng quan",
-            "Chuỗi thời gian",
-            "Không gian",
-            "Dữ liệu",
-        ]
+    # st.tabs chạy code của TẤT CẢ tab mỗi lần render => gọi 7+ API cùng lúc.
+    # Dùng radio để chỉ render (và chỉ gọi API cho) mục đang chọn.
+    section = st.radio(
+        "Mục hiển thị",
+        ["Tổng quan", "Chuỗi thời gian", "Không gian", "Dữ liệu"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_section",
     )
-
-    with tabs[0]:
+    if section == "Tổng quan":
         _render_overview(client, params, comparison_params)
-    with tabs[1]:
+    elif section == "Chuỗi thời gian":
         _render_temporal_analysis(client, params, baseline_params)
-    with tabs[2]:
+    elif section == "Không gian":
         _render_map(client, params)
-    with tabs[3]:
+    else:
         _render_downloads(client, params)
 
 
@@ -250,14 +250,45 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
     st.plotly_chart(timeseries_figure(payload), use_container_width=True)
-    st.dataframe(
-        timeseries_frame(payload).rename(columns={
-            "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
-            "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
-            "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
-            "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
-        }),
-        use_container_width=True,
+    _show_extremes(payload)
+    table = timeseries_frame(payload).rename(columns={
+        "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
+        "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
+        "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
+        "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
+    })
+    st.dataframe(table, use_container_width=True)
+    st.download_button(
+        "Tải bảng dữ liệu (CSV)",
+        data=table.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"era5_{payload.get('variable', 'data')}.csv",
+        mime="text/csv",
+        key="download_timeseries_csv",
+    )
+
+
+def _show_extremes(payload: dict[str, Any]) -> None:
+    """Giá trị cao nhất/thấp nhất kèm thời điểm, tính bằng code (không để LLM đoán)."""
+    unit = payload.get("unit", "")
+    if unit == "°":  # hướng gió là góc vòng tròn, cực trị không có nghĩa
+        return
+    points = [p for p in payload.get("data", []) if p.get("value") is not None]
+    if not points:
+        return
+    date_only = payload.get("frequency") in ("daily", "monthly", "yearly")
+
+    def when(point: dict[str, Any]) -> str:
+        try:
+            stamp = datetime.fromisoformat(str(point["time"]))
+        except (KeyError, ValueError):
+            return str(point.get("time"))
+        return stamp.strftime("%d/%m/%Y" if date_only else "%d/%m/%Y %H:%M")
+
+    highest = max(points, key=lambda p: p["value"])
+    lowest = min(points, key=lambda p: p["value"])
+    st.markdown(
+        f"**Cao nhất:** {_format_value(highest['value'], unit)} lúc {when(highest)} · "
+        f"**Thấp nhất:** {_format_value(lowest['value'], unit)} lúc {when(lowest)}"
     )
 
 
@@ -436,9 +467,20 @@ def _show_map(payload: dict[str, Any]) -> None:
 
 def _render_downloads(client: DashboardApiClient, params: dict[str, Any]) -> None:
     st.subheader("Tác vụ tải dữ liệu")
-    st.caption("Tạo tác vụ tải dữ liệu ở backend và hiển thị trạng thái xử lý.")
+    st.caption(
+        "Tạo tác vụ tải dữ liệu ở backend và hiển thị trạng thái xử lý. "
+        "CDS chỉ cho xếp hàng một số yêu cầu cùng lúc, nên chỉ tạo tác vụ mới khi tác vụ trước đã xong."
+    )
 
-    if st.button("Tạo tác vụ tải dữ liệu", key="create_download"):
+    job_id = st.session_state.get("download_job_id")
+    current = _fetch_job(client, job_id)
+    busy = bool(current) and current.get("status") in ("queued", "running")
+    force = False
+    if busy:
+        st.warning("Đang có tác vụ tải chạy. Chờ hoàn tất trước khi tạo tác vụ mới để tránh đầy hàng đợi CDS.")
+        force = st.checkbox("Vẫn tạo tác vụ mới (dùng khi tác vụ cũ bị kẹt)", key="force_download")
+
+    if st.button("Tạo tác vụ tải dữ liệu", key="create_download", disabled=busy and not force):
         payload = _download_payload(params)
         _run_request(
             "tác vụ tải dữ liệu",
@@ -450,11 +492,19 @@ def _render_downloads(client: DashboardApiClient, params: dict[str, Any]) -> Non
     if job_id:
         st.info(f"Tác vụ hiện tại: {job_id}")
         if st.button("Làm mới trạng thái tác vụ", key="refresh_job"):
-            _run_request(
-                "trạng thái tác vụ",
-                lambda: client.get_job(job_id),
-                lambda payload: _show_job_status(payload),
-            )
+            st.rerun()
+        current = _fetch_job(client, job_id)
+        if current:
+            _show_job_status(current)
+
+
+def _fetch_job(client: DashboardApiClient, job_id: Any) -> dict[str, Any] | None:
+    if not job_id:
+        return None
+    try:
+        return client.get_job(job_id)
+    except DashboardApiError:
+        return None
 
 
 def _download_payload(params: dict[str, Any]) -> dict[str, Any]:

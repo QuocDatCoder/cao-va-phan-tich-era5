@@ -134,9 +134,8 @@ def map_figure(payload: dict[str, Any]) -> go.Figure:
     unit = payload.get("unit", "")
     colorbar_title = f"giá trị ({unit})" if unit else "giá trị"
 
-    # Dữ liệu ERA5 có lưới 0,25° nên chỉ cần thu nhỏ khung quanh điểm truy vấn.
-    lat_padding = 0.5
-    lon_padding = 0.5
+    lat_padding = 1.0
+    lon_padding = 1.0
     lat_range = [center["lat"] - lat_padding, center["lat"] + lat_padding]
     lon_range = [center["lon"] - lon_padding, center["lon"] + lon_padding]
 

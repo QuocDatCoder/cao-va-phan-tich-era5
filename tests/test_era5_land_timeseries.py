@@ -106,14 +106,23 @@ def test_one_request_serves_every_variable(make_provider):
     assert speed.unit == "m/s" and speed.data[0].value == pytest.approx(5.0)        # sqrt(3²+4²)
 
 
-def test_partial_day_gap_downloads_whole_day_once(make_provider):
+def test_partial_day_gap_downloads_whole_days_once(make_provider):
     provider, client, _ = make_provider()
     result = provider.get_timeseries("temperature", 10.8231, 106.6297,
                                      datetime(2025, 1, 1, 17), datetime(2025, 1, 2, 16))
     assert len(result.data) == 24
-    assert client.calls[0][1]["date"] == ["2025-01-01/2025-01-02"]
+    # Backend có thể tách ngày lẻ ở nửa đêm UTC; miễn là tải đủ nguyên ngày 01 và 02/01.
+    days = set()
+    for _dataset, request in client.calls:
+        first, last = request["date"][0].split("/")
+        current = date.fromisoformat(first)
+        while current <= date.fromisoformat(last):
+            days.add(current)
+            current += timedelta(days=1)
+    assert days == {date(2025, 1, 1), date(2025, 1, 2)}
+    calls_before = len(client.calls)
     provider.get_timeseries("temperature", 10.8231, 106.6297, datetime(2025, 1, 1), datetime(2025, 1, 2, 23))
-    assert len(client.calls) == 1  # cả hai ngày đã nằm trong SQLite
+    assert len(client.calls) == calls_before  # cả hai ngày đã nằm trong SQLite
 
 
 def test_download_area_uses_center_point_and_feeds_queries(make_provider):

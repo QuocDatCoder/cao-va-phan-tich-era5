@@ -24,6 +24,9 @@ from frontend.components.controls import (
     render_comparison_controls,
     render_filter_controls,
 )
+from frontend.components.header import render_station_header
+from frontend.components.metrics import render_overview_kpis
+from frontend.styles import load_theme_css
 
 
 def build_client() -> DashboardApiClient:
@@ -34,29 +37,48 @@ def build_client() -> DashboardApiClient:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
-    st.title("Bảng điều khiển khí hậu ERA5")
-    st.caption("Dữ liệu hiển thị theo giờ Việt Nam (UTC+7); nhiệt độ và điểm sương dùng °C.")
+    st.set_page_config(
+        page_title="Trạm Quan trắc Khí quyển ERA5",
+        page_icon="⚡",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    # Inject Scientific Theme CSS
+    custom_css = load_theme_css()
+    if custom_css:
+        st.markdown(f"<style>{custom_css}</style>", unsafe_allow_html=True)
 
     client = build_client()
+
     with st.sidebar:
+        st.subheader("Chế độ Theo dõi Tự động")
         follow = st.toggle("Theo dõi dữ liệu mới nhất", value=False)
         days = st.number_input("Số ngày theo dõi", min_value=1, max_value=6, value=2, disabled=not follow)
         auto_sync = st.checkbox("Tự đồng bộ khi theo dõi", value=False, disabled=not follow)
+
     params = render_filter_controls(follow_latest=follow)
+
     if params["variable"] == "wind_direction":
         st.caption("Hướng gió khí tượng: Bắc 0°, Đông 90°, Nam 180°, Tây 270°. Giờ lặng gió không có hướng và được bỏ qua.")
     elif params["variable"] == "solar_radiation":
         st.caption("Bức xạ là năng lượng tích lũy trong từng giờ, đơn vị MJ/m².")
+
     baseline_params = render_baseline_controls()
     comparison_params = render_comparison_controls()
 
     with st.sidebar:
-        st.header("Máy chủ API")
-        st.code(client.base_url)
-        if st.button("Kiểm tra máy chủ"):
-            _run_request("trạng thái máy chủ", client.health, lambda _: st.success("Đang hoạt động"))
-        _render_live_updates(client, params, follow, int(days), auto_sync)
+        with st.expander("Trạng thái Đồng bộ CDS", expanded=follow):
+            _render_live_updates(client, params, follow, int(days), auto_sync)
+
+    # Render Meteorological Station Telemetry Header
+    location_name = st.session_state.get("selected_location_name")
+    render_station_header(
+        params=params,
+        base_url=client.base_url,
+        api_online=True,
+        location_name=location_name,
+    )
 
     if follow:
         synced = latest_synced_date(st.session_state.get("live_states", []))
@@ -124,7 +146,7 @@ def _load_cached(client: DashboardApiClient, endpoint: str, params: dict[str, An
 
 @st.fragment(run_every=15)
 def _render_live_updates(client, params, follow, days, auto_sync):
-    st.subheader("Đồng bộ dữ liệu")
+    st.subheader("Đồng bộ dữ liệu CDS")
     context = (client.base_url, params["variable"], params["latitude"], params["longitude"],
                follow, days, params["start"] if not follow else None, params["end"] if not follow else None)
     if st.session_state.get("live_context") != context:
@@ -196,14 +218,21 @@ def _render_overview(
     params: dict[str, Any],
     comparison_params: dict[str, str],
 ) -> None:
-    st.subheader("Tổng quan")
-    left, right = st.columns([3, 2])
-    with left:
-        _render_statistics(client, params)
-    with right:
-        _render_trend(client, params)
+    st.subheader("Chỉ số Tổng quan Khí quyển")
+    _render_statistics(client, params)
+    
     st.divider()
-    _render_comparison(client, params, comparison_params)
+    left, right = st.columns([1, 1])
+    with left:
+        _render_trend(client, params)
+    
+    _render_comparison(
+        client,
+        params,
+        comparison_params,
+        left_container=left,
+        right_container=right,
+    )
 
 
 def _render_temporal_analysis(
@@ -211,10 +240,10 @@ def _render_temporal_analysis(
     params: dict[str, Any],
     baseline_params: dict[str, str],
 ) -> None:
-    st.subheader("Chuỗi thời gian")
+    st.subheader("Phân tích Chuỗi Thời gian")
     _render_timeseries(client, params, show_title=False)
     if params["variable"] == "wind_direction":
-        st.info("Hướng gió là đại lượng vòng tròn; xem trung bình vòng tròn trong tab Tổng quan.")
+        st.info("Hướng gió là đại lượng vòng tròn; xem phân bố trung bình vòng tròn trong tab Tổng quan.")
         return
     st.divider()
     _render_anomaly(client, params, baseline_params)
@@ -232,14 +261,14 @@ def _render_timeseries(
     _run_request(
         "chuỗi thời gian",
         lambda: _load_cached(client, "timeseries", params),
-        lambda payload: _show_timeseries(payload),
+        lambda payload: _show_timeseries(payload, params),
     )
     if st.button("Làm mới chuỗi thời gian", key="refresh_timeseries"):
         _cached_get.clear()
         st.rerun()
 
 
-def _show_timeseries(payload: dict[str, Any]) -> None:
+def _show_timeseries(payload: dict[str, Any], params: dict[str, Any] | None = None) -> None:
     if not payload.get("data"):
         st.info("Không có quan sát nào cho bộ lọc đã chọn.")
         return
@@ -249,20 +278,32 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
             st.info("Có kỳ chưa trọn ngày/tháng/năm vì khoảng truy vấn chỉ bao phủ một phần kỳ đó.")
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
+    
     st.plotly_chart(timeseries_figure(payload), use_container_width=True)
-    st.dataframe(
-        timeseries_frame(payload).rename(columns={
-            "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
-            "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
-            "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
-            "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
-        }),
-        use_container_width=True,
-    )
+    
+    frame = timeseries_frame(payload)
+    display_frame = frame.rename(columns={
+        "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
+        "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
+        "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
+        "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
+    })
+    
+    col_table, col_dl = st.columns([4, 1])
+    with col_dl:
+        csv_bytes = frame.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Xuất file CSV",
+            data=csv_bytes,
+            file_name=f"era5_timeseries_{payload.get('variable', 'data')}.csv",
+            mime="text/csv",
+            key="dl_timeseries_csv",
+        )
+    
+    st.dataframe(display_frame, use_container_width=True)
 
 
 def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Thống kê")
     if params.get("frequency", "hourly") != "hourly":
         st.caption("Thống kê tổng quan vẫn tính trên các quan sát giờ; lựa chọn chu kỳ áp dụng cho biểu đồ Chuỗi thời gian.")
     _run_request(
@@ -276,25 +317,11 @@ def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> No
 
 
 def _show_statistics(payload: dict[str, Any]) -> None:
-    unit = payload.get("unit", "")
-    cols = st.columns(5)
-    labels = [
-        ("Trung bình", "mean"),
-        ("Nhỏ nhất", "min"),
-        ("Lớn nhất", "max"),
-        ("Độ lệch chuẩn", "std"),
-        ("Số quan sát", "count"),
-    ]
-    if unit == "°":
-        labels = [("Trung bình vòng tròn", "mean"), ("Độ phân tán góc", "std"), ("Số quan sát", "count")]
-        st.caption("Dấu — nghĩa là không xác định được hướng trung bình cho tập hướng đối nhau.")
-    for column, (label, key) in zip(cols, labels):
-        value = _format_value(payload.get(key), unit) if key != "count" else _format_number(payload.get(key), 0)
-        column.metric(label, value)
+    render_overview_kpis(payload)
 
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Xu hướng")
+    st.subheader("Phân tích Xu hướng (Trend)")
     if params["variable"] == "wind_direction":
         st.info("Không áp dụng hồi quy tuyến tính trực tiếp cho góc hướng gió.")
         return
@@ -313,7 +340,7 @@ def _show_trend(payload: dict[str, Any]) -> None:
     col1.metric("Chiều hướng", _translate_direction(payload.get("direction")))
     col2.metric("Hệ số dốc", _format_number(payload.get("slope"), 4))
     col3.metric("Số quan sát", _format_number(payload.get("count"), 0))
-    st.caption("Hệ số dốc được tính ở backend và không tự đổi nhãn thành theo ngày/tháng/năm.")
+    st.caption("Hệ số dốc tuyến tính được tính toán chính xác trên backend theo từng mốc quan sát.")
 
 
 def _render_anomaly(
@@ -321,7 +348,7 @@ def _render_anomaly(
     params: dict[str, Any],
     baseline_params: dict[str, str],
 ) -> None:
-    st.subheader("Độ lệch so với mốc nền")
+    st.subheader("Độ lệch so với mốc nền (Anomaly Detection)")
     request_params = {**params, **baseline_params}
     _run_request(
         "độ lệch",
@@ -334,7 +361,7 @@ def _render_anomaly(
 
 
 def _show_anomaly(payload: dict[str, Any]) -> None:
-    st.metric("Trung bình mốc nền", _format_value(payload.get("baseline_mean"), payload.get("unit", "")))
+    st.metric("Trung bình mốc nền quy chiếu", _format_value(payload.get("baseline_mean"), payload.get("unit", "")))
     if not payload.get("data"):
         st.info("Không có giá trị độ lệch nào được trả về.")
         return
@@ -353,11 +380,19 @@ def _render_comparison(
     client: DashboardApiClient,
     params: dict[str, Any],
     comparison_params: dict[str, str],
+    left_container: Any = None,
+    right_container: Any = None,
 ) -> None:
-    st.subheader("So sánh giai đoạn")
+    target_left = left_container if left_container is not None else st.container()
+    target_right = right_container if right_container is not None else st.container()
+
     if params["variable"] == "wind_direction":
-        st.info("So sánh tuyến tính hiện dành cho các biến vô hướng như tốc độ gió, nhiệt độ và mưa.")
+        with target_left:
+            st.divider()
+            st.subheader("So sánh Giai đoạn Đối chứng")
+            st.info("So sánh tuyến tính hiện dành cho các biến vô hướng như tốc độ gió, nhiệt độ và mưa.")
         return
+
     request_params = {
         "variable": params["variable"],
         "latitude": params["latitude"],
@@ -369,23 +404,36 @@ def _render_comparison(
     _run_request(
         "so sánh",
         lambda: _load_cached(client, "compare", request_params),
-        lambda payload: _show_comparison(payload),
+        lambda payload: _show_comparison(payload, target_left, target_right),
     )
-    if st.button("Làm mới so sánh", key="refresh_compare"):
-        _cached_get.clear()
-        st.rerun()
+    with target_left:
+        if st.button("Làm mới so sánh", key="refresh_compare"):
+            _cached_get.clear()
+            st.rerun()
 
 
-def _show_comparison(payload: dict[str, Any]) -> None:
-    st.metric(
-        "Trung bình giai đoạn A - giai đoạn B",
-        _format_value(payload.get("difference"), payload.get("unit", ""), decimals=3),
-    )
-    st.plotly_chart(comparison_figure(payload), use_container_width=True)
+def _show_comparison(
+    payload: dict[str, Any],
+    left_container: Any = None,
+    right_container: Any = None,
+) -> None:
+    target_left = left_container if left_container is not None else st.container()
+    target_right = right_container if right_container is not None else st.container()
+
+    with target_left:
+        st.divider()
+        st.subheader("So sánh Giai đoạn Đối chứng")
+        st.metric(
+            "Chênh lệch (Giai đoạn A - Giai đoạn B)",
+            _format_value(payload.get("difference"), payload.get("unit", ""), decimals=3),
+        )
+
+    with target_right:
+        st.plotly_chart(comparison_figure(payload), use_container_width=True)
 
 
 def _render_heatmap(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ nhiệt theo tháng và năm")
+    st.subheader("Ma trận Nhiệt theo Tháng và Năm (Heatmap)")
     _run_request(
         "bản đồ nhiệt",
         lambda: _load_cached(client, "heatmap", params),
@@ -406,11 +454,11 @@ def _show_heatmap(payload: dict[str, Any]) -> None:
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ")
+    st.subheader("Bản đồ Không gian Khí quyển")
     if params["variable"] == "wind_direction":
         st.info("Xem hướng gió theo giờ trong tab Chuỗi thời gian.")
         return
-    st.caption("Máy chủ API hiện trả dữ liệu bản đồ theo một điểm tọa độ đã chọn.")
+    st.caption("Hiển thị vị trí tọa độ điểm trạm quan trắc trên bản đồ địa lý khu vực.")
     _run_request(
         "bản đồ",
         lambda: _load_cached(client, "map", params),
@@ -435,10 +483,10 @@ def _show_map(payload: dict[str, Any]) -> None:
 
 
 def _render_downloads(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Tác vụ tải dữ liệu")
-    st.caption("Tạo tác vụ tải dữ liệu ở backend và hiển thị trạng thái xử lý.")
+    st.subheader("Quản lý Tác vụ Tải Dữ liệu Nền (Copernicus CDS)")
+    st.caption("Khởi tạo tác vụ tải mảng dữ liệu diện rộng từ kho dữ liệu ECMWF và theo dõi tiến độ.")
 
-    if st.button("Tạo tác vụ tải dữ liệu", key="create_download"):
+    if st.button("Khởi tạo tác vụ tải dữ liệu", key="create_download", type="primary"):
         payload = _download_payload(params)
         _run_request(
             "tác vụ tải dữ liệu",
@@ -448,8 +496,8 @@ def _render_downloads(client: DashboardApiClient, params: dict[str, Any]) -> Non
 
     job_id = st.session_state.get("download_job_id")
     if job_id:
-        st.info(f"Tác vụ hiện tại: {job_id}")
-        if st.button("Làm mới trạng thái tác vụ", key="refresh_job"):
+        st.info(f"Tác vụ đang theo dõi: {job_id}")
+        if st.button("Cập nhật trạng thái tác vụ", key="refresh_job"):
             _run_request(
                 "trạng thái tác vụ",
                 lambda: client.get_job(job_id),
@@ -483,13 +531,13 @@ def _utc_date(value: str) -> str:
 
 def _remember_job(payload: dict[str, Any]) -> None:
     st.session_state["download_job_id"] = payload.get("job_id")
-    st.success(f"Đã đưa tác vụ vào hàng đợi: {payload.get('job_id')}")
+    st.success(f"Đã đưa tác vụ vào hàng đợi xử lý: {payload.get('job_id')}")
 
 
 def _show_job_status(payload: dict[str, Any]) -> None:
     status = payload.get("status")
     if status == "completed":
-        st.success("Tác vụ đã hoàn tất")
+        st.success("Tác vụ đã hoàn tất thành công")
     elif status == "failed":
         st.error(payload.get("error") or "Tác vụ thất bại")
     else:
@@ -503,7 +551,7 @@ def _run_request(
     render: Callable[[dict[str, Any]], None],
 ) -> None:
     try:
-        with st.spinner(f"Đang tải {label.lower()}..."):
+        with st.spinner(f"Đang xử lý dữ liệu {label.lower()}..."):
             payload = request()
     except DashboardApiError as exc:
         st.error(str(exc))
@@ -513,21 +561,21 @@ def _run_request(
 
 def _translate_direction(direction: Any) -> str:
     translations = {
-        "increasing": "Tăng",
-        "decreasing": "Giảm",
-        "stable": "Ổn định",
+        "increasing": "Tăng dần (Increasing)",
+        "decreasing": "Giảm dần (Decreasing)",
+        "stable": "Ổn định (Stable)",
     }
     return translations.get(str(direction), str(direction))
 
 
 def _translate_status(status: Any) -> str:
     translations = {
-        "queued": "Đang chờ",
-        "running": "Đang chạy",
-        "completed": "Hoàn tất",
-        "failed": "Thất bại",
-        "cancelled": "Đã hủy",
-        "up_to_date": "Đã cập nhật đủ",
+        "queued": "Đang trong hàng đợi (Queued)",
+        "running": "Đang xử lý (Running)",
+        "completed": "Hoàn tất (Completed)",
+        "failed": "Thất bại (Failed)",
+        "cancelled": "Đã hủy (Cancelled)",
+        "up_to_date": "Đã cập nhật mới nhất (Up to date)",
     }
     return translations.get(str(status), str(status))
 
@@ -551,17 +599,17 @@ def _format_value(value: Any, unit: str = "", decimals: int = 2) -> str:
 
 def _job_status_frame(payload: dict[str, Any]) -> pd.DataFrame:
     rows = [
-        {"Thông tin": "Mã tác vụ", "Giá trị": payload.get("job_id")},
-        {"Thông tin": "Biến khí hậu", "Giá trị": payload.get("variable")},
-        {"Thông tin": "Ngày bắt đầu", "Giá trị": payload.get("start_date")},
-        {"Thông tin": "Ngày kết thúc", "Giá trị": payload.get("end_date")},
-        {"Thông tin": "Trạng thái", "Giá trị": _translate_status(payload.get("status"))},
-        {"Thông tin": "Tiến độ", "Giá trị": f"{payload.get('progress')}%"},
+        {"Thông số": "Mã tác vụ (Job ID)", "Giá trị": payload.get("job_id")},
+        {"Thông số": "Biến khí hậu", "Giá trị": payload.get("variable")},
+        {"Thông số": "Ngày bắt đầu (UTC)", "Giá trị": payload.get("start_date")},
+        {"Thông số": "Ngày kết thúc (UTC)", "Giá trị": payload.get("end_date")},
+        {"Thông số": "Trạng thái", "Giá trị": _translate_status(payload.get("status"))},
+        {"Thông số": "Tiến độ hoàn thành", "Giá trị": f"{payload.get('progress')}%"},
     ]
     if payload.get("file_path"):
-        rows.append({"Thông tin": "Đường dẫn tệp", "Giá trị": payload.get("file_path")})
+        rows.append({"Thông số": "Đường dẫn tệp NetCDF", "Giá trị": payload.get("file_path")})
     if payload.get("error"):
-        rows.append({"Thông tin": "Lỗi", "Giá trị": payload.get("error")})
+        rows.append({"Thông số": "Chi tiết lỗi", "Giá trị": payload.get("error")})
     return pd.DataFrame(rows)
 
 

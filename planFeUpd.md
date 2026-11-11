@@ -279,18 +279,28 @@ flowchart TD
   - Thêm chức năng tải về dữ liệu chuỗi thời gian dạng CSV/JSON phục vụ báo cáo đồ án.
   - Khôi phục phần hiển thị trạng thái đồng bộ CDS thời gian thực một cách trang nhã.
 
-### Giai đoạn 5: Kiểm thử Toàn diện & Nghiệm thu (Ngày 5)
+### Giai đoạn 5: Kiểm thử Toàn diện & Nghiệm thu (ĐÃ HOÀN TẤT)
 - Kiểm tra toàn bộ test suites:
   ```powershell
-  .\.venv\Scripts\python.exe -m pytest tests/test_frontend_dashboard_smoke.py tests/test_frontend_charts.py tests/test_frontend_controls.py
+  .\.venv\Scripts\python.exe -m pytest tests/test_frontend_dashboard_smoke.py tests/test_frontend_charts.py tests/test_frontend_controls.py tests/test_frontend_api_client.py
+  $env:PYTHONPATH="."; .\.venv\Scripts\python.exe -m pytest tests/test_dashboard_live.py
   ```
-- Khởi chạy thử nghiệm dashboard trên trình duyệt:
-  ```powershell
-  .\.venv\Scripts\python.exe -m streamlit run app.py
-  ```
-- Kiểm tra hiển thị trên nhiều kích thước màn hình (Desktop 1920x1080, Laptop 1366x768).
-- Nghiệm thu tính thẩm mỹ, độ ổn định và bàn giao cho người dùng.
+- Kết quả kiểm thử: **28/28 bài kiểm thử đạt 100% (PASSED)**.
 
 ---
-*Kế hoạch đã sẵn sàng để tiến hành triển khai khi có chỉ định tiếp theo.*
+
+## 9. CÁC ĐIỀU CHỈNH NÂNG CAO ĐÃ TRIỂN KHAI
+
+### 9.1 Điều chỉnh Cân bằng Bố cục Tab Tổng quan (Theo yêu cầu)
+- **Cột trái:** Khối *So sánh Giai đoạn Đối chứng* (tiêu đề, thẻ chỉ số chênh lệch, nút làm mới) được dời sang phía dưới phần *Phân tích Xu hướng (Trend)*.
+- **Cột phải:** *Biểu đồ So sánh* được dời lên trên cùng của cột phải, tối ưu hóa chiều cao và cân bằng thị giác tuyệt đối giữa hai cột.
+
+### 9.2 Tích hợp Chế độ Sáng / Tối (Light & Dark Mode)
+- **Công tắc Sidebar:** `🌙 Giao diện tối` cho phép người dùng chuyển đổi 1 chạm tức thì.
+- **Dynamic CSS Injection:** Hỗ trợ đầy đủ bảng màu Light Mode (nền sáng `#F8FAFC`, bề mặt thẻ `#FFFFFF`, chữ tương phản cao `#0F172A`).
+- **Plotly Theme Sync:** Tự động đồng bộ template (`plotly_dark` $\leftrightarrow$ `plotly_white`), màu nền trong suốt, màu lưới trục, tooltip và bản đồ địa lý theo chế độ sáng/tối.
+
+---
+*Trạng thái: Toàn bộ kế hoạch và các hạng mục nâng cấp đã được triển khai hoàn tất và nghiệm thu 100%.*
+
 

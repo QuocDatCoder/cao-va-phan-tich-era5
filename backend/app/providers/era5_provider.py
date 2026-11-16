@@ -303,6 +303,8 @@ class ERA5ClimateProvider(ClimateDataProvider):
         start_date: date, end_date: date,
     ) -> None:
         assert self._repository is not None
+        from backend.app.storage.collection_repository import record_artifact
+        record_artifact(file_path, self._settings.climate_data_db_path)
         if current_quality.get() is not None:
             from backend.app.providers.quality_import import import_area
             return import_area(self, file_path, spec, area, start_date, end_date)

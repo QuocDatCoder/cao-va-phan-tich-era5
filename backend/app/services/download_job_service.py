@@ -17,6 +17,7 @@ from backend.app.providers.errors import UnsupportedVariableError
 from backend.app.providers.base import ClimateDataProvider
 from backend.app.storage.job_repository import JobRepository
 from backend.app.domain.quality import QualityCollector, current_quality
+from backend.app.storage.collection_repository import CollectionRepository, current_collection, recover_abandoned
 
 
 class JobNotFoundError(Exception):
@@ -35,6 +36,9 @@ class DownloadJobService:
         self._repository = repository
         self._provider_resolver = provider_resolver
         self._settings = settings
+        self.collections = CollectionRepository(settings.climate_data_db_path) if settings else None
+        if self.collections:
+            recover_abandoned(self.collections, self._repository)
 
     def create_job(self, request: DownloadRequest) -> DownloadCreateResponse:
         if self._settings is not None:
@@ -60,12 +64,19 @@ class DownloadJobService:
             if request.source is not None:
                 raise ValueError("Source-aware collection requires configured provider resolution.")
             job = self._repository.create(job_id=str(uuid4()), request=request)
-        return DownloadCreateResponse(job_id=job.job_id, status=job.status)
+        if self.collections:
+            self.collections.create(job, request, variable)
+        return DownloadCreateResponse(job_id=job.job_id, status=job.status,
+                                      collection_id=job.job_id if self.collections else None)
 
     def get_job(self, job_id: str) -> DownloadJob:
         job = self._repository.get(job_id)
         if job is None:
             raise JobNotFoundError(f"Download job '{job_id}' was not found.")
+        entry = self.collections.get(job_id) if self.collections else None
+        if entry:
+            job.collection_id = job_id
+            job.collection_name = entry['metadata'].get('name')
         return job
 
     def get_quality(self, job_id: str, offset: int = 0, limit: int = 100):
@@ -73,16 +84,26 @@ class DownloadJobService:
         return {"job_id": job_id, "quality": job.quality,
                 **self._repository.quality_issues(job_id, offset, limit)}
 
+    def list_jobs(self, limit=100, offset=0):
+        return [self.get_job(j.job_id) for j in self._repository.list_jobs(limit, offset)]
+
     def run_job(self, job_id: str) -> None:
         job = self.get_job(job_id)
         if job.status != DownloadJobStatus.QUEUED:
             return
 
         try:
-            self._repository.mark_running(job_id)
+            if hasattr(self._repository, "claim_running"):
+                if not self._repository.claim_running(job_id):
+                    return
+            else:  # Compatibility with repository adapters used by legacy callers.
+                self._repository.mark_running(job_id)
         except Exception as exc:
             raise JobPersistenceError("Download job could not be marked running.") from exc
 
+        snapshot_token = current_collection.set((job_id, job.dataset) if job.collection_id else None)
+        if job.collection_id:
+            self.collections.running(job_id)
         try:
             if self._provider_resolver is not None:
                 if job.source is None:
@@ -102,6 +123,13 @@ class DownloadJobService:
                                     end_date=job.end_date, frequency=job.frequency)
                 if collector is not None and (collector.report.rows_read or collector.report.issue_count) and not collector.report.imported_values:
                     raise ValueError("No valid observations were imported; original files were preserved.")
+                if job.collection_id:
+                    self.collections.artifact(job_id, artifact.file_path)
+                    summary = self._finish_collection(job_id, collector)
+                    if summary['available_count'] == 0:
+                        raise ValueError('No valid observations for the requested variable and interval; additional variables do not count as success.')
+                    if summary['missing_count']:
+                        collector.issue('incomplete_requested_coverage', 'The requested collection interval is incomplete.')
             except Exception:
                 if collector is not None:
                     self._repository.save_quality(job_id, collector.finish(failed=True))
@@ -114,8 +142,15 @@ class DownloadJobService:
             if job.source is not None and artifact.dataset != job.dataset:
                 raise ValueError("Provider returned a different dataset than the recorded collection source.")
         except Exception as exc:
+            if job.collection_id:
+                self._finish_collection(job_id, None, error=self._safe_error(exc))
             self._mark_failed_or_raise(job_id=job_id, error=self._safe_error(exc))
             return
+        finally:
+            current_collection.reset(snapshot_token)
+
+        if job.collection_id:
+            self._finish_collection(job_id, None)
 
         try:
             self._repository.mark_completed(job_id=job_id, artifact=artifact)
@@ -124,6 +159,24 @@ class DownloadJobService:
                 job_id=job_id,
                 error=f"Download job could not persist completion metadata: {self._safe_error(exc)}",
             )
+
+    def _finish_collection(self, job_id, collector, error=None):
+        if collector:
+            self._repository.save_quality(job_id, collector.finish(failed=bool(error)))
+        job = self._repository.get(job_id)
+        issues, offset = [], 0
+        while True:
+            page = self._repository.quality_issues(job_id, offset, 500)
+            issues.extend(page['issues'])
+            if len(issues) >= page['total']:
+                break
+            offset = len(issues)
+        summary = self.collections.finish(job_id, issues, job.quality.model_dump(mode='json') if job.quality else None, error)
+        if job.quality and summary and job.quality.imported_values != summary['imported_values']:
+            job.quality.imported_values = summary['imported_values']
+            self._repository.save_quality(job_id, job.quality)
+            summary = self.collections.finish(job_id, issues, job.quality.model_dump(mode='json'), error)
+        return summary
 
     def _safe_error(self, exc: Exception) -> str:
         message = str(exc).strip()

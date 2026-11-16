@@ -1,5 +1,5 @@
 """SQLite-only queries: no provider factory, CDS client, raw-file import or synthesis."""
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from backend.app.core.config import Settings
 from backend.app.domain.schemas import AggregationRequest, ClimatePoint, DataSource, TimeSeriesRequest, TimeSeriesResponse
@@ -24,9 +24,19 @@ class _SnapshotService:
 
 
 class StoredClimateService:
-    def __init__(self, repository: ClimateRepository, settings: Settings):
+    def __init__(self, repository: ClimateRepository, settings: Settings, *, recorded_dataset=None):
         self.repository = repository
         self.settings = settings
+        self.recorded_dataset = recorded_dataset
+
+    def catalog(self, source, limit=100, offset=0):
+        dataset = self.recorded_dataset or source_dataset(source, self.settings)
+        entries = self.repository.catalog(dataset, limit, offset)
+        for entry in entries:
+            entry['start'] = to_vietnam_time(datetime.fromisoformat(entry['start'])).isoformat()
+            entry['end'] = to_vietnam_time(datetime.fromisoformat(entry['end'])).isoformat()
+        return {"source": source, "dataset": dataset, "timezone": "UTC+7", "entries": entries,
+                "limit": limit, "offset": offset, "coverage_scope": "stored_min_max"}
 
     def timeseries(self, source: DataSource, request: TimeSeriesRequest) -> StoredTimeSeriesResponse:
         start, end = to_utc_naive(request.start), to_utc_naive(request.end)
@@ -39,7 +49,7 @@ class StoredClimateService:
         if request.variable not in ERA5_VARIABLES:
             raise UnsupportedVariableError(f"Unsupported variable '{request.variable}'.")
         spec = ERA5_VARIABLES[request.variable]
-        dataset = source_dataset(source, self.settings)
+        dataset = self.recorded_dataset or source_dataset(source, self.settings)
         variables = WIND_COMPONENTS if request.variable in DERIVED_WIND_UNITS else (spec.cds_name,)
         grids, components, missing = [], [], []
         available = set(expected)

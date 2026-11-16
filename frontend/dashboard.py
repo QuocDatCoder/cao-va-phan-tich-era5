@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import UTC, datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Callable
@@ -29,49 +30,8 @@ def build_client() -> DashboardApiClient:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
-    st.title("Bảng điều khiển khí hậu ERA5")
-    st.caption("Dữ liệu hiển thị theo giờ Việt Nam (UTC+7); nhiệt độ và điểm sương dùng °C.")
-
-    with st.sidebar:
-        st.selectbox("Nguồn dữ liệu", ["land", "era5", "mock"], key="stored_source", format_func=lambda x: {
-            "land": "Đất liền — ERA5-Land time-series (điểm)",
-            "era5": "ERA5 chung — hỗ trợ cả biển (vùng)",
-            "mock": "Demo — dữ liệu giả lập đã thu thập",
-        }[x])
-        st.caption("Truy vấn và biểu đồ chỉ đọc database. Tải CDS cần bấm Thu thập riêng.")
-    client = build_client()
-    params = render_filter_controls(follow_latest=False)
-    if params["variable"] == "wind_direction":
-        st.caption("Hướng gió khí tượng: Bắc 0°, Đông 90°, Nam 180°, Tây 270°. Giờ lặng gió không có hướng và được bỏ qua.")
-    elif params["variable"] == "solar_radiation":
-        st.caption("Bức xạ là năng lượng tích lũy trong từng giờ, đơn vị MJ/m².")
-
-    with st.sidebar:
-        st.header("Máy chủ API")
-        st.code(client.base_url)
-        if st.button("Kiểm tra máy chủ"):
-            _run_request("trạng thái máy chủ", client.health, lambda _: st.success("Đang hoạt động"))
-        _render_collection(client, params)
-        if st.button("Làm mới dữ liệu đã lưu"):
-            _cached_get.clear()
-            st.rerun()
-
-    # st.tabs chạy code của TẤT CẢ tab mỗi lần render => gọi 7+ API cùng lúc.
-    # Dùng radio để chỉ render (và chỉ gọi API cho) mục đang chọn.
-    section = st.radio(
-        "Mục hiển thị",
-        ["Tổng quan", "Chuỗi thời gian", "Không gian"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="active_section",
-    )
-    if section == "Tổng quan":
-        _render_overview(client, params)
-    elif section == "Chuỗi thời gian":
-        _render_temporal_analysis(client, params)
-    else:
-        _render_map(client, params)
+    from frontend.workflow import render_dashboard
+    render_dashboard()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -121,7 +81,7 @@ def _collection_payload(params, source):
 
 
 def _render_collection(client, params):
-    st.subheader("Thu thập chủ động")
+    st.subheader("Thu thập chủ động", anchor=False)
     payload = _collection_payload(params, client.source)
     st.caption(f"Ngày tải theo UTC: {payload['start_date']} đến {payload['end_date']}.")
     if client.source == "land":
@@ -155,9 +115,10 @@ def _poll_collection(client, context):
     try:
         job = client.get_job(job_id)
         st.write("Trạng thái thu thập: " + _translate_status(job["status"]))
-        st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
-        if job.get("retrieval_variables"):
-            st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
+        with st.expander("Chi tiết nguồn và biến"):
+            st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
+            if job.get("retrieval_variables"):
+                st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
         quality = job.get("quality")
         if quality:
             st.caption(f"Chất lượng: {quality['status']} · Đã lưu: {quality['imported_values']} giá trị · Cảnh báo: {quality['issue_count']}")
@@ -169,6 +130,14 @@ def _poll_collection(client, context):
                 st.caption(f"Hiển thị {len(details['issues'])}/{details['total']} cảnh báo đầu tiên.")
                 if details["issues"]:
                     st.dataframe(details["issues"], hide_index=True)
+                if st.button("Chuẩn bị toàn bộ báo cáo chất lượng", key="prepare_quality_"+job_id,
+                             disabled=job["status"] in {"queued", "running"}):
+                    st.session_state["quality_export_"+job_id] = json.dumps(
+                        client.get_all_job_quality(job_id), ensure_ascii=False, indent=2)
+                if "quality_export_"+job_id in st.session_state:
+                    st.download_button("Tải báo cáo và toàn bộ warning (JSON)",
+                        st.session_state["quality_export_"+job_id], file_name=job_id+"_quality.json",
+                        mime="application/json", key="download_quality_"+job_id, on_click="ignore")
         if job.get("error"):
             st.error(job["error"])
         if job["status"] == "completed" and st.session_state.get("collection_completed") != job_id:
@@ -181,7 +150,7 @@ def _poll_collection(client, context):
 
 @st.fragment(run_every=15)
 def _render_live_updates(client, params, follow, days, auto_sync):
-    st.subheader("Đồng bộ dữ liệu")
+    st.subheader("Đồng bộ dữ liệu", anchor=False)
     context = (client.base_url, params["variable"], params["latitude"], params["longitude"],
                follow, days, params["start"] if not follow else None, params["end"] if not follow else None)
     if st.session_state.get("live_context") != context:
@@ -249,7 +218,7 @@ def _render_live_updates(client, params, follow, days, auto_sync):
 
 
 def _render_overview(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Tổng quan")
+    st.subheader("Tổng quan", anchor=False)
     left, right = st.columns([3, 2])
     with left:
         _render_statistics(client, params)
@@ -258,7 +227,7 @@ def _render_overview(client: DashboardApiClient, params: dict[str, Any]) -> None
 
 
 def _render_temporal_analysis(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Chuỗi thời gian")
+    st.subheader("Chuỗi thời gian", anchor=False)
     _render_timeseries(client, params, show_title=False)
     if params["variable"] == "wind_direction":
         st.info("Hướng gió là đại lượng vòng tròn; xem trung bình vòng tròn trong tab Tổng quan.")
@@ -273,7 +242,7 @@ def _render_timeseries(
     show_title: bool = True,
 ) -> None:
     if show_title:
-        st.subheader("Chuỗi thời gian")
+        st.subheader("Chuỗi thời gian", anchor=False)
     _run_request(
         "chuỗi thời gian",
         lambda: _load_cached(client, "timeseries", params),
@@ -284,7 +253,7 @@ def _render_timeseries(
         st.rerun()
 
 
-def _show_timeseries(payload: dict[str, Any]) -> None:
+def _show_timeseries(payload: dict[str, Any], show_chart: bool = True) -> None:
     if not payload.get("data"):
         st.info("Không có quan sát nào cho bộ lọc đã chọn.")
         return
@@ -299,7 +268,8 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
             st.info("Có kỳ chưa trọn ngày/tháng/năm vì khoảng truy vấn chỉ bao phủ một phần kỳ đó.")
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
-    st.plotly_chart(timeseries_figure(payload), use_container_width=True)
+    if show_chart:
+        st.plotly_chart(timeseries_figure(payload), use_container_width=True)
     _show_extremes(payload)
     table = timeseries_frame(payload).rename(columns={
         "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
@@ -307,6 +277,7 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
         "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
         "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
     })
+    display_table = table.copy()
     if payload.get("source"):
         grid = payload.get("grid_location") or {}
         for name, value in {
@@ -318,14 +289,16 @@ def _show_timeseries(payload: dict[str, Any]) -> None:
             "query_coverage": payload["coverage"], "query_complete": payload["complete"],
         }.items():
             table[name] = value
-    st.dataframe(table, use_container_width=True)
-    st.download_button(
-        "Tải bảng dữ liệu (CSV)",
-        data=table.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"{payload.get('source', 'era5')}_{payload.get('variable', 'data')}.csv",
-        mime="text/csv",
-        key="download_timeseries_csv",
-    )
+    with st.expander('Bảng dữ liệu và tải CSV', expanded=False):
+        st.dataframe(display_table, hide_index=True, width="stretch")
+        st.download_button(
+            "Tải bảng dữ liệu (CSV)",
+            data=table.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{payload.get('source', 'era5')}_{payload.get('variable', 'data')}.csv",
+            mime="text/csv",
+            key="download_timeseries_csv",
+            on_click="ignore",
+        )
 
 
 def _show_extremes(payload: dict[str, Any]) -> None:
@@ -358,7 +331,7 @@ def _show_extremes(payload: dict[str, Any]) -> None:
 
 
 def _render_statistics(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Thống kê")
+    st.subheader("Thống kê", anchor=False)
     if params.get("frequency", "hourly") != "hourly":
         st.caption("Thống kê tổng quan vẫn tính trên các quan sát giờ; lựa chọn chu kỳ áp dụng cho biểu đồ Chuỗi thời gian.")
     _run_request(
@@ -390,7 +363,7 @@ def _show_statistics(payload: dict[str, Any]) -> None:
 
 
 def _render_trend(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Xu hướng")
+    st.subheader("Xu hướng", anchor=False)
     if params["variable"] == "wind_direction":
         st.info("Không áp dụng hồi quy tuyến tính trực tiếp cho góc hướng gió.")
         return
@@ -413,7 +386,7 @@ def _show_trend(payload: dict[str, Any]) -> None:
 
 
 def _render_heatmap(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ nhiệt theo tháng và năm")
+    st.subheader("Bản đồ nhiệt theo tháng và năm", anchor=False)
     _run_request(
         "bản đồ nhiệt",
         lambda: _load_cached(client, "heatmap", params),
@@ -434,7 +407,7 @@ def _show_heatmap(payload: dict[str, Any]) -> None:
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
-    st.subheader("Bản đồ")
+    st.subheader("Bản đồ", anchor=False)
     if params["variable"] == "wind_direction":
         st.info("Xem hướng gió theo giờ trong tab Chuỗi thời gian.")
         return

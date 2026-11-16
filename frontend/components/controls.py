@@ -82,7 +82,7 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
     default_end = date(2025, 1, 2)
 
     with st.sidebar:
-        st.header("Truy vấn")
+        st.header("Truy vấn", anchor=False)
         st.caption("Các ngày được chọn theo giờ Việt Nam (UTC+7).")
         variable_label = st.selectbox("Biến khí hậu", list(VARIABLES), index=0)
         frequencies = {"Theo giờ": "hourly", "Theo ngày": "daily", "Theo tháng": "monthly", "Theo năm": "yearly"}

@@ -66,7 +66,8 @@ def test_land_quality_survives_restart(collection, problem, code, valid):
         rows[0][1] = "NaN"
     text = "" if problem == "empty_file" else header+"\n"+"\n".join(",".join(r) for r in rows)
     job, client = collect(collection, "land", text)
-    assert job.status.value == ("completed" if valid else "failed")
+    # Additional variables cannot make a temperature request succeed without t2m.
+    assert job.status.value == ("completed" if valid and problem != "missing_column" else "failed")
     assert not job.quality.complete
     assert job.quality.issue_counts[code] > 0
     assert job.quality.imported_values == job.quality.valid_values == valid

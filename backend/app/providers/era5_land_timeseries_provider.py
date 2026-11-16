@@ -91,6 +91,8 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
             )
             self._retrieve(request=request, target_path=target_path)
 
+        from backend.app.storage.collection_repository import record_artifact
+        record_artifact(target_path, self._settings.climate_data_db_path)
         try:
             grid_location, series, columns = self._parse_download(target_path, location)
         except _BrokenDownload as exc:

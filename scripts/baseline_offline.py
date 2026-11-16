@@ -98,38 +98,31 @@ def child(mode: str, output: Path, port: int, api_port: int) -> int:
         "configured_provider": "mock", "blocked_events": blocked,
         "checks": [],
     }
-    # Execute each current section using the real Streamlit script and loopback API.
-    for option in ("Tổng quan", "Chuỗi thời gian", "Không gian"):
-        section = next((x for x in app.radio if option in x.options), None)
-        if section is None:
-            report["checks"].append({"section": option, "missing_control": True})
-            continue
-        section.set_value(option).run()
-        report["checks"].append({
-            "section": option,
-            "exceptions": [str(x.message) for x in app.exception],
-            "errors": [str(x.value) for x in app.error],
-        })
-    source_control = next((x for x in app.selectbox if x.key == "stored_source"), None)
-    if source_control is not None:
-        # New DB-only UI: explicitly collect mock observations once, then exercise
-        # both real source selections without initiating their collection buttons.
-        source_control.set_value("mock").run()
-        next(x for x in app.button if x.key == "collect_now").click().run()
-        jobs = app.session_state["collection_jobs"]
-        mock_id = jobs[f"http://127.0.0.1:{api_port}|mock"]
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    # Phase 3 forms: only explicit mock submit can create a collection job.
+    app.selectbox(key="collect_source").set_value("mock")
+    app.button(key="collect_now").click().run()
+    mock_id = app.session_state["workflow_selected_job"]
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for attempt in range(20):
         with opener.open(f"http://127.0.0.1:{api_port}/api/v1/jobs/{mock_id}", timeout=5) as response:
             mock_job = json.loads(response.read())
-        report["mock_collection"] = {"source": mock_job["source"], "dataset": mock_job["dataset"],
-                                     "status": mock_job["status"], "spatial_mode": mock_job["spatial_mode"]}
-        for source in ["mock", "land", "era5"]:
-            next(x for x in app.selectbox if x.key == "stored_source").set_value(source).run()
-            for option in ("Tổng quan", "Chuỗi thời gian", "Không gian"):
-                next(x for x in app.radio if option in x.options).set_value(option).run()
-                report["checks"].append({"source": source, "section": option,
-                                         "exceptions": [str(x.message) for x in app.exception],
-                                         "errors": [str(x.value) for x in app.error]})
+        if mock_job["status"] not in {"queued", "running"}:
+            break
+        time.sleep(.1)
+    report["mock_collection"] = {"source": mock_job["source"], "dataset": mock_job["dataset"],
+                                 "status": mock_job["status"], "spatial_mode": mock_job["spatial_mode"]}
+    sections = app.radio(key="workflow_section").options
+    for section_name in sections[1:]:
+        app.radio(key="workflow_section").set_value(section_name).run()
+        prefix = "stored" if section_name == sections[1] else "chart"
+        app.button(key=prefix+"_view_"+mock_id).click().run()
+        if section_name == sections[-1]:
+            app.radio(key="workflow_section").set_value(section_name).run()
+            app.button(key=prefix+"_draw_"+mock_id).click().run()
+        app.button(key=prefix+"_selected_submit").click().run()
+        report["checks"].append({"section": section_name,
+            "exceptions": [str(x.message) for x in app.exception],
+            "errors": [str(x.value) for x in app.error]})
     report["passed"] = (not report["exceptions"] and not report["errors"]
                         and bool(report["titles"]) and all(
                             not x.get("missing_control") and not x.get("exceptions")

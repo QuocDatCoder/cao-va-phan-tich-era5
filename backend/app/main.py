@@ -9,6 +9,7 @@ from backend.app.api.downloads import router as downloads_router
 from backend.app.api.routes import router
 from backend.app.api.synchronization import router as synchronization_router
 from backend.app.api.stored_climate import router as stored_climate_router
+from backend.app.api.collections import router as collections_router
 from backend.app.core.config import get_settings
 from backend.app.providers.errors import (
     ClimateConfigurationError,
@@ -65,6 +66,12 @@ async def synchronization_not_found_handler(_, exc: SynchronizationNotFoundError
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     scheduler = None
     settings = get_settings()
+    from backend.app.storage.collection_repository import CollectionRepository, recover_abandoned
+    from backend.app.storage.job_repository import JobRepository
+    if (settings.climate_data_db_path.exists() and settings.job_metadata_db_path.exists()
+            and CollectionRepository(settings.climate_data_db_path, read_only=True).list(limit=1)):
+        recover_abandoned(CollectionRepository(settings.climate_data_db_path),
+                          JobRepository(settings.job_metadata_db_path))
     if settings.era5_sync_enabled:
         scheduler = get_synchronization_scheduler()
         scheduler.start()
@@ -85,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(climate_router)
     app.include_router(stored_climate_router)
+    app.include_router(collections_router)
     app.include_router(downloads_router)
     app.include_router(synchronization_router)
     app.add_exception_handler(UnsupportedVariableError, unsupported_variable_handler)

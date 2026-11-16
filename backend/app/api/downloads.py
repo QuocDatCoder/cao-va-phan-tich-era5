@@ -9,6 +9,12 @@ from backend.app.services.download_job_service import DownloadJobService
 router = APIRouter(tags=["downloads"])
 
 
+@router.get("/api/v1/jobs")
+def list_jobs(service: Annotated[DownloadJobService, Depends(get_download_job_service)],
+              limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+    return {"jobs": service.list_jobs(limit, offset), "limit": limit, "offset": offset}
+
+
 @router.get("/api/v1/jobs/{job_id}/quality")
 def get_quality(job_id: str, service: Annotated[DownloadJobService, Depends(get_download_job_service)],
                 offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500)):

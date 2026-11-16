@@ -1,0 +1,21 @@
+[theme]
+primaryColor = "#0F766E"
+baseRadius = "0.65rem"
+
+[theme.light]
+primaryColor = "#0F766E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5F4"
+textColor = "#18332F"
+borderColor = "#D5E2DF"
+
+[theme.dark]
+primaryColor = "#2DD4BF"
+backgroundColor = "#101B1A"
+secondaryBackgroundColor = "#1B2B29"
+textColor = "#E5F2EF"
+borderColor = "#36504B"
+
+[server]
+fileWatcherType = "poll"
+runOnSave = true

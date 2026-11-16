@@ -52,8 +52,45 @@ class DashboardApiClient:
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/jobs/{job_id}")
 
-    def get_job_quality(self, job_id: str) -> dict[str, Any]:
-        return self._get(f"/api/v1/jobs/{job_id}/quality", params={"limit": 100})
+    def get_job_quality(self, job_id: str, offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        return self._get(f"/api/v1/jobs/{job_id}/quality", params={"limit": limit, "offset": offset})
+
+    def list_jobs(self, limit=100, offset=0):
+        return self._get("/api/v1/jobs", params={"limit": limit, "offset": offset})["jobs"]
+
+    def get_all_job_quality(self, job_id):
+        first = self.get_job_quality(job_id, limit=500)
+        issues = list(first['issues'])
+        while len(issues) < first['total']:
+            page = self.get_job_quality(job_id, offset=len(issues), limit=500)
+            if not page['issues'] or page['total'] != first['total']:
+                raise DashboardApiError("Báo cáo đang thay đổi; hãy đợi tác vụ kết thúc rồi tải lại.")
+            issues.extend(page['issues'])
+        return {**first, "issues": issues, "limit": len(issues), "offset": 0}
+
+    def get_catalog(self, limit=100, offset=0):
+        if self.source not in {"land", "era5", "mock"}:
+            raise DashboardApiError("Hãy chọn nguồn dữ liệu.")
+        return self._get("/api/v1/stored/climate/catalog", params={"source": self.source, "limit": limit, "offset": offset})
+
+    def list_collections(self, search='', limit=100, offset=0):
+        return self._get('/api/v1/collections', params=dict(search=search, limit=limit, offset=offset))
+
+    def get_collection(self, collection_id):
+        return self._get(f'/api/v1/collections/{collection_id}')
+
+    def query_collection(self, collection_id, operation, params):
+        return self._get(f'/api/v1/collections/{collection_id}/{operation}', params=params)
+
+    def collection_quality(self, collection_id):
+        path = f'/api/v1/collections/{collection_id}/quality'
+        result = self._get(path, params=dict(limit=500, offset=0))
+        while len(result['issues']) < result['total']:
+            page = self._get(path, params=dict(limit=500, offset=len(result['issues'])))
+            if not page['issues'] or page['total'] != result['total']:
+                raise DashboardApiError('Báo cáo đang cập nhật. Hãy thử lại khi tác vụ kết thúc.')
+            result['issues'].extend(page['issues'])
+        return result
 
     def get_sync_config(self) -> dict[str, Any]:
         return self._get("/api/v1/synchronization/config")

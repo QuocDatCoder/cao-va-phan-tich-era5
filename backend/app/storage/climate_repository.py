@@ -73,6 +73,11 @@ class ClimateRepository:
             for point in points if isfinite(point.value)
         ]
         with self._connect() as connection:
+            from backend.app.storage.collection_repository import capture, current_collection
+            capture(connection, records)
+            if current_collection.get():
+                connection.execute('INSERT OR IGNORE INTO collection_grids VALUES (?,?,?)',
+                                   (current_collection.get()[0], round(grid_location.latitude,10), round(grid_location.longitude,10)))
             connection.executemany("""
                 INSERT INTO climate_points VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (dataset, variable, grid_latitude, grid_longitude, time_utc)
@@ -99,10 +104,16 @@ class ClimateRepository:
             for latitude, longitude, timestamp, value in records:
                 if isfinite(value):
                     count += 1
-                    yield (dataset, variable, latitude, longitude,
-                           to_utc_naive(timestamp).isoformat(timespec="microseconds"), unit, value)
+                    record = (dataset, variable, latitude, longitude,
+                              to_utc_naive(timestamp).isoformat(timespec="microseconds"), unit, value)
+                    capture(connection, [record])
+                    yield record
 
         with self._connect() as connection:
+            from backend.app.storage.collection_repository import capture, current_collection
+            if current_collection.get():
+                connection.executemany('INSERT OR IGNORE INTO collection_grids VALUES (?,?,?)',
+                    ((current_collection.get()[0], round(lat,10), round((lon+180)%360-180, 10)) for lat in latitudes for lon in longitudes))
             connection.executemany("""
                 INSERT INTO climate_points VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (dataset, variable, grid_latitude, grid_longitude, time_utc)
@@ -126,6 +137,12 @@ class ClimateRepository:
         """, (dataset, variable, location.latitude, location.longitude)).fetchone()
         if mapped is not None:
             return mapped["grid_latitude"], mapped["grid_longitude"]
+        # The library selects an actual grid, rather than an original requested point.
+        actual = connection.execute("""SELECT grid_latitude, grid_longitude FROM climate_points
+            WHERE dataset=? AND variable=? AND grid_latitude=? AND grid_longitude=? LIMIT 1""",
+            (dataset, variable, location.latitude, location.longitude)).fetchone()
+        if actual is not None:
+            return actual['grid_latitude'], actual['grid_longitude']
         areas = connection.execute("""
             SELECT latitudes_json, longitudes_json FROM climate_areas
             WHERE dataset=? AND variable=? AND south<=? AND north>=? AND west<=? AND east>=?
@@ -157,6 +174,27 @@ class ClimateRepository:
         if [point.time for point in points] != expected:
             return None
         return points
+
+    def catalog(self, dataset: str, limit=100, offset=0):
+        """Observed coverage within stored min/max, not a claim about requested downloads."""
+        if not self._db_path.exists():
+            return []
+        with self._connect() as connection:
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='climate_points'").fetchone():
+                return []
+            rows = connection.execute("""SELECT dataset,variable,unit,grid_latitude,grid_longitude,
+                MIN(time_utc) AS start,MAX(time_utc) AS end,COUNT(*) AS count
+                FROM climate_points WHERE dataset=? AND value IS NOT NULL
+                GROUP BY dataset,variable,unit,grid_latitude,grid_longitude
+                ORDER BY variable,grid_latitude,grid_longitude LIMIT ? OFFSET ?""",
+                (dataset, limit, offset)).fetchall()
+        result = []
+        for row in rows:
+            entry = dict(row)
+            expected = int((datetime.fromisoformat(entry['end']) - datetime.fromisoformat(entry['start'])).total_seconds() // 3600) + 1
+            entry.update(expected_count=expected, coverage=entry['count']/expected)
+            result.append(entry)
+        return result
 
     def read_available(
         self, *, dataset: str, variable: str, location: Location, unit: str,

@@ -4,6 +4,16 @@
 
 ## Cập nhật đợt 1
 
+**Luồng giao diện mới:** mỗi lần thu thập tạo một bộ dữ liệu riêng có địa điểm,
+khoảng ngày gốc, nguồn, điểm lưới, số liệu và cảnh báo. Trong **Dữ liệu đã lưu**,
+tìm và chọn bộ; trong **Biểu đồ**, chọn chính bộ đó để vẽ. Các màn hình này đọc
+SQLite qua `/api/v1/collections/...`, không tự tải CDS. Các dòng đã lưu trước khi
+có liên kết bộ dữ liệu vẫn nằm trong mục **Dữ liệu cũ**, không bị xóa hoặc gán
+nguồn gốc không có chứng cứ. Xem [luồng và mô hình lưu trữ hiện hành](docs/DOT_3_GIAO_DIEN_QUY_TRINH.md).
+
+Các mục dưới đây bao gồm API/cơ chế tương thích cũ; khả năng tự tải của API cũ
+không áp dụng cho màn hình chọn bộ dữ liệu mới.
+
 Dashboard hiện chọn **Đất liền (điểm)** / **ERA5 chung hỗ trợ cả biển (vùng)** / **Mock**, đọc dữ liệu qua `/api/v1/stored/climate/...`. Các API này chỉ đọc SQLite, trả độ phủ và khoảng thiếu; không tự tải CDS. Bấm **Bắt đầu thu thập** để tạo tác vụ riêng. Nguồn/dataset được lưu cùng tác vụ; đổi nguồn không sửa `.env`.
 
 API `/api/v1/climate/...` và synchronization bên dưới là luồng tương thích cũ, vẫn có thể tự tải. Dashboard mới không bật theo dõi/tự đồng bộ; hướng dẫn đồng bộ phía sau áp dụng cho API/scheduler cũ. Xem [hợp đồng, giới hạn và cách chạy thử đợt 1](docs/DOT_1_THU_THAP_VA_TRUY_VAN.md).

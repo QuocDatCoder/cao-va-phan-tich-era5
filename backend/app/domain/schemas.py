@@ -180,6 +180,11 @@ class DownloadRequest(BaseModel):
     location: Location | None = None
     source: DataSource | None = None
     frequency: Literal["hourly"] = "hourly"
+    place_name: str | None = Field(default=None, max_length=300)
+    selected_place: Location | None = None
+    requested_start: datetime | None = None
+    requested_end: datetime | None = None
+    request_timezone: Literal["UTC", "UTC+7"] = "UTC"
 
     @model_validator(mode="after")
     def validate_date_range(self) -> "DownloadRequest":
@@ -191,12 +196,27 @@ class DownloadRequest(BaseModel):
             raise ValueError("Land time-series collects one location, not an area.")
         if self.source == "era5" and self.area is None:
             raise ValueError("ERA5 area collection requires area bounds.")
+        if (self.requested_start is None) != (self.requested_end is None):
+            raise ValueError("Provide both requested_start and requested_end.")
+        if self.requested_start is not None:
+            offset = 7 * 3600 if self.request_timezone == 'UTC+7' else 0
+            if any(t.utcoffset() is None or t.utcoffset().total_seconds() != offset
+                   for t in [self.requested_start,self.requested_end]):
+                raise ValueError('Original timestamps must include the declared request timezone offset.')
+            a, b = to_utc_naive(self.requested_start), to_utc_naive(self.requested_end)
+            if a > b or a.date() != self.start_date or b.date() != self.end_date:
+                raise ValueError("UTC download dates must cover the original requested interval exactly.")
+            if any((t.minute or t.second or t.microsecond) for t in [a, b]):
+                raise ValueError("Requested timestamps must be hourly.")
+        if self.place_name and (self.selected_place is None or self.location != self.selected_place):
+            self.place_name = None  # Edited/manual coordinates must not retain a city label.
         return self
 
 
 class DownloadCreateResponse(BaseModel):
     job_id: str
     status: DownloadJobStatus
+    collection_id: str | None = None
 
 
 class DownloadArtifact(BaseModel):
@@ -226,6 +246,8 @@ class DownloadJob(BaseModel):
     spatial_mode: Literal["point", "area"] = "area"
     retrieval_variables: list[str] = Field(default_factory=list)
     quality: QualityReport | None = None
+    collection_id: str | None = None
+    collection_name: str | None = None
 
 
 class SynchronizationStatus(StrEnum):

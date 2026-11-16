@@ -34,6 +34,15 @@ def timeseries(source: Source, request: Request, service: Service):
     return _query(service, "timeseries", source, request)
 
 
+@router.get("/catalog")
+def catalog(source: Source, service: Service, limit: int = Query(default=100, ge=1, le=500),
+            offset: int = Query(default=0, ge=0)):
+    try:
+        return service.catalog(source, limit, offset)
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=503, detail="Unable to read stored catalog.") from exc
+
+
 @router.get("/timeseries.csv", response_class=Response)
 def timeseries_csv(source: Source, request: Request, service: Service):
     payload = _query(service, "timeseries", source, request)

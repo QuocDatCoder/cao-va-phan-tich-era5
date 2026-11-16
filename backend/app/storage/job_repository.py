@@ -3,6 +3,7 @@ from pathlib import Path
 from backend.app.domain.quality import QualityReport
 import sqlite3
 import json
+from hashlib import sha256
 
 from backend.app.domain.schemas import (
     DownloadArea,
@@ -25,15 +26,22 @@ class JobRepository:
         location = request.location
         area = request.area or DownloadArea(north=location.latitude, south=location.latitude,
                                             west=location.longitude, east=location.longitude)
+        fingerprint = sha256(json.dumps({"request": request.model_dump(mode="json"),
+            "dataset": dataset, "variables": retrieval_variables or []}, sort_keys=True).encode()).hexdigest()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute("SELECT * FROM download_jobs WHERE request_key=? AND status IN ('queued','running') ORDER BY created_at LIMIT 1",
+                                        (fingerprint,)).fetchone()
+            if active is not None:
+                return self._row_to_job(active)
             connection.execute(
                 """
                 INSERT INTO download_jobs (
                     job_id, variable, start_date, end_date, north, west, south, east,
                     frequency, status, progress, created_at, updated_at,
-                    source, location_latitude, location_longitude, retrieval_variables, dataset
+                    source, location_latitude, location_longitude, retrieval_variables, dataset, request_key
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -54,6 +62,7 @@ class JobRepository:
                     location.longitude if location else None,
                     json.dumps(retrieval_variables or []),
                     dataset,
+                    fingerprint,
                 ),
             )
         job = self.get(job_id)
@@ -78,6 +87,17 @@ class JobRepository:
             progress=0,
             error=None,
         )
+
+    def claim_running(self, job_id: str) -> bool:
+        """Only one background worker may claim a queued job."""
+        with self._connect() as connection:
+            return connection.execute("UPDATE download_jobs SET status='running',updated_at=? WHERE job_id=? AND status='queued'",
+                                      (self._now().isoformat(), job_id)).rowcount == 1
+
+    def list_jobs(self, limit=100, offset=0):
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM download_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+        return [self._row_to_job(row) for row in rows]
 
     def mark_completed(self, job_id: str, artifact: DownloadArtifact) -> DownloadJob | None:
         now = self._now()
@@ -170,12 +190,14 @@ class JobRepository:
                 "source": "TEXT", "location_latitude": "REAL", "location_longitude": "REAL",
                 "retrieval_variables": "TEXT NOT NULL DEFAULT '[]'",
                 "quality_json": "TEXT",
+                "request_key": "TEXT",
             }.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE download_jobs ADD COLUMN {name} {sql_type}")
             connection.execute("""CREATE TABLE IF NOT EXISTS download_quality_issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, payload TEXT NOT NULL)""")
             connection.execute("CREATE INDEX IF NOT EXISTS quality_job_idx ON download_quality_issues(job_id, id)")
+            connection.execute("CREATE INDEX IF NOT EXISTS active_request_idx ON download_jobs(request_key, status)")
 
     def add_quality_issues(self, job_id, issues):
         with self._connect() as connection:

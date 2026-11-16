@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from backend.app.domain.quality import QualityReport
 import sqlite3
 import json
 
@@ -168,9 +169,30 @@ class JobRepository:
             for name, sql_type in {
                 "source": "TEXT", "location_latitude": "REAL", "location_longitude": "REAL",
                 "retrieval_variables": "TEXT NOT NULL DEFAULT '[]'",
+                "quality_json": "TEXT",
             }.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE download_jobs ADD COLUMN {name} {sql_type}")
+            connection.execute("""CREATE TABLE IF NOT EXISTS download_quality_issues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, payload TEXT NOT NULL)""")
+            connection.execute("CREATE INDEX IF NOT EXISTS quality_job_idx ON download_quality_issues(job_id, id)")
+
+    def add_quality_issues(self, job_id, issues):
+        with self._connect() as connection:
+            connection.executemany("INSERT INTO download_quality_issues(job_id,payload) VALUES (?,?)",
+                                   [(job_id, json.dumps(issue, ensure_ascii=False)) for issue in issues])
+
+    def save_quality(self, job_id, report):
+        with self._connect() as connection:
+            connection.execute("UPDATE download_jobs SET quality_json=? WHERE job_id=?",
+                               (report.model_dump_json(), job_id))
+
+    def quality_issues(self, job_id, offset=0, limit=100):
+        with self._connect() as connection:
+            total = connection.execute("SELECT COUNT(*) FROM download_quality_issues WHERE job_id=?", (job_id,)).fetchone()[0]
+            rows = connection.execute("SELECT payload FROM download_quality_issues WHERE job_id=? ORDER BY id LIMIT ? OFFSET ?",
+                                      (job_id, limit, offset)).fetchall()
+        return {"total": total, "offset": offset, "limit": limit, "issues": [json.loads(r[0]) for r in rows]}
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._db_path)
@@ -205,6 +227,7 @@ class JobRepository:
                       if row["location_latitude"] is not None else None),
             spatial_mode="point" if row["location_latitude"] is not None else "area",
             retrieval_variables=json.loads(row["retrieval_variables"]),
+            quality=QualityReport.model_validate_json(row["quality_json"]) if row["quality_json"] else None,
         )
 
     def _now(self) -> datetime:

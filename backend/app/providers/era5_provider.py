@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from backend.app.domain.quality import current_quality
 from backend.app.core.config import Settings
 from backend.app.domain.schemas import (
     ClimatePoint,
@@ -302,6 +303,9 @@ class ERA5ClimateProvider(ClimateDataProvider):
         start_date: date, end_date: date,
     ) -> None:
         assert self._repository is not None
+        if current_quality.get() is not None:
+            from backend.app.providers.quality_import import import_area
+            return import_area(self, file_path, spec, area, start_date, end_date)
         try:
             with xr.open_dataset(file_path) as dataset:
                 time_coord = self._find_coordinate(dataset, ("valid_time", "time"))

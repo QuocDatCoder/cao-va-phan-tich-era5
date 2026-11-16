@@ -16,6 +16,7 @@ from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS
 from backend.app.providers.errors import UnsupportedVariableError
 from backend.app.providers.base import ClimateDataProvider
 from backend.app.storage.job_repository import JobRepository
+from backend.app.domain.quality import QualityCollector, current_quality
 
 
 class JobNotFoundError(Exception):
@@ -67,6 +68,11 @@ class DownloadJobService:
             raise JobNotFoundError(f"Download job '{job_id}' was not found.")
         return job
 
+    def get_quality(self, job_id: str, offset: int = 0, limit: int = 100):
+        job = self.get_job(job_id)
+        return {"job_id": job_id, "quality": job.quality,
+                **self._repository.quality_issues(job_id, offset, limit)}
+
     def run_job(self, job_id: str) -> None:
         job = self.get_job(job_id)
         if job.status != DownloadJobStatus.QUEUED:
@@ -88,13 +94,23 @@ class DownloadJobService:
                 provider = self._provider
             spatial = {"location": job.location} if job.location is not None else {"area": job.area}
             download = provider.download_point if job.location is not None else provider.download_area
-            artifact = download(
-                variable=job.variable,
-                **spatial,
-                start_date=job.start_date,
-                end_date=job.end_date,
-                frequency=job.frequency,
-            )
+            collector = (QualityCollector(lambda issues: self._repository.add_quality_issues(job_id, issues))
+                         if hasattr(self._repository, "save_quality") else None)
+            token = current_quality.set(collector)
+            try:
+                artifact = download(variable=job.variable, **spatial, start_date=job.start_date,
+                                    end_date=job.end_date, frequency=job.frequency)
+                if collector is not None and (collector.report.rows_read or collector.report.issue_count) and not collector.report.imported_values:
+                    raise ValueError("No valid observations were imported; original files were preserved.")
+            except Exception:
+                if collector is not None:
+                    self._repository.save_quality(job_id, collector.finish(failed=True))
+                raise
+            else:
+                if collector is not None and (collector.report.rows_read or collector.report.issue_count):
+                    self._repository.save_quality(job_id, collector.finish())
+            finally:
+                current_quality.reset(token)
             if job.source is not None and artifact.dataset != job.dataset:
                 raise ValueError("Provider returned a different dataset than the recorded collection source.")
         except Exception as exc:

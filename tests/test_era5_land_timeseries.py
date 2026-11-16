@@ -157,12 +157,13 @@ def test_celsius_values_are_rejected(make_provider):
         provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
 
 
-def test_broken_download_is_deleted_for_retry(make_provider):
+def test_broken_download_is_preserved_for_inspection(make_provider):
     provider, client, settings = make_provider(lambda d, n: b"PK\x03\x04 not a real zip")
     with pytest.raises(ClimateDataError):
         provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
     leftovers = list((settings.data_dir / "raw").rglob("*.zip"))
-    assert leftovers == []
+    assert len(leftovers) == 1
+    assert leftovers[0].read_bytes() == b"PK\x03\x04 not a real zip"
 
 
 def test_plain_csv_without_zip_is_supported(make_provider):

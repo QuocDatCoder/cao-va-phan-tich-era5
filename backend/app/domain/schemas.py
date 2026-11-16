@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.domain.time_utils import to_utc_naive
+from backend.app.domain.quality import QualityReport
 
 DataSource = Literal["land", "era5", "mock"]
 
@@ -224,6 +225,7 @@ class DownloadJob(BaseModel):
     location: Location | None = None
     spatial_mode: Literal["point", "area"] = "area"
     retrieval_variables: list[str] = Field(default_factory=list)
+    quality: QualityReport | None = None
 
 
 class SynchronizationStatus(StrEnum):

@@ -120,6 +120,8 @@ class SynchronizationService:
         job = self._download_service.get_job(state.job_id)
 
         if job.status == DownloadJobStatus.COMPLETED:
+            if job.quality is not None and not job.quality.complete:
+                return self._mark_sync_failed(sync_id, "Collection contains quality warnings; synchronization coverage was not advanced.")
             completed = self._repository.mark_completed(
                 sync_id=sync_id,
                 last_synced_date=job.end_date,
@@ -161,6 +163,8 @@ class SynchronizationService:
             return state
 
         if job.status == DownloadJobStatus.COMPLETED:
+            if job.quality is not None and not job.quality.complete:
+                return self._mark_sync_failed(state.sync_id, "Collection contains quality warnings; synchronization coverage was not advanced.")
             return self._mark_sync_completed(sync_id=state.sync_id, job=job)
 
         return self._mark_sync_failed(

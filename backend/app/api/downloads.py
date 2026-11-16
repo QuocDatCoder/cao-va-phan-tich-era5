@@ -1,12 +1,18 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from backend.app.domain.schemas import DownloadCreateResponse, DownloadJob, DownloadRequest
 from backend.app.services.dependencies import get_download_job_service
 from backend.app.services.download_job_service import DownloadJobService
 
 router = APIRouter(tags=["downloads"])
+
+
+@router.get("/api/v1/jobs/{job_id}/quality")
+def get_quality(job_id: str, service: Annotated[DownloadJobService, Depends(get_download_job_service)],
+                offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500)):
+    return service.get_quality(job_id, offset, limit)
 
 
 @router.post("/api/v1/downloads", response_model=DownloadCreateResponse, status_code=202)

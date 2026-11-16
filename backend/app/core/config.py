@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
     climate_data_db_path: Path = Path("data/cache/climate.sqlite3")
 
+    cds_max_attempts: int = Field(default=3, ge=1, le=5)
+    cds_retry_base_seconds: float = Field(default=2, ge=0, le=30)
+    cds_request_timeout_seconds: int = Field(default=60, ge=1, le=300)
+
     cds_url: str | None = None
     cds_api_key: str | None = None
 

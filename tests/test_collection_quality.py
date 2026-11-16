@@ -79,7 +79,7 @@ def test_land_quality_survives_restart(collection, problem, code, valid):
     details = client.get(f"/api/v1/jobs/{job.job_id}/quality?limit=500").json()
     assert details["total"] == job.quality.issue_count == sum(job.quality.issue_counts.values())
     assert len(details["issues"]) == details["total"]
-    assert list(settings.data_dir.rglob("*.zip"))  # Empty/raw files preserved too.
+    assert list(settings.data_dir.rglob("*.zip")) or list(settings.data_dir.rglob("*.part"))  # Failed/empty transfers stay as partial evidence.
 
 
 @pytest.mark.parametrize("problem,code,valid", [
@@ -166,6 +166,9 @@ def test_dashboard_renders_persisted_quality_warning_without_network():
 import streamlit as st
 from frontend.dashboard import _poll_collection
 class Client:
+    base_url = 'http://quality-fixture.test'
+    source = 'land'
+    stored_only = True
     def get_job(self, job_id):
         return {"status": "completed", "source": "land", "dataset": "fixture",
             "spatial_mode": "point", "quality": {"status": "warnings", "complete": False,
@@ -176,6 +179,10 @@ st.session_state["collection_jobs"] = {"fixture": "job"}
 st.session_state["collection_completed"] = "job"
 _poll_collection(Client(), "fixture")
 ''').run()
+    assert not app.exception and not app.error
+    assert len(app.warning) == 1 and len(app.dataframe) == 0
+    app.session_state['job_quality_job'] = True
+    app.run()
     assert not app.exception and not app.error
     assert len(app.warning) == 1 and len(app.dataframe) == 1
     assert any("143" in item.value for item in app.caption)

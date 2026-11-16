@@ -39,6 +39,11 @@ def render_dashboard():
         </style>
         <div class="era5-brand" role="heading" aria-level="1">ERA5 · Dữ liệu khí hậu</div>
     """)
+    render_workspace()
+
+
+@st.fragment
+def render_workspace():
     navigation = {
         'Thu thập': ':material/cloud_download: Thu thập',
         'Dữ liệu đã lưu': ':material/folder_open: Kho dữ liệu',
@@ -54,22 +59,52 @@ def render_dashboard():
         key='workflow_section', label_visibility='collapsed',
     )
     st.query_params['view'] = section
-    # Explicitly clear the previous screen before any blocking API read. Without
-    # this delta Streamlit leaves the previous form faded until the rerun ends.
-    screens = {name: st.empty() for name in ['Thu thập', 'Dữ liệu đã lưu', 'Biểu đồ']}
-    for name, slot in screens.items():
-        if name != section:
-            slot.empty()
-    with screens[section].container():
+    switching = st.session_state.get('rendered_workflow_section') != section
+    with st.container(key='workflow_stage'):
+        loading = st.empty()
+        if switching:
+            loading.html("""
+                <style>
+                .st-key-workflow_stage {position:relative;min-height:65vh;}
+                .st-key-workflow_stage .st-key-workflow_content {visibility:hidden;opacity:0;pointer-events:none;}
+                .workflow-loading {position:absolute;inset:0;z-index:10;
+                    display:flex;align-items:center;justify-content:center;gap:.75rem;
+                    min-height:65vh;}
+                .workflow-loading-ring {width:1.5rem;height:1.5rem;flex:none;
+                    border:3px solid var(--secondary-background-color, #d5e2df);
+                    border-top-color:var(--primary-color, #0f766e);border-radius:50%;
+                    animation:workflow-spin .8s linear infinite;}
+                @keyframes workflow-spin {to {transform:rotate(360deg);}}
+                @media(prefers-reduced-motion:reduce) {
+                    .workflow-loading-ring {animation:none;}
+                }
+                </style>
+                <div class="workflow-loading" role="status" aria-live="polite">
+                    <span class="workflow-loading-ring" aria-hidden="true"></span>
+                    <span>Đang tải nội dung…</span>
+                </div>
+            """)
         try:
-            if section == "Thu thập":
-                render_collection()
-            elif section == "Dữ liệu đã lưu":
-                render_stored()
-            else:
-                render_charts()
-        except DashboardApiError as exc:
-            st.error(str(exc))
+            with st.container(key='workflow_content'):
+                screen = st.empty()
+                screen.empty()
+                with screen.container():
+                    render_section(section)
+        finally:
+            loading.empty()
+        st.session_state['rendered_workflow_section'] = section
+
+
+def render_section(section):
+    try:
+        if section == "Thu thập":
+            render_collection()
+        elif section == "Dữ liệu đã lưu":
+            render_stored()
+        else:
+            render_charts()
+    except DashboardApiError as exc:
+        st.error(str(exc))
 
 
 def source_input(prefix):
@@ -219,12 +254,12 @@ def render_collection():
             st.success("Đã tiếp nhận tác vụ.")
     api = client(source)
     st.divider()
-    heading, refresh = st.columns([4, 1], vertical_alignment="center")
-    heading.subheader("Tác vụ thu thập", anchor=False)
     from frontend.library import cached_read, _shared_read
-    if refresh.button("Làm mới", key="refresh_jobs", width="stretch", icon=":material/refresh:"):
-        _shared_read.clear()
-        st.session_state.pop('workflow_job_list', None)
+    with st.container(horizontal=True, vertical_alignment='center', gap='small', wrap=False):
+        st.header("Tác vụ thu thập", anchor=False)
+        if st.button("Làm mới", key="refresh_jobs", width="content", icon=":material/refresh:"):
+            _shared_read.clear()
+            st.session_state.pop('workflow_job_list', None)
     if "workflow_job_list" not in st.session_state:
         st.session_state["workflow_job_list"] = cached_read(api, 'list_jobs')
     jobs = st.session_state.get("workflow_job_list", [])
@@ -251,22 +286,6 @@ def render_collection():
     context = "workflow_selected"
     st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}), context: selected}
     _poll_collection(api, context)
-    current = api.get_job(selected)
-    if current.get('collection_id') and current['status'] in {'completed','failed'}:
-        st.button("Xem dữ liệu vừa thu thập", key='open_collected', type='primary',
-            on_click=open_saved_collection, args=(current['collection_id'],))
-        if current['status'] == 'completed':
-            from frontend.library import open_chart
-            st.button('Vẽ biểu đồ vừa thu thập', key='chart_collected',
-                      on_click=open_chart, args=(current['collection_id'],))
-
-
-def open_saved_collection(collection_id):
-    st.session_state['selected_collection_id'] = collection_id
-    st.session_state['preferred_collection_id'] = collection_id
-    st.session_state['stored_open_requested'] = collection_id
-    st.session_state.pop('saved_library', None)
-    st.session_state['workflow_section'] = 'Dữ liệu đã lưu'
 
 
 def query_form(prefix, charts=False):

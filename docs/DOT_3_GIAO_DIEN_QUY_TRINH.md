@@ -39,7 +39,7 @@ Migration bổ sung trong climate.sqlite3, không xóa/đổi dữ liệu cũ:
 
 `climate_points` vẫn là cache chung phục vụ API tương thích cũ. Bản sao quan sát của bộ dữ liệu được ghi **trong cùng transaction với lần nhập**, không dựng lại từ cache sau đó. Lần thu thập tiếp theo không cập nhật quan sát của bộ trước. Các giờ/biến bổ sung vẫn được lưu, tách khỏi số lượng biến chính. API xem mặc định giới hạn trong khoảng yêu cầu gốc; file nguồn và tổng số giá trị nhập cung cấp thông tin phần dư.
 
-Không có thao tác sửa/xóa snapshot qua API. Tác vụ trùng đang chờ/chạy trả cùng job/bộ. Tác vụ đã kết thúc có thể tạo bộ mới. Lần nhập lặp cùng giờ trong một bộ giữ giá trị hợp lệ đầu tiên và có warning. Không thay thiếu bằng 0.
+Snapshot không cho sửa quan sát qua API; thao tác xóa riêng có xác nhận được bổ sung trong phần cập nhật cuối tài liệu. Tác vụ trùng đang chờ/chạy trả cùng job/bộ. Tác vụ đã kết thúc có thể tạo bộ mới. Lần nhập lặp cùng giờ trong một bộ giữ giá trị hợp lệ đầu tiên và có warning. Không thay thiếu bằng 0.
 
 Backend kiểm tra danh tính tiến trình của tác vụ đang chạy khi khởi động. Nếu xác nhận worker cũ đã thoát, bộ được đánh dấu interrupted, job failed và phần dữ liệu hợp lệ được giữ; không tự gửi lại CDS. Nếu hệ điều hành không cho đọc danh tính tiến trình thì không đoán tác vụ đã chết. Đây không phải hàng đợi phân tán hay tự động tiếp tục tải sau crash.
 
@@ -128,3 +128,31 @@ Thứ tự màn hình: tìm kiếm/thư viện → tên bộ và khoảng thu th
 
 ## Giữ trạng thái khi F5
 Cache đọc API chuyển từ session_state sang st.cache_data (TTL 60 giây, tối đa 128 mục), dùng lại giữa các phiên trình duyệt trong cùng tiến trình frontend. Mục đang xem và bộ lọc đã áp dụng được lưu trên URL để khôi phục bảng/biểu đồ sau F5. Không lưu bản nháp chưa áp dụng. Làm mới xóa cache; tạo tác vụ mới cũng vô hiệu cache. Cache hết hạn hoặc frontend khởi động lại sẽ đọc API lại; không gọi CDS để phục hồi màn hình. Kiểm thử: 21 bài đạt, có test phiên mới không tăng số lần gọi API và nút Làm mới thực sự gọi lại; Chromium xác nhận reload giữ bộ dữ liệu/kết quả.
+
+
+## Cập nhật sau mốc đợt 3
+
+### Xóa bộ dữ liệu
+
+Mỗi thẻ trong Kho dữ liệu/Biểu đồ có nút Xóa và xác nhận ghi rõ bộ được chọn. Bộ queued/running bị khóa; API cũng kiểm tra trạng thái cả job lẫn snapshot và trả 409 nếu tác vụ còn hoạt động. `DELETE /api/v1/collections/{id}` xóa snapshot, biến, điểm lưới, liên kết artifact, cảnh báo và lịch sử job tương ứng trong transaction SQLite; lỗi giữa chừng rollback. Bộ không tồn tại trả 404.
+
+File nguồn vật lý và cache tương thích dùng chung được giữ để tránh ảnh hưởng bộ khác. Xóa bộ dữ liệu không hủy yêu cầu phía CDS. Snapshot vẫn không cho sửa quan sát qua API; DELETE là thao tác riêng do người dùng xác nhận.
+
+Danh sách/phân trang chạy trong fragment. Xóa xong tự đóng popover và chỉ cập nhật danh sách. Nếu xóa bộ đang xem thì dọn đúng vùng chi tiết; kết quả của bộ khác giữ nguyên. Cache và URL đã lưu của bộ bị xóa được dọn để không hiện lại sau F5. API lỗi thì giữ nguyên dữ liệu và hiển thị lỗi.
+
+### Điều hướng và tải dữ liệu
+
+- Điều hướng/nội dung có fragment riêng, phần thương hiệu không dựng lại khi đổi mục.
+- Danh sách dùng một kết nối SQLite và đọc các bảng liên quan theo lô thay vì mở kết nối cho từng thẻ; payload không đổi.
+- Job lịch sử đã kết thúc dùng cache. Job đang chờ/chạy vẫn kiểm tra trực tiếp; không rerun toàn trang chỉ vì mở một job completed cũ.
+- Báo cáo chất lượng chỉ gọi API chi tiết khi mở. Bảng dưới biểu đồ và CSV chỉ tạo khi mở, trong fragment riêng, không dựng lại Plotly.
+- Khi đổi mục: giữ tiêu đề/điều hướng, ẩn nội dung cũ và phần đang dựng của mục mới, hiện vòng xoay “Đang tải nội dung…”. Khi render kết thúc thì gỡ loading; luôn dọn loading cả khi có lỗi. Không thêm thời gian chờ giả, không bật lại loading khi chỉ cập nhật bảng/danh sách trong cùng mục.
+- Nút Làm mới giữ icon và nằm cùng hàng với tiêu đề cả ở màn hình dọc. Bỏ hai nút mở nhanh dữ liệu/biểu đồ cuối phần Tác vụ thu thập theo yêu cầu người dùng.
+
+### Đo tốc độ và kiểm chứng
+
+Chromium trên dịch vụ/DB thử riêng, hai snapshot mock 24 quan sát mỗi bộ; không phải số đo CDS hoặc DB lớn. Khi đã chọn bộ, trung vị 5 lượt: Thu thập 138/134 ms, Kho dữ liệu 158/150 ms, Biểu đồ 195/211 ms ở 1280px/390px. Mở bảng CSV khoảng 125/139 ms. Mở biểu đồ lần đầu qua các lượt đo riêng khoảng 1,29–2,28 giây. Đo render hoàn tất bằng thông điệp `script_finished` và hai animation frame, không chỉ thời điểm hiện tiêu đề.
+
+Thử API danh sách cố tình chậm 2,5 giây: khung mới hiện sau 0,500 giây, danh sách sẵn sàng 3,328 giây; mục cũ không còn nhìn thấy. Sau khi bổ sung loading theo xác nhận người dùng, nội dung mới cũng được ẩn trong thời gian chờ. Ảnh kiểm tra loading ở `output/loading-browser-ok/`, số đo JSON ở `output/speed-run3/`, `output/speed-selected/`, `output/speed-delayed/`. Đây là artifact local, không commit thư mục output.
+
+Mốc kiểm thử bàn giao cuối và tình trạng dữ liệu thật xem `docs/DOT_4_ON_DINH_TAI_VA_DEMO.md`.

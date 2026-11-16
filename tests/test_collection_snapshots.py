@@ -266,3 +266,22 @@ def test_cross_chunk_duplicate_warns_and_keeps_first(collection):
     assert summary['quality']['issue_counts']['duplicate_conflict']==1
     reader=CollectionService(StoredClimateService(ClimateRepository(settings.climate_data_db_path,read_only=True),settings))
     assert reader.query(created.job_id)['data'][0]['value']==26.85
+
+
+def test_library_list_batches_reads_without_changing_detail_payload(collection, monkeypatch):
+    from contextlib import contextmanager
+    _, _, _, service, _, _, api = collection
+    ids = [create(api, local_request()), create(api, local_request())]
+    repository = service.collections
+    expected = {cid: repository.get(cid) for cid in ids}
+    original = repository._connect
+    connections = []
+    @contextmanager
+    def counted():
+        connections.append(True)
+        with original() as db:
+            yield db
+    monkeypatch.setattr(repository, '_connect', counted)
+    rows = repository.list(limit=51)
+    assert len(connections) == 1
+    assert {r['id']: r for r in rows} == expected

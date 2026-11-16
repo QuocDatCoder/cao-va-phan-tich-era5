@@ -30,6 +30,11 @@ class CollectionService:
             raise LookupError('Collection not found; historical cache is not a collection.')
         return entry
 
+    def delete(self, collection_id):
+        self.get(collection_id)
+        writer = CollectionRepository(self.repository._db_path)
+        return writer.delete(collection_id, self.settings.job_metadata_db_path)
+
     def query(self, collection_id, operation='timeseries', variable=None, latitude=None, longitude=None,
               start=None, end=None, frequency='hourly', aggregation='auto'):
         entry = self.get(collection_id)

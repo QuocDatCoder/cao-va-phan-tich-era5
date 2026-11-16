@@ -100,9 +100,10 @@ class CollectionRepository(ClimateRepository):
                  'wind_direction':'Hướng gió','surface_solar_radiation_downwards':'Bức xạ mặt trời'}
         metadata['name'] = f"{names.get(canonical,canonical)} — {metadata['place_name']} — {a:%d/%m/%Y} đến {b:%d/%m/%Y} ({request.request_timezone})"
         components = WIND_COMPONENTS if canonical in DERIVED_WIND_UNITS else [canonical]
+        from backend.app.services.worker_identity import process_identity
         with self._connect() as c:
-            c.execute('INSERT OR IGNORE INTO collections(id,job_id,metadata,status,created_at) VALUES (?,?,?,?,?)',
-                      (job.job_id,job.job_id,json.dumps(metadata,ensure_ascii=False),'queued',job.created_at.isoformat()))
+            c.execute('INSERT OR IGNORE INTO collections(id,job_id,metadata,status,created_at,worker_pid,worker_identity) VALUES (?,?,?,?,?,?,?)',
+                      (job.job_id,job.job_id,json.dumps(metadata,ensure_ascii=False),'queued',job.created_at.isoformat(),os.getpid(),process_identity(os.getpid())))
             c.executemany('INSERT OR IGNORE INTO collection_variables VALUES (?,?,?)',
                           [(job.job_id,v,'requested' if v in components else 'additional') for v in job.retrieval_variables])
 
@@ -123,16 +124,71 @@ class CollectionRepository(ClimateRepository):
             result['artifacts'] = [dict(r) for r in c.execute('SELECT path,sha256,bytes,imported_at,parser_version FROM collection_artifacts WHERE collection_id=?',(collection_id,))]
             return result
 
+    def delete(self, collection_id, jobs_path):
+        """Remove one finished snapshot and its job in one SQLite transaction.
+
+        Source files and the shared compatibility cache may serve other collections.
+        They are deliberately outside this operation.
+        """
+        with self._connect() as c:
+            jobs_schema = None
+            if Path(jobs_path).is_file():
+                if Path(jobs_path).resolve() == self._db_path.resolve():
+                    jobs_schema = 'main'
+                else:
+                    c.execute('ATTACH DATABASE ? AS jobs_db', (str(Path(jobs_path).resolve()),))
+                    jobs_schema = 'jobs_db'
+            c.execute('BEGIN IMMEDIATE')
+            entry = c.execute('SELECT job_id,status FROM collections WHERE id=?', (collection_id,)).fetchone()
+            if entry is None:
+                raise LookupError('Bộ dữ liệu không còn tồn tại.')
+            if entry['status'] in {'queued', 'running'}:
+                raise ValueError('Không thể xóa bộ dữ liệu đang chờ hoặc đang thu thập.')
+            job_id = entry['job_id']
+            if jobs_schema:
+                job = c.execute(f'SELECT status FROM {jobs_schema}.download_jobs WHERE job_id=?', (job_id,)).fetchone()
+                if job and job['status'] in {'queued', 'running'}:
+                    raise ValueError('Không thể xóa khi tác vụ vẫn đang chờ hoặc đang chạy.')
+                c.execute(f'DELETE FROM {jobs_schema}.download_quality_issues WHERE job_id=?', (job_id,))
+                c.execute(f'DELETE FROM {jobs_schema}.download_jobs WHERE job_id=?', (job_id,))
+            deleted = {}
+            for table in ['collection_observations', 'collection_variables', 'collection_grids',
+                          'collection_artifacts', 'collection_quality_issues']:
+                deleted[table] = c.execute(f'DELETE FROM {table} WHERE collection_id=?', (collection_id,)).rowcount
+            c.execute('DELETE FROM collections WHERE id=?', (collection_id,))
+        return dict(collection_id=collection_id, job_id=job_id, deleted=deleted,
+                    source_files_preserved=True)
+
     def list(self, search='', limit=100, offset=0):
         if not self._db_path.exists():
             return []
         with self._connect() as c:
             if not c.execute("SELECT 1 FROM sqlite_master WHERE name='collections'").fetchone():
                 return []
-            # Unicode search in Python; do not rely on SQLite's ASCII-only lower().
-            rows = c.execute('SELECT id,metadata,created_at FROM collections ORDER BY created_at DESC,id').fetchall()
-        ids = [r['id'] for r in rows if search.casefold() in (r['metadata']+' '+r['created_at']).casefold()]
-        return [self.get(i) for i in ids[offset:offset+limit]]
+            # One connection and batched related rows, rather than reopening SQLite per card.
+            rows = c.execute('SELECT * FROM collections ORDER BY created_at DESC,id').fetchall()
+            rows = [r for r in rows if search.casefold() in (r['metadata']+' '+r['created_at']).casefold()][offset:offset+limit]
+            result = []
+            for row in rows:
+                entry = dict(row)
+                entry['metadata'] = json.loads(entry['metadata'])
+                entry['summary'] = json.loads(entry['summary'])
+                entry.update(variables=[], grids=[], artifacts=[])
+                result.append(entry)
+            if not result:
+                return result
+            by_id = {entry['id']: entry for entry in result}
+            placeholders = ','.join('?' for _ in result)
+            for table, name, fields, order in [
+                ('collection_variables', 'variables', 'variable,role', 'role DESC,variable'),
+                ('collection_grids', 'grids', 'latitude,longitude', 'latitude,longitude'),
+                ('collection_artifacts', 'artifacts', 'path,sha256,bytes,imported_at,parser_version', 'path'),
+            ]:
+                related = c.execute(f'SELECT collection_id,{fields} FROM {table} WHERE collection_id IN ({placeholders}) ORDER BY {order}', tuple(by_id))
+                for row in related:
+                    item = dict(row)
+                    by_id[item.pop('collection_id')][name].append(item)
+            return result
 
     def running(self, collection_id):
         from backend.app.services.worker_identity import process_identity
@@ -143,7 +199,7 @@ class CollectionRepository(ClimateRepository):
     def abandoned(self):
         from backend.app.services.worker_identity import process_identity
         with self._connect() as c:
-            rows=c.execute("SELECT id,worker_pid,worker_identity FROM collections WHERE status='running'").fetchall()
+            rows=c.execute("SELECT id,worker_pid,worker_identity FROM collections WHERE status IN ('queued','running')").fetchall()
         return [r['id'] for r in rows if r['worker_pid'] and r['worker_identity'] and
                 (identity := process_identity(r['worker_pid'])) is not None and identity != r['worker_identity']]
 
@@ -212,7 +268,8 @@ def record_artifact(path, db_path):
 
 def recover_abandoned(collections, jobs):
     """Reconcile dead workers at startup without constructing any data provider."""
-    for collection_id in collections.abandoned():
+    abandoned = set(collections.abandoned()) | set(jobs.abandoned_ids())
+    for collection_id in abandoned:
         message = 'Collection worker exited before completion; retained observations have not been discarded. Submit a new collection to retry.'
         job = jobs.get(collection_id)
         if job is None:
@@ -227,6 +284,7 @@ def recover_abandoned(collections, jobs):
             job.quality.complete=False
             job.quality.status='failed'
             jobs.save_quality(collection_id,job.quality)
-        collections.finish(collection_id,issues,job.quality.model_dump(mode='json') if job.quality else None,error=message)
-        collections.interrupted(collection_id)
+        if collections.get(collection_id):
+            collections.finish(collection_id,issues,job.quality.model_dump(mode='json') if job.quality else None,error=message)
+            collections.interrupted(collection_id)
         jobs.mark_failed(collection_id,message)

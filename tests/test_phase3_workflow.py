@@ -34,6 +34,11 @@ class Bridge:
         self.calls.append(('GET', path, params))
         return Response(self.api.get(path, params=params))
 
+    def delete(self, url, timeout=None):
+        path = url.split('http://phase3.test')[-1]
+        self.calls.append(('DELETE', path, None))
+        return Response(self.api.delete(path))
+
     def post(self, url, json=None, timeout=None):
         path = url.split('http://phase3.test')[-1]
         self.calls.append(('POST', path, json))
@@ -51,6 +56,12 @@ def ui(collection, monkeypatch):
     app = AppTest.from_file(str(Path('app.py').resolve())).run(timeout=15)
     assert not app.exception and not app.error
     return app, bridge, collection
+
+
+def open_latest_collection(app):
+    cid = app.session_state['latest_collection_id']
+    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.button(key='stored_view_'+cid).click().run()
 
 
 def test_editing_collection_form_does_not_create_job_or_query(ui):
@@ -200,6 +211,10 @@ def test_saved_library_selects_actual_database_data_and_never_collects(ui,sectio
     assert len([c for c in bridge.calls if c[0]=='POST'])==before
     assert bridge.calls[-1][1].startswith('/api/v1/collections/')
     assert bridge.calls[-1][1].endswith('/timeseries')
+    if prefix == 'chart':
+        assert not any(d.key=='download_timeseries_csv' for d in app.get('download_button'))
+        app.session_state['timeseries_table_panel'] = True
+        app.run()
     assert any(d.key=='download_timeseries_csv' for d in app.get('download_button'))
     if prefix == 'chart':
         app.button(key='chart_view_'+cid).click().run()
@@ -245,7 +260,7 @@ def test_city_persisted_and_extra_variable_carried_to_chart(ui,monkeypatch):
     assert not app.exception and not app.error
     cid=app.session_state['workflow_selected_job']
     assert collection[3].collections.get(cid)['metadata']['place_name']==place['label']
-    app.button(key='open_collected').click().run()
+    open_latest_collection(app)
     assert app.session_state['selected_collection_id']==cid
     app.selectbox(key='stored_variable_'+cid).set_value('2m_dewpoint_temperature')
     app.button(key='stored_selected_submit').click().run()
@@ -284,7 +299,7 @@ def test_open_collection_loads_data_once_and_search_can_be_cleared(ui):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.button(key='open_collected').click().run()
+    open_latest_collection(app)
     assert not app.exception and not app.error
     assert app.session_state['stored_result'][0]==cid
     assert app.session_state['stored_result'][2]['data']
@@ -306,7 +321,7 @@ def test_details_filter_applies_only_on_submit_and_reuses_identical_read(ui):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid = app.session_state['latest_collection_id']
-    app.button(key='open_collected').click().run()
+    open_latest_collection(app)
     assert app.session_state['stored_result'][0] == cid
     reads = lambda: sum(c[1].endswith('/timeseries') for c in bridge.calls)
     before = reads()
@@ -330,7 +345,7 @@ def test_new_browser_session_restores_applied_data_without_api_reload(ui):
     app, bridge, _ = ui
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
-    app.button(key='open_collected').click().run()
+    open_latest_collection(app)
     result = app.session_state['stored_result']
     before = len(bridge.calls)
     refreshed = AppTest.from_file(str(Path('app.py').resolve()))
@@ -343,3 +358,56 @@ def test_new_browser_session_restores_applied_data_without_api_reload(ui):
     refreshed.button(key='stored_refresh_library').click().run()
     assert not refreshed.exception and not refreshed.error
     assert len(bridge.calls) > before
+
+
+def test_delete_requires_confirmation_and_clears_saved_view(ui):
+    app, bridge, collection = ui
+    app.selectbox(key='collect_source').set_value('mock').run()
+    app.button(key='collect_now').click().run()
+    cid = app.session_state['latest_collection_id']
+    open_latest_collection(app)
+    assert collection[3].collections.get(cid)
+    assert not any(call[0]=='DELETE' for call in bridge.calls)
+    app.button(key='stored_delete_confirm_'+cid).click().run()
+    assert not app.exception and not app.error
+    assert collection[3].collections.get(cid) is None
+    assert 'stored_applied' not in app.query_params
+    assert 'stored_result' not in app.session_state
+    assert not any(b.key=='stored_view_'+cid for b in app.button)
+    app.run()
+    assert not app.exception and not app.error
+
+
+def test_delete_api_error_keeps_collection_and_applied_result(ui, monkeypatch):
+    from frontend.api_client import DashboardApiError
+    app, _, collection = ui
+    app.selectbox(key='collect_source').set_value('mock').run()
+    app.button(key='collect_now').click().run()
+    cid = app.session_state['latest_collection_id']
+    open_latest_collection(app)
+    original = app.session_state['stored_result']
+    def fail(*args):
+        raise DashboardApiError('Delete fixture failure')
+    monkeypatch.setattr(DashboardApiClient, 'delete_collection', fail)
+    app.button(key='stored_delete_confirm_'+cid).click().run()
+    assert not app.exception
+    assert any('Delete fixture failure' in e.value for e in app.error)
+    assert collection[3].collections.get(cid) is not None
+    assert app.session_state['stored_result'] == original
+    assert 'stored_applied' in app.query_params
+
+
+def test_quality_details_load_only_when_open_and_terminal_job_is_cached(ui):
+    app, bridge, _ = ui
+    app.selectbox(key='collect_source').set_value('mock').run()
+    app.button(key='collect_now').click().run()
+    jid = app.session_state['workflow_selected_job']
+    assert not any(c[1].endswith('/quality') for c in bridge.calls)
+    app.run()
+    before = len(bridge.calls)
+    app.run()
+    assert len(bridge.calls) == before
+    app.session_state['job_quality_'+jid] = True
+    app.run()
+    assert any(c[1].endswith('/quality') for c in bridge.calls)
+    assert not app.exception and not app.error

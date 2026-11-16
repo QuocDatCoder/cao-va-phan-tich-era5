@@ -79,6 +79,16 @@ class DashboardApiClient:
     def get_collection(self, collection_id):
         return self._get(f'/api/v1/collections/{collection_id}')
 
+    def delete_collection(self, collection_id):
+        try:
+            response = self._session().delete(
+                self._url(f'/api/v1/collections/{collection_id}'), timeout=self.timeout_seconds)
+        except requests.Timeout as exc:
+            raise DashboardApiError(self._timeout_message()) from exc
+        except requests.RequestException as exc:
+            raise DashboardApiError('Không kết nối được tới máy chủ API.') from exc
+        return self._decode_response(response)
+
     def query_collection(self, collection_id, operation, params):
         return self._get(f'/api/v1/collections/{collection_id}/{operation}', params=params)
 

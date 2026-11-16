@@ -7,6 +7,8 @@ import logging
 import json
 import sqlite3
 import threading
+from uuid import uuid4
+from backend.app.providers.cds_retry import CDSSession, retrieve_with_retry
 from typing import Any
 
 import numpy as np
@@ -466,8 +468,17 @@ class ERA5ClimateProvider(ClimateDataProvider):
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            client = self._client_factory(self._settings)
-            client.retrieve(self._settings.era5_dataset, request, str(target_path))
+            # Preserve partial downloads separately; only publish a successful file.
+            partial = target_path.with_name(uuid4().hex + '.part')
+            with _CDS_LOCK:
+                client = self._client_factory(self._settings)
+                retrieve_with_retry(client, self._settings.era5_dataset, request, partial, self._settings)
+            if not partial.is_file() or partial.stat().st_size == 0:
+                quality = current_quality.get()
+                if quality is not None:
+                    quality.issue('empty_file', 'CDS returned no non-empty data file.', source_file=str(partial))
+                raise ClimateDataError('CDS returned no non-empty data file.')
+            partial.replace(target_path)
         except ClimateProviderError:
             raise
         except Exception as exc:
@@ -667,4 +678,6 @@ class ERA5ClimateProvider(ClimateDataProvider):
     def _default_client_factory(self, settings: Settings) -> Any:
         import cdsapi
 
-        return cdsapi.Client(url=settings.cds_url, key=settings.cds_api_key)
+        return cdsapi.Client(url=settings.cds_url, key=settings.cds_api_key,
+                             retry_max=1, timeout=settings.cds_request_timeout_seconds,
+                             sleep_max=30, quiet=True, debug=False, session=CDSSession())

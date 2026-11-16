@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    climate_provider: Literal["mock", "era5"] = "era5"
+    climate_provider: Literal["mock", "era5", "era5_land_timeseries"] = "era5"
     data_dir: Path = Path("data")
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
     climate_data_db_path: Path = Path("data/cache/climate.sqlite3")
@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     era5_max_days_per_request: int = Field(default=7, ge=1, le=31)
     era5_max_query_days: int = Field(default=366, ge=1, le=3660)
     era5_point_buffer_degrees: float = Field(default=0.25, gt=0, le=2)
+
+    # Dataset ERA5-Land time-series (như slide môn học): một điểm, nhiều biến, xuất CSV.
+    era5_land_dataset: str = "reanalysis-era5-land-timeseries"
+    era5_land_max_days_per_request: int = Field(default=366, ge=1, le=3660)
 
     era5_sync_enabled: bool = False
     era5_sync_interval_hours: int = Field(default=6, ge=1)

@@ -128,3 +128,20 @@ def test_client_handles_malformed_json() -> None:
 
     with pytest.raises(DashboardApiError, match="phản hồi không hợp lệ"):
         client.health()
+
+
+def test_stored_client_explicit_source_routes_to_db_only_endpoints():
+    session = FakeSession(response=FakeResponse({"data": []}))
+    client = DashboardApiClient(base_url="http://api.test", session=session, source="land", stored_only=True)
+    client.get_statistics({"variable": "temperature"})
+    client.create_download({"variable": "temperature", "location": {"latitude": 10, "longitude": 106}})
+    assert session.calls[0][1] == "http://api.test/api/v1/stored/climate/statistics"
+    assert session.calls[0][2] == {"variable": "temperature", "source": "land"}
+    assert session.calls[1][2]["source"] == "land"
+
+
+def test_stored_client_requires_a_source_and_does_not_fall_back_to_legacy():
+    session = FakeSession()
+    with pytest.raises(DashboardApiError, match="nguồn dữ liệu"):
+        DashboardApiClient(session=session, stored_only=True).get_timeseries({})
+    assert session.calls == []

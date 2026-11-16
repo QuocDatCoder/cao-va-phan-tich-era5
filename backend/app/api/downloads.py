@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from backend.app.domain.schemas import DownloadCreateResponse, DownloadJob, DownloadRequest
 from backend.app.services.dependencies import get_download_job_service
@@ -15,7 +15,10 @@ def create_download(
     background_tasks: BackgroundTasks,
     service: Annotated[DownloadJobService, Depends(get_download_job_service)],
 ) -> DownloadCreateResponse:
-    response = service.create_job(request)
+    try:
+        response = service.create_job(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     background_tasks.add_task(service.run_job, response.job_id)
     return response
 

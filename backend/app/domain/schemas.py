@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from backend.app.domain.time_utils import to_utc_naive
 
+DataSource = Literal["land", "era5", "mock"]
 
 class Location(BaseModel):
     latitude: float = Field(ge=-90, le=90)
@@ -174,13 +175,21 @@ class DownloadRequest(BaseModel):
     variable: str = Field(min_length=1)
     start_date: date
     end_date: date
-    area: DownloadArea
+    area: DownloadArea | None = None
+    location: Location | None = None
+    source: DataSource | None = None
     frequency: Literal["hourly"] = "hourly"
 
     @model_validator(mode="after")
     def validate_date_range(self) -> "DownloadRequest":
         if self.end_date < self.start_date:
             raise ValueError("end_date must be greater than or equal to start_date")
+        if (self.area is None) == (self.location is None):
+            raise ValueError("Provide exactly one of area or location.")
+        if self.source == "land" and self.location is None:
+            raise ValueError("Land time-series collects one location, not an area.")
+        if self.source == "era5" and self.area is None:
+            raise ValueError("ERA5 area collection requires area bounds.")
         return self
 
 
@@ -201,7 +210,7 @@ class DownloadJob(BaseModel):
     variable: str
     start_date: date
     end_date: date
-    area: DownloadArea
+    area: DownloadArea | None
     frequency: Literal["hourly"]
     status: DownloadJobStatus
     progress: int = Field(ge=0, le=100)
@@ -211,6 +220,10 @@ class DownloadJob(BaseModel):
     dataset: str | None = None
     file_path: str | None = None
     error: str | None = None
+    source: DataSource | None = None
+    location: Location | None = None
+    spatial_mode: Literal["point", "area"] = "area"
+    retrieval_variables: list[str] = Field(default_factory=list)
 
 
 class SynchronizationStatus(StrEnum):

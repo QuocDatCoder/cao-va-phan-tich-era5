@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 import json
 import sqlite3
+import threading
 from typing import Any
 
 import numpy as np
@@ -33,6 +34,10 @@ from backend.app.domain.time_utils import (
 from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS, derive_wind
 
 logger = logging.getLogger(__name__)
+
+# CDS giới hạn số request đang xếp hàng cho mỗi dataset (lỗi 400 "Maximum number queued
+# requests"), nên mọi lần gọi CDS trong tiến trình này phải đi tuần tự, từng cái một.
+_CDS_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -146,25 +151,31 @@ class ERA5ClimateProvider(ClimateDataProvider):
             logger.info("ERA5 SQLite hit: variable=%s observations=%s", spec.cds_name, len(points))
             return points
 
-        # Import an existing exact-query file before planning new CDS requests.
-        existing_path = self._target_path(variable, location.latitude, location.longitude, start, end)
-        if existing_path.exists():
-            self._load_point_data(variable, spec, location, start, end)
+        with _CDS_LOCK:
+            # Request khác có thể đã tải xong các giờ này trong lúc mình chờ khóa.
             points = self._repository.get_series(**query)
             gaps = missing_hour_ranges(start, end, {point.time for point in points})
+            if not gaps:
+                return points
+            # Import an existing exact-query file before planning new CDS requests.
+            existing_path = self._target_path(variable, location.latitude, location.longitude, start, end)
+            if existing_path.exists():
+                self._load_point_data(variable, spec, location, start, end)
+                points = self._repository.get_series(**query)
+                gaps = missing_hour_ranges(start, end, {point.time for point in points})
 
-        for gap_start, gap_end in batch_missing_ranges(gaps, self._settings.era5_max_days_per_request):
-            logger.info("ERA5 missing range: variable=%s UTC=%s..%s", spec.cds_name, gap_start, gap_end)
-            self._load_point_data(variable, spec, location, gap_start, gap_end)
+            for gap_start, gap_end in batch_missing_ranges(gaps, self._settings.era5_max_days_per_request):
+                logger.info("ERA5 missing range: variable=%s UTC=%s..%s", spec.cds_name, gap_start, gap_end)
+                self._load_point_data(variable, spec, location, gap_start, gap_end)
 
-        points = self._repository.get_series(**query)
-        remaining = missing_hour_ranges(start, end, {point.time for point in points})
-        if remaining:
-            raise ClimateDataError(
-                "ERA5 data is still incomplete after downloading missing ranges. "
-                f"First missing UTC hour: {remaining[0][0].isoformat()}."
-            )
-        return points
+            points = self._repository.get_series(**query)
+            remaining = missing_hour_ranges(start, end, {point.time for point in points})
+            if remaining:
+                raise ClimateDataError(
+                    "ERA5 data is still incomplete after downloading missing ranges. "
+                    f"First missing UTC hour: {remaining[0][0].isoformat()}."
+                )
+            return points
 
     def _load_point_data(
         self, variable: str, variable_spec: Era5Variable, location: Location,
@@ -209,6 +220,20 @@ class ERA5ClimateProvider(ClimateDataProvider):
         return points
 
     def download_area(
+        self,
+        variable: str,
+        area: DownloadArea,
+        start_date: date,
+        end_date: date,
+        frequency: str,
+    ) -> DownloadArtifact:
+        if (end_date - start_date).days + 1 > self._settings.era5_max_days_per_request:
+            # Khoảng dài: các đợt con gọi lại download_area và tự khóa từng đợt.
+            return self._download_area(variable, area, start_date, end_date, frequency)
+        with _CDS_LOCK:
+            return self._download_area(variable, area, start_date, end_date, frequency)
+
+    def _download_area(
         self,
         variable: str,
         area: DownloadArea,

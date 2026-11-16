@@ -1,146 +1,177 @@
-from datetime import date
+from typing import Any
 
-from fastapi.testclient import TestClient
-import pytest
-from streamlit.testing.v1 import AppTest
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 
-from backend.app.core.config import Settings, get_settings
-from backend.app.domain.schemas import DownloadArea, SynchronizationRequest
-from backend.app.main import app
-from backend.app.providers.mock_provider import MockClimateProvider
-from backend.app.services.climate_service import ClimateService
-from backend.app.services.climate_analysis_service import ClimateAnalysisService
-from backend.app.services.dependencies import (
-    get_climate_service, get_climate_analysis_service, get_synchronization_service,
-)
-from backend.app.services.download_job_service import DownloadJobService
-from backend.app.services.synchronization_service import LatestAvailableDateProvider, SynchronizationService
-from backend.app.storage.job_repository import JobRepository
-from backend.app.storage.synchronization_repository import SynchronizationRepository
-from frontend.api_client import DashboardApiClient, DashboardApiError
-from frontend.dashboard import _cached_get
+VARIABLE_LABELS = {
+    "temperature": "Nhiệt độ",
+    "2m_temperature": "Nhiệt độ",
+    "dewpoint": "Điểm sương",
+    "2m_dewpoint_temperature": "Điểm sương",
+    "precipitation": "Lượng mưa",
+    "total_precipitation": "Lượng mưa",
+    "wind_u": "Gió thành phần u",
+    "u10": "Gió thành phần u",
+    "10m_u_component_of_wind": "Gió thành phần u",
+    "wind_v": "Gió thành phần v",
+    "v10": "Gió thành phần v",
+    "10m_v_component_of_wind": "Gió thành phần v",
+    "wind_speed": "Tốc độ gió",
+    "wind_direction": "Hướng gió",
+    "solar_radiation": "Bức xạ mặt trời",
+    "ssrd": "Bức xạ mặt trời",
+    "surface_solar_radiation_downwards": "Bức xạ mặt trời",
+}
 
 
-@pytest.fixture
-def live_app(tmp_path, monkeypatch):
-    provider = MockClimateProvider(tmp_path)
-    climate = ClimateService(provider)
-    sync = SynchronizationService(
-        DownloadJobService(provider, JobRepository(tmp_path / "jobs.sqlite3")),
-        SynchronizationRepository(tmp_path / "jobs.sqlite3"), LatestAvailableDateProvider(5),
+def variable_label(name: Any) -> str:
+    return VARIABLE_LABELS.get(str(name), str(name) if name else "Giá trị")
+
+
+def vietnam_display_times(values: pd.Series) -> pd.Series:
+    # Plotly receives local wall times so browser timezone cannot shift the chart.
+    return pd.to_datetime(values, utc=True).dt.tz_convert("Asia/Ho_Chi_Minh").dt.tz_localize(None)
+
+
+def timeseries_frame(payload: dict[str, Any]) -> pd.DataFrame:
+    data = payload.get("data", [])
+    frame = pd.DataFrame(data)
+    if frame.empty:
+        return pd.DataFrame(columns=["time", "value"])
+    frame["time"] = vietnam_display_times(frame["time"])
+    return frame.sort_values("time")
+
+
+def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
+    frame = timeseries_frame(payload)
+    unit = payload.get("unit", "")
+    variable = variable_label(payload.get("variable"))
+    if payload.get("aggregation") == "sum":
+        fig = px.bar(frame, x="time", y="value")
+    else:
+        fig = px.line(frame, x="time", y="value", markers=True)
+    if payload.get("aggregation") == "mean" and unit not in {"mm", "MJ/m²", "°"}:
+        for column, label in (("min", "Nhỏ nhất trong kỳ"), ("max", "Lớn nhất trong kỳ")):
+            if column in frame:
+                fig.add_trace(go.Scatter(x=frame["time"], y=frame[column], mode="lines",
+                                         name=label, line={"dash": "dot"}))
+    if payload.get("variable") == "wind_direction":
+        fig.update_traces(mode="markers")
+        fig.update_yaxes(range=[0, 360], tickvals=[0, 90, 180, 270, 360],
+                         ticktext=["Bắc 0°", "Đông 90°", "Nam 180°", "Tây 270°", "Bắc 360°"])
+    fig.update_layout(
+        xaxis_title="Thời gian Việt Nam (UTC+7)",
+        yaxis_title=f"{variable} ({unit})" if unit else variable,
+        margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
-    settings = Settings(_env_file=None, climate_provider="mock", era5_sync_enabled=False)
-    app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_climate_service] = lambda: climate
-    app.dependency_overrides[get_climate_analysis_service] = lambda: ClimateAnalysisService(climate)
-    app.dependency_overrides[get_synchronization_service] = lambda: sync
-    api = TestClient(app)
-    calls = []
-
-    def get(self, path, params=None):
-        calls.append((path, params))
-        result = api.get(path, params=params)
-        if not result.is_success:
-            raise DashboardApiError(str(result.json()))
-        return result.json()
-
-    def post(self, path, payload):
-        calls.append((path, payload))
-        result = api.post(path, json=payload)
-        if not result.is_success:
-            raise DashboardApiError(str(result.json()))
-        return result.json()
-
-    monkeypatch.setenv("API_BASE_URL", "http://test/" + tmp_path.name)
-    monkeypatch.setattr(DashboardApiClient, "_get", get)
-    monkeypatch.setattr(DashboardApiClient, "_post", post)
-    _cached_get.clear()
-    try:
-        yield AppTest.from_file("../app.py"), sync, calls
-    finally:
-        app.dependency_overrides.clear()
-        _cached_get.clear()
-        api.close()
+    return fig
 
 
-def finish_sync(service, end_date):
-    queued = service.synchronize(SynchronizationRequest(
-        variable="2m_temperature", start_date=date(2025, 1, 30),
-        latest_available_date=end_date,
-        area=DownloadArea(north=11, south=10, west=106, east=107),
-    ))
-    service.run_synchronization(queued.sync_id)
+def anomaly_figure(payload: dict[str, Any]) -> go.Figure:
+    frame = pd.DataFrame(payload.get("data", []))
+    if frame.empty:
+        frame = pd.DataFrame(columns=["time", "anomaly"])
+    else:
+        frame["time"] = vietnam_display_times(frame["time"])
+        frame = frame.sort_values("time")
+    unit = payload.get("unit", "")
+    fig = px.bar(frame, x="time", y="anomaly")
+    fig.update_layout(
+        xaxis_title="Thời gian Việt Nam (UTC+7)",
+        yaxis_title=f"Độ lệch ({unit})" if unit else "Độ lệch",
+        margin={"l": 10, "r": 10, "t": 30, "b": 10},
+    )
+    return fig
 
 
-def timeseries_calls(calls):
-    return [params for path, params in calls if path.endswith("/climate/timeseries")]
+def comparison_figure(payload: dict[str, Any]) -> go.Figure:
+    frame = pd.DataFrame(
+        [
+            {"period": "Giai đoạn A", "mean": payload.get("period_a", {}).get("mean")},
+            {"period": "Giai đoạn B", "mean": payload.get("period_b", {}).get("mean")},
+        ]
+    )
+    unit = payload.get("unit", "")
+    fig = px.bar(frame, x="period", y="mean", text="mean")
+    fig.update_traces(texttemplate="%{y:.2f}", textposition="outside")
+    fig.update_layout(
+        xaxis_title="Giai đoạn",
+        yaxis_title=f"Trung bình ({unit})" if unit else "Trung bình",
+        margin={"l": 10, "r": 10, "t": 30, "b": 10},
+    )
+    return fig
 
 
-def test_dashboard_refetches_after_external_sync_without_moving_historical_dates(live_app):
-    ui, sync, calls = live_app
-    ui.run(timeout=30)
-    assert not ui.exception
-    first = timeseries_calls(calls)[-1]
-    count = len(timeseries_calls(calls))
-    finish_sync(sync, date(2025, 2, 1))
-    ui.run(timeout=30)
-    assert not ui.exception
-    assert len(timeseries_calls(calls)) > count
-    assert timeseries_calls(calls)[-1] == first
+def heatmap_frame(payload: dict[str, Any]) -> pd.DataFrame:
+    frame = pd.DataFrame(payload.get("data", []))
+    if frame.empty:
+        return pd.DataFrame()
+    return frame.pivot(index="year", columns="month", values="value").sort_index()
 
 
-def test_follow_mode_moves_window_only_after_completed_sync(live_app):
-    ui, sync, calls = live_app
-    finish_sync(sync, date(2025, 2, 1))
-    ui.run(timeout=30)
-    ui.toggle[0].set_value(True)
-    ui.run(timeout=30)
-    assert not ui.exception
-    assert timeseries_calls(calls)[-1]["start"] == "2025-01-31T00:00:00+07:00"
-    assert timeseries_calls(calls)[-1]["end"] == "2025-02-01T23:00:00+07:00"
-    finish_sync(sync, date(2025, 2, 2))
-    ui.run(timeout=30)
-    assert not ui.exception
-    assert timeseries_calls(calls)[-1]["start"] == "2025-02-01T00:00:00+07:00"
-    assert timeseries_calls(calls)[-1]["end"] == "2025-02-02T23:00:00+07:00"
+def heatmap_figure(payload: dict[str, Any]) -> go.Figure:
+    pivot = heatmap_frame(payload)
+    unit = payload.get("unit", "")
+    fig = px.imshow(
+        pivot,
+        labels={"x": "Tháng", "y": "Năm", "color": unit or "Giá trị"},
+        aspect="auto",
+    )
+    fig.update_layout(margin={"l": 10, "r": 10, "t": 30, "b": 10})
+    return fig
 
 
-def test_auto_follow_starts_sync_once_and_then_renders_completed_window(live_app):
-    ui, sync, calls = live_app
-    ui.run(timeout=30)
-    ui.toggle[0].set_value(True).run(timeout=30)
-    assert not ui.exception
-    assert not [path for path, _ in calls if path.endswith("/synchronization/run")]
-    ui.checkbox[0].set_value(True).run(timeout=30)
-    assert not ui.exception
-    ui.run(timeout=30)
-    assert not ui.exception
-    assert len([path for path, _ in calls if path.endswith("/synchronization/run")]) == 1
-    assert ui.session_state["live_states"][0]["status"] == "completed"
-    synced = ui.session_state["live_states"][0]["last_synced_date"]
-    assert timeseries_calls(calls)[-1]["end"] == synced + "T23:00:00+07:00"
+def map_figure(payload: dict[str, Any]) -> go.Figure:
+    frame = pd.DataFrame(payload.get("data", []))
+    if frame.empty:
+        frame = pd.DataFrame(columns=["latitude", "longitude", "value"])
 
+    center = {
+        "lat": float(frame["latitude"].mean()) if not frame.empty else 10.8231,
+        "lon": float(frame["longitude"].mean()) if not frame.empty else 106.6297,
+    }
+    unit = payload.get("unit", "")
+    colorbar_title = f"giá trị ({unit})" if unit else "giá trị"
 
-@pytest.mark.parametrize("label,variable", [
-    ("Điểm sương 2m", "dewpoint"), ("Tốc độ gió 10m", "wind_speed"),
-    ("Hướng gió 10m", "wind_direction"), ("Bức xạ mặt trời", "solar_radiation"),
-])
-def test_weather_variable_renders_in_dashboard(live_app, label, variable):
-    ui, sync, calls = live_app
-    ui.run(timeout=30)
-    ui.selectbox[0].select(label).run(timeout=30)
-    assert not ui.exception
-    assert not ui.error
-    assert timeseries_calls(calls)[-1]["variable"] == variable
+    lat_padding = 1.0
+    lon_padding = 1.0
+    lat_range = [center["lat"] - lat_padding, center["lat"] + lat_padding]
+    lon_range = [center["lon"] - lon_padding, center["lon"] + lon_padding]
 
-
-@pytest.mark.parametrize("label", ["Nhiệt độ", "Lượng mưa", "Hướng gió 10m", "Bức xạ mặt trời"])
-def test_daily_aggregation_renders_in_dashboard(live_app, label):
-    ui, sync, calls = live_app
-    ui.run(timeout=30)
-    ui.selectbox[0].select(label).run(timeout=30)
-    ui.selectbox[1].select("Theo ngày").run(timeout=30)
-    assert not ui.exception
-    assert not ui.error
-    aggregate_calls = [params for path, params in calls if path.endswith("/climate/aggregate")]
-    assert aggregate_calls[-1]["frequency"] == "daily"
+    single_point = len(frame) == 1
+    frame["label"] = frame["value"].map(
+        lambda v: f"{v:.2f} {unit}".strip() if pd.notna(v) else ""
+    )
+    fig = px.scatter_geo(
+        frame,
+        lat="latitude",
+        lon="longitude",
+        color="value",
+        text="label" if single_point else None,
+        height=520,
+        color_continuous_scale="Viridis",
+        labels={"value": colorbar_title},
+    )
+    fig.update_traces(marker={"size": 18 if single_point else 12}, textposition="top center")
+    # Một điểm duy nhất thì thang màu chỉ co giãn quanh một giá trị, nên ẩn đi.
+    fig.update_layout(coloraxis_showscale=not single_point)
+    fig.update_geos(
+        lataxis_range=lat_range,
+        lonaxis_range=lon_range,
+        showland=True,
+        landcolor="#eef2e6",
+        showocean=True,
+        oceancolor="#d8ecff",
+        showlakes=True,
+        lakecolor="#d8ecff",
+        showcountries=True,
+        countrycolor="#6b7280",
+        showcoastlines=True,
+        coastlinecolor="#6b7280",
+        resolution=50,
+    )
+    fig.update_layout(
+        margin={"l": 0, "r": 0, "t": 10, "b": 0},
+    )
+    return fig

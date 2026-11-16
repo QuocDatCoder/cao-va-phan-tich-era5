@@ -2,6 +2,12 @@
 
 Ứng dụng đồ án gồm backend FastAPI thu thập dữ liệu ERA5 từ Copernicus Climate Data Store (CDS), lưu trữ SQLite và cung cấp API phân tích; frontend Streamlit hiển thị biểu đồ và kết quả. Nhóm AI Agent tích hợp qua HTTP API của backend.
 
+## Cập nhật đợt 1
+
+Dashboard hiện chọn **Đất liền (điểm)** / **ERA5 chung hỗ trợ cả biển (vùng)** / **Mock**, đọc dữ liệu qua `/api/v1/stored/climate/...`. Các API này chỉ đọc SQLite, trả độ phủ và khoảng thiếu; không tự tải CDS. Bấm **Bắt đầu thu thập** để tạo tác vụ riêng. Nguồn/dataset được lưu cùng tác vụ; đổi nguồn không sửa `.env`.
+
+API `/api/v1/climate/...` và synchronization bên dưới là luồng tương thích cũ, vẫn có thể tự tải. Dashboard mới không bật theo dõi/tự đồng bộ; hướng dẫn đồng bộ phía sau áp dụng cho API/scheduler cũ. Xem [hợp đồng, giới hạn và cách chạy thử đợt 1](docs/DOT_1_THU_THAP_VA_TRUY_VAN.md).
+
 Dataset hiện tại: `reanalysis-era5-single-levels`. Chế độ `mock` cung cấp dữ liệu giả lập để chạy thử khi chưa cấu hình CDS. Phần AI Agent do nhóm AI triển khai và tích hợp riêng.
 
 ## Chức năng hiện có

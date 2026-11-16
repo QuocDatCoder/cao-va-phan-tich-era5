@@ -40,8 +40,9 @@ class MockClimateProvider(ClimateDataProvider):
         _UNITS[_alias] = _UNITS[_name] = _unit
         _STORAGE_NAMES[_alias] = _STORAGE_NAMES[_name] = _name
 
-    def __init__(self, data_dir: Path = Path("data")) -> None:
+    def __init__(self, data_dir: Path = Path("data"), repository=None) -> None:
         self._data_dir = data_dir.resolve()
+        self._repository = repository
 
     def get_timeseries(
         self,
@@ -128,6 +129,17 @@ class MockClimateProvider(ClimateDataProvider):
             ),
             encoding="utf-8",
         )
+        if self._repository is not None:
+            from datetime import datetime, time
+            location = Location(latitude=(area.north + area.south) / 2,
+                                longitude=(area.west + area.east) / 2)
+            variables = WIND_COMPONENTS if variable in DERIVED_WIND_UNITS else (self._storage_name_for(variable),)
+            for name in variables:
+                series = self.get_timeseries(name, location.latitude, location.longitude,
+                                             datetime.combine(start_date, time.min),
+                                             datetime.combine(end_date, time(hour=23)))
+                self._repository.save(dataset="mock", variable=name, requested_location=location,
+                                      grid_location=location, unit=series.unit, points=series.data)
         return DownloadArtifact(
             file_path=target_path,
             storage_path=target_path.relative_to(self._data_dir).as_posix(),

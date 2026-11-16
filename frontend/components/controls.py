@@ -1,5 +1,8 @@
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+import json
+import urllib.parse
+import urllib.request
 
 import streamlit as st
 
@@ -18,6 +21,52 @@ VARIABLES = {
 }
 
 VIETNAM_TIMEZONE = timezone(timedelta(hours=7))
+
+DEFAULT_LATITUDE = 10.8231
+DEFAULT_LONGITUDE = 106.6297
+DEFAULT_PLACE = "TP. Hồ Chí Minh (mặc định)"
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_places(query: str) -> list[dict[str, Any]]:
+    """Tra tọa độ theo tên bằng Open-Meteo Geocoding. Lỗi mạng thì ném ngoại lệ (không bị cache)."""
+    params = urllib.parse.urlencode({"name": query, "count": 8, "language": "vi", "format": "json"})
+    with urllib.request.urlopen(f"{GEOCODING_URL}?{params}", timeout=8) as response:
+        payload = json.load(response)
+    places = []
+    for item in payload.get("results") or []:
+        latitude, longitude = item.get("latitude"), item.get("longitude")
+        if latitude is None or longitude is None:
+            continue
+        parts = dict.fromkeys(p for p in (item.get("name"), item.get("admin1"), item.get("country")) if p)
+        places.append({
+            "label": f"{', '.join(parts)} ({latitude:.4f}, {longitude:.4f})",
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+        })
+    return places
+
+
+def search_places(query: str) -> list[dict[str, Any]] | None:
+    """Danh sách địa điểm khớp tên; None nếu không gọi được dịch vụ tra cứu."""
+    try:
+        return _fetch_places(query)
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_search_result(result_key: str) -> None:
+    label = st.session_state.get(result_key)
+    place = st.session_state.get("_place_results", {}).get(label)
+    if place:
+        st.session_state["latitude_input"] = place["latitude"]
+        st.session_state["longitude_input"] = place["longitude"]
+        st.session_state["selected_place"] = label
+
+
+def _mark_manual_coordinates() -> None:
+    st.session_state["selected_place"] = "Tọa độ nhập tay"
 
 
 def local_date_range(start_date: date, end_date: date) -> tuple[str, str]:
@@ -47,8 +96,48 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
         aggregation = methods[st.selectbox("Phép tổng hợp", list(methods), disabled=frequency == "hourly")]
         start_date = st.date_input("Ngày bắt đầu", value=default_start, disabled=follow_latest)
         end_date = st.date_input("Ngày kết thúc", value=default_end, disabled=follow_latest)
-        latitude = st.number_input("Vĩ độ", min_value=-90.0, max_value=90.0, value=10.8231)
-        longitude = st.number_input("Kinh độ", min_value=-180.0, max_value=180.0, value=106.6297)
+        st.session_state.setdefault("latitude_input", DEFAULT_LATITUDE)
+        st.session_state.setdefault("longitude_input", DEFAULT_LONGITUDE)
+        st.session_state.setdefault("selected_place", DEFAULT_PLACE)
+        query = st.text_input(
+            "Nhập tên thành phố",
+            key="location_query",
+            placeholder="Ví dụ: Rome, Seoul, Bangkok",
+            help="Gõ tên rồi nhấn Enter, vĩ độ và kinh độ sẽ tự điền. Tên được gửi tới dịch vụ "
+                 "Open-Meteo Geocoding (cần Internet). Có thể bỏ qua và nhập tọa độ trực tiếp.",
+        ).strip()
+        if len(query) >= 2:
+            with st.spinner("Đang tìm địa điểm..."):
+                places = search_places(query)
+            if places is None:
+                st.caption("Không tra cứu được (lỗi mạng hoặc dịch vụ). Hãy nhập vĩ độ, kinh độ trực tiếp.")
+            elif not places:
+                st.caption("Không tìm thấy địa điểm phù hợp. Thử tên khác hoặc viết bằng tiếng Anh.")
+            else:
+                st.session_state["_place_results"] = {p["label"]: p for p in places}
+                if st.session_state.get("_applied_query") != query.lower():
+                    # Tên mới: dùng ngay kết quả đầu tiên, người dùng có thể chọn kết quả khác bên dưới.
+                    st.session_state["latitude_input"] = places[0]["latitude"]
+                    st.session_state["longitude_input"] = places[0]["longitude"]
+                    st.session_state["selected_place"] = places[0]["label"]
+                    st.session_state["_applied_query"] = query.lower()
+                result_key = f"location_result::{query.lower()}"
+                st.selectbox(
+                    "Kết quả tìm kiếm",
+                    list(st.session_state["_place_results"]),
+                    key=result_key,
+                    on_change=_apply_search_result,
+                    args=(result_key,),
+                )
+        st.caption(f"Đang chọn: {st.session_state['selected_place']}")
+        latitude = st.number_input(
+            "Vĩ độ", min_value=-90.0, max_value=90.0, format="%.4f",
+            key="latitude_input", on_change=_mark_manual_coordinates,
+        )
+        longitude = st.number_input(
+            "Kinh độ", min_value=-180.0, max_value=180.0, format="%.4f",
+            key="longitude_input", on_change=_mark_manual_coordinates,
+        )
 
     start, end = local_date_range(start_date, end_date)
     return {
@@ -60,21 +149,3 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
         "frequency": frequency,
         "aggregation": aggregation if frequency != "hourly" else "auto",
     }
-
-
-def render_baseline_controls() -> dict[str, str]:
-    with st.sidebar:
-        st.header("Mốc nền")
-        baseline_start = st.date_input("Ngày bắt đầu mốc nền", value=date(2024, 12, 30))
-        baseline_end = st.date_input("Ngày kết thúc mốc nền", value=date(2024, 12, 31))
-    start, end = local_date_range(baseline_start, baseline_end)
-    return {"baseline_start": start, "baseline_end": end}
-
-
-def render_comparison_controls() -> dict[str, str]:
-    with st.sidebar:
-        st.header("So sánh")
-        period_b_start = st.date_input("Ngày bắt đầu giai đoạn B", value=date(2025, 1, 3))
-        period_b_end = st.date_input("Ngày kết thúc giai đoạn B", value=date(2025, 1, 4))
-    start, end = local_date_range(period_b_start, period_b_end)
-    return {"period_b_start": start, "period_b_end": end}

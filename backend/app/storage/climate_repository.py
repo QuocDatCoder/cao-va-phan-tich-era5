@@ -13,8 +13,11 @@ from backend.app.domain.time_utils import hourly_timestamps, to_utc_naive
 class ClimateRepository:
     """Provider values keyed by dataset, canonical variable, actual grid and UTC."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self._db_path = db_path
+        self._read_only = read_only
+        if read_only:
+            return  # A query must not create a database or migrate its schema.
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -51,7 +54,8 @@ class ClimateRepository:
 
     @contextmanager
     def _connect(self):
-        connection = sqlite3.connect(self._db_path, timeout=30)
+        connection = (sqlite3.connect(self._db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+                      if self._read_only else sqlite3.connect(self._db_path, timeout=30))
         connection.row_factory = sqlite3.Row
         try:
             with connection:
@@ -153,6 +157,32 @@ class ClimateRepository:
         if [point.time for point in points] != expected:
             return None
         return points
+
+    def read_available(
+        self, *, dataset: str, variable: str, location: Location, unit: str,
+        start: datetime, end: datetime,
+    ) -> tuple[Location | None, list[ClimatePoint]]:
+        """Read grid metadata and partial observations in a single SQLite snapshot."""
+        if self._read_only and not self._db_path.exists():
+            return None, []
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"climate_points", "climate_locations", "climate_areas"}.issubset(tables):
+                return None, []
+            grid = self._resolve_grid(connection, dataset, variable, location)
+            if grid is None:
+                return None, []
+            rows = connection.execute("""
+                SELECT time_utc, value FROM climate_points
+                WHERE dataset=? AND variable=? AND grid_latitude=? AND grid_longitude=?
+                  AND unit=? AND time_utc>=? AND time_utc<=? ORDER BY time_utc
+            """, (dataset, variable, *grid, unit,
+                  to_utc_naive(start).isoformat(timespec="microseconds"),
+                  to_utc_naive(end).isoformat(timespec="microseconds"))).fetchall()
+        points = [ClimatePoint(time=datetime.fromisoformat(r["time_utc"]), value=r["value"])
+                  for r in rows if isfinite(r["value"])]
+        return Location(latitude=grid[0], longitude=grid[1]), points
 
     def get_series(
         self, *, dataset: str, variable: str, location: Location, unit: str,

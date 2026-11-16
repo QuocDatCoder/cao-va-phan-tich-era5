@@ -16,6 +16,8 @@ class DashboardApiClient:
     base_url: str = "http://localhost:8000"
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     session: requests.Session | None = None
+    source: str | None = None
+    stored_only: bool = False
 
     def health(self) -> dict[str, Any]:
         return self._get("/health")
@@ -60,6 +62,11 @@ class DashboardApiClient:
         return self._post("/api/v1/synchronization/run", payload)
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.stored_only and path.startswith("/api/v1/climate/"):
+            if self.source not in {"land", "era5", "mock"}:
+                raise DashboardApiError("Hãy chọn nguồn dữ liệu cho truy vấn database.")
+            path = path.replace("/api/v1/climate/", "/api/v1/stored/climate/", 1)
+            params = {**(params or {}), "source": self.source}
         try:
             response = self._session().get(
                 self._url(path),
@@ -73,6 +80,10 @@ class DashboardApiClient:
         return self._decode_response(response)
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.stored_only and path == "/api/v1/downloads":
+            if self.source not in {"land", "era5", "mock"}:
+                raise DashboardApiError("Hãy chọn nguồn dữ liệu trước khi thu thập.")
+            payload = {**payload, "source": self.source}
         try:
             response = self._session().post(
                 self._url(path),

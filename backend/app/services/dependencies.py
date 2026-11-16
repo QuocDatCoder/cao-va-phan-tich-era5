@@ -1,7 +1,7 @@
 from functools import lru_cache
 
 from backend.app.core.config import get_settings
-from backend.app.providers.dependencies import get_climate_provider
+from backend.app.providers.dependencies import get_climate_provider, get_provider_for_source
 from backend.app.services.climate_analysis_service import ClimateAnalysisService
 from backend.app.services.climate_service import ClimateService
 from backend.app.services.download_job_service import DownloadJobService
@@ -12,6 +12,14 @@ from backend.app.services.synchronization_service import (
 )
 from backend.app.storage.job_repository import JobRepository
 from backend.app.storage.synchronization_repository import SynchronizationRepository
+from backend.app.storage.climate_repository import ClimateRepository
+from backend.app.services.stored_climate_service import StoredClimateService
+
+
+@lru_cache
+def get_stored_climate_service() -> StoredClimateService:
+    settings = get_settings()
+    return StoredClimateService(ClimateRepository(settings.climate_data_db_path, read_only=True), settings)
 
 
 @lru_cache
@@ -32,7 +40,8 @@ def get_job_repository() -> JobRepository:
 
 @lru_cache
 def get_download_job_service() -> DownloadJobService:
-    return DownloadJobService(provider=get_climate_provider(), repository=get_job_repository())
+    return DownloadJobService(provider=get_climate_provider(), repository=get_job_repository(),
+                              provider_resolver=get_provider_for_source, settings=get_settings())
 
 
 @lru_cache

@@ -8,6 +8,7 @@ from backend.app.api.climate import router as climate_router
 from backend.app.api.downloads import router as downloads_router
 from backend.app.api.routes import router
 from backend.app.api.synchronization import router as synchronization_router
+from backend.app.api.stored_climate import router as stored_climate_router
 from backend.app.core.config import get_settings
 from backend.app.providers.errors import (
     ClimateConfigurationError,
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(router)
     app.include_router(climate_router)
+    app.include_router(stored_climate_router)
     app.include_router(downloads_router)
     app.include_router(synchronization_router)
     app.add_exception_handler(UnsupportedVariableError, unsupported_variable_handler)

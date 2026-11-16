@@ -133,15 +133,21 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
         self, variable: str, area: DownloadArea, start_date: date, end_date: date, frequency: str,
     ) -> DownloadArtifact:
         """Dataset chỉ có điểm: lấy tâm của vùng làm điểm cần tải trước."""
+        location = Location(
+            latitude=round((area.north + area.south) / 2, 4),
+            longitude=round((area.west + area.east) / 2, 4),
+        )
+        return self.download_point(variable, location, start_date, end_date, frequency)
+
+    def download_point(
+        self, variable: str, location: Location, start_date: date, end_date: date, frequency: str,
+    ) -> DownloadArtifact:
+        """Explicit point collection; the legacy area method uses only its centre."""
         if end_date < start_date:
             raise ValueError("end_date must be greater than or equal to start_date")
         if frequency != "hourly":
             raise ClimateDataError("Only hourly ERA5 downloads are supported.")
         variable_spec = self._get_variable(variable)
-        location = Location(
-            latitude=round((area.north + area.south) / 2, 4),
-            longitude=round((area.west + area.east) / 2, 4),
-        )
         self._validate_query_range(
             datetime.combine(start_date, time.min), datetime.combine(end_date, time(hour=23)),
         )

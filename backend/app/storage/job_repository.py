@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
+import json
 
 from backend.app.domain.schemas import (
     DownloadArea,
@@ -8,6 +9,7 @@ from backend.app.domain.schemas import (
     DownloadJob,
     DownloadJobStatus,
     DownloadRequest,
+    Location,
 )
 
 
@@ -16,31 +18,41 @@ class JobRepository:
         self._db_path = db_path
         self._ensure_schema()
 
-    def create(self, job_id: str, request: DownloadRequest) -> DownloadJob:
+    def create(self, job_id: str, request: DownloadRequest, *, dataset: str | None = None,
+               retrieval_variables: list[str] | None = None) -> DownloadJob:
         now = self._now()
+        location = request.location
+        area = request.area or DownloadArea(north=location.latitude, south=location.latitude,
+                                            west=location.longitude, east=location.longitude)
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO download_jobs (
                     job_id, variable, start_date, end_date, north, west, south, east,
-                    frequency, status, progress, created_at, updated_at
+                    frequency, status, progress, created_at, updated_at,
+                    source, location_latitude, location_longitude, retrieval_variables, dataset
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     request.variable,
                     request.start_date.isoformat(),
                     request.end_date.isoformat(),
-                    request.area.north,
-                    request.area.west,
-                    request.area.south,
-                    request.area.east,
+                    area.north,
+                    area.west,
+                    area.south,
+                    area.east,
                     request.frequency,
                     DownloadJobStatus.QUEUED.value,
                     0,
                     now.isoformat(),
                     now.isoformat(),
+                    request.source,
+                    location.latitude if location else None,
+                    location.longitude if location else None,
+                    json.dumps(retrieval_variables or []),
+                    dataset,
                 ),
             )
         job = self.get(job_id)
@@ -151,6 +163,14 @@ class JobRepository:
                 )
                 """
             )
+            # Additive migration: retain existing jobs, status, files and timestamps.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(download_jobs)")}
+            for name, sql_type in {
+                "source": "TEXT", "location_latitude": "REAL", "location_longitude": "REAL",
+                "retrieval_variables": "TEXT NOT NULL DEFAULT '[]'",
+            }.items():
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE download_jobs ADD COLUMN {name} {sql_type}")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._db_path)
@@ -163,7 +183,7 @@ class JobRepository:
             variable=row["variable"],
             start_date=row["start_date"],
             end_date=row["end_date"],
-            area=DownloadArea(
+            area=None if row["location_latitude"] is not None else DownloadArea(
                 north=row["north"],
                 west=row["west"],
                 south=row["south"],
@@ -180,6 +200,11 @@ class JobRepository:
             dataset=row["dataset"],
             file_path=row["file_path"],
             error=row["error"],
+            source=row["source"],
+            location=(Location(latitude=row["location_latitude"], longitude=row["location_longitude"])
+                      if row["location_latitude"] is not None else None),
+            spatial_mode="point" if row["location_latitude"] is not None else "area",
+            retrieval_variables=json.loads(row["retrieval_variables"]),
         )
 
     def _now(self) -> datetime:

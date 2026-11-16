@@ -205,5 +205,7 @@ def test_job_migration_is_additive_and_idempotent(tmp_path):
     for _ in range(2):
         job = JobRepository(path).get("old")
         assert job.source is None  # Do not guess historical source identities.
+        assert job.quality is None  # Historical files were never quality-checked.
+        assert JobRepository(path).quality_issues("old")["total"] == 0
         assert job.status == "completed" and job.file_path == "raw/existing.nc"
         assert job.dataset == "reanalysis-era5-single-levels" and job.retrieval_variables == []

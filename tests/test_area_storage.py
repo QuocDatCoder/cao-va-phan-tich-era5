@@ -197,11 +197,28 @@ def test_import_failure_rolls_back_and_sync_does_not_advance(components, monkeyp
         assert connection.execute("SELECT COUNT(*) FROM climate_areas").fetchone()[0] == 0
 
 
-def test_missing_hour_in_downloaded_area_fails_job(components):
+def test_missing_hour_in_downloaded_area_keeps_partial_data_with_warning(components):
     settings, repo, client, provider, jobs = components
     client.drop_last_hour = True
     job = jobs.create_job(area_request())
     jobs.run_job(job.job_id)
     result = jobs.get_job(job.job_id)
-    assert result.status == DownloadJobStatus.FAILED
-    assert "missing requested hourly timestamps" in result.error
+    assert result.status == DownloadJobStatus.COMPLETED
+    assert result.quality.issue_counts["missing_hour"] == 1
+    assert not result.quality.complete
+    assert result.quality.imported_values == 47 * 4
+
+
+def test_partial_sync_retains_previous_watermark(components):
+    settings, _, client, _, jobs = components
+    sync = SynchronizationService(jobs, SynchronizationRepository(settings.data_dir / "jobs.sqlite3"),
+                                  LatestAvailableDateProvider(5), max_days_per_run=1)
+    request = SynchronizationRequest(variable="temperature", area=AREA,
+        start_date=date(2025, 1, 31), latest_available_date=date(2025, 2, 1))
+    first = sync.synchronize(request)
+    assert sync.run_synchronization(first.sync_id).last_synced_date == date(2025, 1, 31)
+    client.drop_last_hour = True
+    second = sync.synchronize(request)
+    partial = sync.run_synchronization(second.sync_id)
+    assert partial.status == SynchronizationStatus.FAILED
+    assert partial.last_synced_date == date(2025, 1, 31)

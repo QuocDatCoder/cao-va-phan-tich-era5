@@ -52,6 +52,9 @@ class DashboardApiClient:
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/jobs/{job_id}")
 
+    def get_job_quality(self, job_id: str) -> dict[str, Any]:
+        return self._get(f"/api/v1/jobs/{job_id}/quality", params={"limit": 100})
+
     def get_sync_config(self) -> dict[str, Any]:
         return self._get("/api/v1/synchronization/config")
 

@@ -26,7 +26,8 @@ from backend.app.domain.schemas import (
     DownloadArtifact,
     Location,
 )
-from backend.app.domain.time_utils import to_utc_naive
+from backend.app.domain.time_utils import to_utc_naive, hourly_timestamps
+from backend.app.domain.quality import current_quality
 from backend.app.domain.wind import DERIVED_WIND_UNITS
 from backend.app.providers.era5_provider import (
     _CDS_LOCK,
@@ -92,12 +93,33 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
 
         try:
             grid_location, series, columns = self._parse_download(target_path, location)
-        except _BrokenDownload:
-            target_path.unlink(missing_ok=True)
-            raise
+        except _BrokenDownload as exc:
+            quality = current_quality.get()
+            if quality is None:
+                raise
+            quality.issue("unreadable_file", str(exc), source_file=str(target_path))
+            grid_location, series, columns = location, {}, set()
 
         derived = variable_spec.cds_name in DERIVED_WIND_UNITS
-        if not derived and variable_spec.cds_name not in series:
+        quality = current_quality.get()
+        if quality is not None:
+            for name, points in series.items():
+                retained = []
+                for point in points:
+                    if day_start <= point.time <= day_end:
+                        retained.append(point)
+                    else:
+                        quality.report.valid_values -= 1
+                        quality.issue("outside_request", "Value outside requested dates skipped.", source_file=str(target_path), variable=name, time_utc=point.time)
+                series[name] = retained
+            for name in BASE_VARIABLES:
+                if name not in series:
+                    quality.issue("missing_column", "Requested variable has no usable column.", source_file=str(target_path), variable=name)
+                present = {p.time for p in series.get(name, [])}
+                for stamp in hourly_timestamps(day_start, day_end):
+                    if stamp not in present:
+                        quality.issue("missing_hour", "Requested hourly value is absent.", source_file=str(target_path), variable=name, time_utc=stamp)
+        if quality is None and not derived and variable_spec.cds_name not in series:
             raise ClimateDataError(
                 f"ERA5-Land time-series file has no column for '{variable_spec.cds_name}'. "
                 f"Columns found: {', '.join(sorted(columns)) or '(none)'}."
@@ -111,11 +133,13 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
                     requested_location=location, grid_location=grid_location,
                     unit=BASE_VARIABLES[cds_name].unit, points=points,
                 )
+                if quality is not None:
+                    quality.report.imported_values += len(points)
                 logger.info("ERA5-Land SQLite saved: variable=%s observations=%s", cds_name, len(points))
         if derived:
             return []
         start_naive, end_naive = to_utc_naive(start), to_utc_naive(end)
-        return [p for p in series[variable_spec.cds_name] if start_naive <= p.time <= end_naive]
+        return [p for p in series.get(variable_spec.cds_name, []) if start_naive <= p.time <= end_naive]
 
     def _build_request(
         self, variable_spec: Era5Variable, latitude: float, longitude: float,
@@ -212,11 +236,13 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
 
         for cds_name in TEMPERATURE_VARIABLES:
             values = [p.value for p in series.get(cds_name, {}).values()]
-            if values and max(values) < 100:
+            if current_quality.get() is None and values and max(values) < 100:
                 raise ClimateDataError(
                     f"'{cds_name}' values look like °C, but Kelvin was expected. "
                     "Check the units of the downloaded CSV before using it."
                 )
+        if not grid and current_quality.get() is not None:
+            current_quality.get().issue("missing_coordinates", "CSV has no usable grid coordinates; requested rounded grid is used.", source_file=str(file_path))
         grid_location = grid[0] if grid else Location(
             latitude=round(location.latitude, 1), longitude=round(location.longitude, 1),
         )
@@ -240,13 +266,21 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
         self, name: str, text: str, series: dict[str, dict[datetime, ClimatePoint]],
         columns: set[str], grid: list[Location],
     ) -> None:
-        lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        quality = current_quality.get()
+        numbered = [(i, ln) for i, ln in enumerate(text.splitlines(), 1) if ln.strip() and not ln.lstrip().startswith("#")]
+        lines = [ln for _, ln in numbered]
         if not lines:
+            if quality is not None:
+                quality.issue("empty_file", "CSV contains no records.", source_file=name)
+                return
             raise _BrokenDownload(f"{name} is empty.")
         reader = csv.DictReader(lines)
         fields = {self._normalize_column(f): f for f in (reader.fieldnames or [])}
         columns.update(fields)
         time_col = next((fields[c] for c in TIME_COLUMNS if c in fields), None)
+        if time_col is None and quality is not None:
+            quality.issue("missing_time_column", "CSV has no timestamp column; records skipped.", source_file=name)
+            return
         if time_col is None:
             raise _BrokenDownload(
                 f"{name} has no time column. Columns found: {', '.join(sorted(fields))}."
@@ -260,10 +294,23 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
                     value_cols[cds_name] = fields[data_name]
                     break
 
+        if len(lines) == 1 and quality is not None:
+            quality.issue("empty_file", "CSV has a header but no records.", source_file=name)
+        for cds_name in value_cols:
+            series.setdefault(cds_name, {})
         for row in reader:
+            row_number = numbered[min(reader.line_num - 1, len(numbered)-1)][0]
+            if quality is not None:
+                quality.report.rows_read += 1
             try:
                 stamp = to_utc_naive(datetime.fromisoformat((row.get(time_col) or "").strip()))
             except ValueError:
+                if quality is not None:
+                    quality.issue("invalid_time", "Invalid timestamp; entire row skipped.", source_file=name, row_number=row_number)
+                continue
+            if stamp.minute or stamp.second or stamp.microsecond:
+                if quality is not None:
+                    quality.issue("invalid_time", "Timestamp is not aligned to an hour; row skipped.", source_file=name, row_number=row_number)
                 continue
             if not grid and lat_col and lon_col:
                 try:
@@ -272,18 +319,37 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
                         longitude=round(((float(row[lon_col]) + 180) % 360) - 180, 4),
                     ))
                 except (TypeError, ValueError):
-                    pass
+                    if quality is not None:
+                        quality.issue("invalid_coordinates", "Invalid CSV coordinates.", source_file=name, row_number=row_number)
             for cds_name, column in value_cols.items():
+                details = dict(source_file=name, row_number=row_number, variable=cds_name, time_utc=stamp)
+                cell = row.get(column)
+                if cell is None or not cell.strip():
+                    if quality is not None: quality.issue("missing_value", "Empty cell skipped.", **details)
+                    continue
                 try:
-                    raw = float(row[column])
+                    raw = float(cell)
                 except (TypeError, ValueError):
+                    if quality is not None: quality.issue("invalid_number", "Non-numeric cell skipped.", **details)
                     continue
                 if not isfinite(raw):
+                    if quality is not None: quality.issue("nonfinite_value", "NaN or infinite cell skipped.", **details)
                     continue
                 spec = BASE_VARIABLES[cds_name]
-                series.setdefault(cds_name, {})[stamp] = ClimatePoint(
-                    time=stamp, value=round(raw * spec.scale, 6),
-                )
+                converted = raw * spec.scale
+                if not isfinite(converted):
+                    if quality is not None: quality.issue("nonfinite_value", "Unit conversion produced a nonfinite value; skipped.", **details)
+                    continue
+                point = ClimatePoint(time=stamp, value=round(converted, 6))
+                points = series.setdefault(cds_name, {})
+                if stamp in points:
+                    if quality is not None:
+                        code = "duplicate" if points[stamp].value == point.value else "duplicate_conflict"
+                        quality.issue(code, "Duplicate cell skipped; first valid value retained.", **details)
+                        continue
+                elif quality is not None:
+                    quality.report.valid_values += 1
+                points[stamp] = point
 
     @staticmethod
     def _normalize_column(name: str) -> str:

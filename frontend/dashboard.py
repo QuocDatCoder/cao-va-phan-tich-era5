@@ -158,6 +158,17 @@ def _poll_collection(client, context):
         st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
         if job.get("retrieval_variables"):
             st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
+        quality = job.get("quality")
+        if quality:
+            st.caption(f"Chất lượng: {quality['status']} · Đã lưu: {quality['imported_values']} giá trị · Cảnh báo: {quality['issue_count']}")
+            if not quality["complete"]:
+                st.warning("Dữ liệu tải chưa đầy đủ hoặc có lỗi chất lượng; mốc đồng bộ không được nâng.")
+            with st.expander("Báo cáo chất lượng của tác vụ"):
+                st.json(quality)
+                details = client.get_job_quality(job_id)
+                st.caption(f"Hiển thị {len(details['issues'])}/{details['total']} cảnh báo đầu tiên.")
+                if details["issues"]:
+                    st.dataframe(details["issues"], hide_index=True)
         if job.get("error"):
             st.error(job["error"])
         if job["status"] == "completed" and st.session_state.get("collection_completed") != job_id:

@@ -156,7 +156,7 @@ def test_area_wind_download_requests_both_components_then_api_uses_sqlite(provid
         assert connection.execute("SELECT COUNT(*) FROM climate_points").fetchone()[0] == 24 * 4 * 2
 
 
-def test_area_wind_missing_v_does_not_report_completed(provider):
+def test_area_wind_missing_v_preserves_u_with_quality_warning(provider):
     data, client, settings = provider
     client.missing_v = True
     jobs = DownloadJobService(data, JobRepository(settings.data_dir / "jobs.sqlite3"))
@@ -164,7 +164,11 @@ def test_area_wind_missing_v_does_not_report_completed(provider):
                                          end_date=date(2025, 2, 1),
                                          area=DownloadArea(north=11, south=10.5, west=106.5, east=107)))
     jobs.run_job(job.job_id)
-    assert jobs.get_job(job.job_id).status == "failed"
+    result = jobs.get_job(job.job_id)
+    assert result.status == "completed"
+    assert not result.quality.complete
+    assert result.quality.issue_counts["missing_column"] == 1
+    assert result.quality.imported_values == 24 * 4
 
 
 @pytest.mark.parametrize("download_name,query_name,unit,value", [

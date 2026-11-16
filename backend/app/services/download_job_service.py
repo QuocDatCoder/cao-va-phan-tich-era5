@@ -1,4 +1,5 @@
 from uuid import uuid4
+from threading import RLock
 from collections.abc import Callable
 
 from backend.app.domain.schemas import (
@@ -18,6 +19,10 @@ from backend.app.providers.base import ClimateDataProvider
 from backend.app.storage.job_repository import JobRepository
 from backend.app.domain.quality import QualityCollector, current_quality
 from backend.app.storage.collection_repository import CollectionRepository, current_collection, recover_abandoned
+
+
+# One collection executes at a time in this process; this is not a distributed queue.
+_JOB_LOCK = RLock()
 
 
 class JobNotFoundError(Exception):
@@ -88,6 +93,10 @@ class DownloadJobService:
         return [self.get_job(j.job_id) for j in self._repository.list_jobs(limit, offset)]
 
     def run_job(self, job_id: str) -> None:
+        with _JOB_LOCK:
+            self._run_job_locked(job_id)
+
+    def _run_job_locked(self, job_id: str) -> None:
         job = self.get_job(job_id)
         if job.status != DownloadJobStatus.QUEUED:
             return

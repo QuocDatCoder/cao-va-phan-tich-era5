@@ -68,8 +68,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     from backend.app.storage.collection_repository import CollectionRepository, recover_abandoned
     from backend.app.storage.job_repository import JobRepository
-    if (settings.climate_data_db_path.exists() and settings.job_metadata_db_path.exists()
-            and CollectionRepository(settings.climate_data_db_path, read_only=True).list(limit=1)):
+    if settings.job_metadata_db_path.exists():
         recover_abandoned(CollectionRepository(settings.climate_data_db_path),
                           JobRepository(settings.job_metadata_db_path))
     if settings.era5_sync_enabled:

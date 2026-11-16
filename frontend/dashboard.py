@@ -113,7 +113,14 @@ def _poll_collection(client, context):
     if not job_id:
         return
     try:
-        job = client.get_job(job_id)
+        statuses = st.session_state.setdefault('observed_job_statuses', {})
+        previous_status = statuses.get(job_id)
+        if previous_status in {'completed', 'failed'}:
+            from frontend.library import cached_read
+            job = cached_read(client, 'get_job', job_id)
+        else:
+            job = client.get_job(job_id)
+        statuses[job_id] = job['status']
         st.write("Trạng thái thu thập: " + _translate_status(job["status"]))
         with st.expander("Chi tiết nguồn và biến"):
             st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
@@ -124,26 +131,30 @@ def _poll_collection(client, context):
             st.caption(f"Chất lượng: {quality['status']} · Đã lưu: {quality['imported_values']} giá trị · Cảnh báo: {quality['issue_count']}")
             if not quality["complete"]:
                 st.warning("Dữ liệu tải chưa đầy đủ hoặc có lỗi chất lượng; mốc đồng bộ không được nâng.")
-            with st.expander("Báo cáo chất lượng của tác vụ"):
-                st.json(quality)
-                details = client.get_job_quality(job_id)
-                st.caption(f"Hiển thị {len(details['issues'])}/{details['total']} cảnh báo đầu tiên.")
-                if details["issues"]:
-                    st.dataframe(details["issues"], hide_index=True)
-                if st.button("Chuẩn bị toàn bộ báo cáo chất lượng", key="prepare_quality_"+job_id,
-                             disabled=job["status"] in {"queued", "running"}):
-                    st.session_state["quality_export_"+job_id] = json.dumps(
-                        client.get_all_job_quality(job_id), ensure_ascii=False, indent=2)
-                if "quality_export_"+job_id in st.session_state:
-                    st.download_button("Tải báo cáo và toàn bộ warning (JSON)",
-                        st.session_state["quality_export_"+job_id], file_name=job_id+"_quality.json",
-                        mime="application/json", key="download_quality_"+job_id, on_click="ignore")
+            report = st.expander('Báo cáo chất lượng của tác vụ', key='job_quality_'+job_id, on_change='rerun')
+            if report.open:
+                with report:
+                    st.json(quality)
+                    details = client.get_job_quality(job_id)
+                    st.caption(f"Hiển thị {len(details['issues'])}/{details['total']} cảnh báo đầu tiên.")
+                    if details["issues"]:
+                        st.dataframe(details["issues"], hide_index=True)
+                    if st.button("Chuẩn bị toàn bộ báo cáo chất lượng", key="prepare_quality_"+job_id,
+                                 disabled=job["status"] in {"queued", "running"}):
+                        st.session_state["quality_export_"+job_id] = json.dumps(
+                            client.get_all_job_quality(job_id), ensure_ascii=False, indent=2)
+                    if "quality_export_"+job_id in st.session_state:
+                        st.download_button("Tải báo cáo và toàn bộ warning (JSON)",
+                            st.session_state["quality_export_"+job_id], file_name=job_id+"_quality.json",
+                            mime="application/json", key="download_quality_"+job_id, on_click="ignore")
         if job.get("error"):
             st.error(job["error"])
         if job["status"] == "completed" and st.session_state.get("collection_completed") != job_id:
             st.session_state["collection_completed"] = job_id
             _cached_get.clear()
-            st.rerun(scope="app")
+            # Historical completed jobs do not need to redraw the page on entry.
+            if previous_status in {'queued', 'running'}:
+                st.rerun(scope="app")
     except DashboardApiError as exc:
         st.error(str(exc))
 
@@ -269,27 +280,35 @@ def _show_timeseries(payload: dict[str, Any], show_chart: bool = True) -> None:
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
     if show_chart:
-        st.plotly_chart(timeseries_figure(payload), use_container_width=True)
+        st.plotly_chart(timeseries_figure(payload), width="stretch")
     _show_extremes(payload)
-    table = timeseries_frame(payload).rename(columns={
-        "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
-        "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
-        "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
-        "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
-    })
-    display_table = table.copy()
-    if payload.get("source"):
-        grid = payload.get("grid_location") or {}
-        for name, value in {
-            "source": payload["source"], "dataset": payload["dataset"], "unit": payload["unit"],
-            "variable": payload["variable"],
-            "requested_latitude": payload["location"]["latitude"],
-            "requested_longitude": payload["location"]["longitude"],
-            "grid_latitude": grid.get("latitude"), "grid_longitude": grid.get("longitude"),
-            "query_coverage": payload["coverage"], "query_complete": payload["complete"],
-        }.items():
-            table[name] = value
-    with st.expander('Bảng dữ liệu và tải CSV', expanded=False):
+    _timeseries_table(payload)
+
+
+@st.fragment
+def _timeseries_table(payload):
+    panel = st.expander('Bảng dữ liệu và tải CSV', expanded=False, key='timeseries_table_panel', on_change='rerun')
+    if not panel.open:
+        return
+    with panel:
+        table = timeseries_frame(payload).rename(columns={
+            "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
+            "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
+            "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
+            "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
+        })
+        display_table = table.copy()
+        if payload.get("source"):
+            grid = payload.get("grid_location") or {}
+            for name, value in {
+                "source": payload["source"], "dataset": payload["dataset"], "unit": payload["unit"],
+                "variable": payload["variable"],
+                "requested_latitude": payload["location"]["latitude"],
+                "requested_longitude": payload["location"]["longitude"],
+                "grid_latitude": grid.get("latitude"), "grid_longitude": grid.get("longitude"),
+                "query_coverage": payload["coverage"], "query_complete": payload["complete"],
+            }.items():
+                table[name] = value
         st.dataframe(display_table, hide_index=True, width="stretch")
         st.download_button(
             "Tải bảng dữ liệu (CSV)",

@@ -93,47 +93,45 @@ def child(mode: str, output: Path, port: int, api_port: int) -> int:
     report = {
         "exceptions": [str(x.message) for x in app.exception],
         "errors": [str(x.value) for x in app.error],
-        "titles": [str(x.value) for x in app.title],
-        "radio_options": [list(x.options) for x in app.radio],
-        "configured_provider": "mock", "blocked_events": blocked,
-        "checks": [],
+        "navigation_options": [list(x.options) for x in app.pills],
+        "configured_provider": "mock", "blocked_events": blocked, "checks": [],
     }
-    # Phase 3 forms: only explicit mock submit can create a collection job.
-    app.selectbox(key="collect_source").set_value("mock")
-    app.button(key="collect_now").click().run()
-    mock_id = app.session_state["workflow_selected_job"]
+    # Seed only the isolated backend: production UI deliberately has no Demo option.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for attempt in range(20):
+    payload = dict(source='mock', variable='temperature',
+                   location=dict(latitude=10.8231, longitude=106.6297),
+                   start_date='2025-01-01', end_date='2025-01-01', frequency='hourly')
+    request = urllib.request.Request(f'http://127.0.0.1:{api_port}/api/v1/downloads',
+                                    json.dumps(payload).encode(), {'Content-Type': 'application/json'})
+    with opener.open(request, timeout=10) as response:
+        created = json.load(response)
+    mock_id = created['job_id']
+    for attempt in range(30):
         with opener.open(f"http://127.0.0.1:{api_port}/api/v1/jobs/{mock_id}", timeout=5) as response:
-            mock_job = json.loads(response.read())
-        if mock_job["status"] not in {"queued", "running"}:
+            mock_job = json.load(response)
+        if mock_job['status'] not in {'queued', 'running'}:
             break
         time.sleep(.1)
-    report["mock_collection"] = {"source": mock_job["source"], "dataset": mock_job["dataset"],
-                                 "status": mock_job["status"], "spatial_mode": mock_job["spatial_mode"]}
-    sections = app.radio(key="workflow_section").options
-    for section_name in sections[1:]:
-        app.radio(key="workflow_section").set_value(section_name).run()
-        prefix = "stored" if section_name == sections[1] else "chart"
-        app.button(key=prefix+"_view_"+mock_id).click().run()
-        if section_name == sections[-1]:
-            app.radio(key="workflow_section").set_value(section_name).run()
-            app.button(key=prefix+"_draw_"+mock_id).click().run()
-        app.button(key=prefix+"_selected_submit").click().run()
-        report["checks"].append({"section": section_name,
-            "exceptions": [str(x.message) for x in app.exception],
-            "errors": [str(x.value) for x in app.error]})
-    report["passed"] = (not report["exceptions"] and not report["errors"]
-                        and bool(report["titles"]) and all(
-                            not x.get("missing_control") and not x.get("exceptions")
-                            and not x.get("errors") for x in report["checks"]))
-    if "mock_collection" in report:
-        report["passed"] = report["passed"] and report["mock_collection"] == {
-            "source": "mock", "dataset": "mock", "status": "completed", "spatial_mode": "point"}
-    (output / "frontend_apptest.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report["passed"] else 1
+    report['mock_collection'] = {key: mock_job[key] for key in ['source', 'dataset', 'status', 'spatial_mode']}
+    for section_name, prefix in [('Dữ liệu đã lưu','stored'), ('Biểu đồ','chart')]:
+        app.pills(key='workflow_section').set_value(section_name).run()
+        action = '_draw_' if prefix == 'chart' else '_view_'
+        app.button(key=prefix+action+mock_id).click().run()
+        app.button(key=prefix+'_selected_submit').click().run()
+        if prefix == 'chart':
+            app.session_state['timeseries_table_panel'] = True
+            app.run()
+        report['checks'].append(dict(section=section_name,
+            exceptions=[str(x.message) for x in app.exception],
+            errors=[str(x.value) for x in app.error],
+            csv_available=any(d.key=='download_timeseries_csv' for d in app.get('download_button'))))
+    report['passed'] = (not report['exceptions'] and not report['errors']
+                        and bool(report['navigation_options'])
+                        and all(not c['exceptions'] and not c['errors'] and c['csv_available'] for c in report['checks'])
+                        and report['mock_collection'] == dict(source='mock', dataset='mock', status='completed', spatial_mode='point'))
+    (output/'frontend_apptest.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    print(json.dumps(report,ensure_ascii=False,indent=2))
+    return 0 if report['passed'] else 1
 
 
 def free_port() -> int:
@@ -151,7 +149,10 @@ def inventory() -> dict:
     paths = [ROOT / ".env"]
     data = ROOT / "data"
     if data.exists():
-        paths.extend(p for p in data.rglob("*") if p.is_file())
+        # SQLite removes/recreates these transient coordination files when connections close.
+        # They do not represent persistent user inputs; keep tracking the main DB and raw files.
+        paths.extend(p for p in data.rglob("*") if p.is_file()
+                     and not p.name.endswith(('-wal', '-shm')))
     return {p.relative_to(ROOT).as_posix(): {
         "size": p.stat().st_size, "mtime_ns": p.stat().st_mtime_ns,
     } for p in paths if p.is_file()}

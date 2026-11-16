@@ -388,7 +388,12 @@ def test_create_download_endpoint_rejects_invalid_request(tmp_path: Path) -> Non
     assert response.status_code == 422
 
 
-def test_existing_climate_endpoint_still_works() -> None:
+def test_existing_climate_endpoint_still_works(tmp_path, monkeypatch) -> None:
+    from backend.app.services.dependencies import get_climate_service
+    from backend.app.services.climate_service import ClimateService
+    from backend.app.providers.mock_provider import MockClimateProvider
+    monkeypatch.setitem(app.dependency_overrides, get_climate_service,
+                        lambda: ClimateService(MockClimateProvider(tmp_path)))
     client = TestClient(app)
     response = client.get(
         "/api/v1/climate/timeseries",

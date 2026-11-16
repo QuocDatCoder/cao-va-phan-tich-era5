@@ -22,6 +22,16 @@ def detail(collection_id: str, s: Service):
     try: return s.get(collection_id)
     except LookupError as exc: raise HTTPException(404,str(exc)) from exc
 
+
+@router.delete('/{collection_id}')
+def delete(collection_id: str, s: Service):
+    try:
+        return s.delete(collection_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
 @router.get('/{collection_id}/quality')
 def quality(collection_id: str, s: Service, limit: int=Query(500,ge=1,le=500), offset: int=Query(0,ge=0)):
     entry=detail(collection_id,s)

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from backend.app.domain.quality import QualityReport
 import sqlite3
+import os
 import json
 from hashlib import sha256
 
@@ -22,6 +23,7 @@ class JobRepository:
 
     def create(self, job_id: str, request: DownloadRequest, *, dataset: str | None = None,
                retrieval_variables: list[str] | None = None) -> DownloadJob:
+        from backend.app.services.worker_identity import process_identity
         now = self._now()
         location = request.location
         area = request.area or DownloadArea(north=location.latitude, south=location.latitude,
@@ -39,9 +41,9 @@ class JobRepository:
                 INSERT INTO download_jobs (
                     job_id, variable, start_date, end_date, north, west, south, east,
                     frequency, status, progress, created_at, updated_at,
-                    source, location_latitude, location_longitude, retrieval_variables, dataset, request_key
+                    source, location_latitude, location_longitude, retrieval_variables, dataset, request_key, worker_pid, worker_identity
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -62,7 +64,7 @@ class JobRepository:
                     location.longitude if location else None,
                     json.dumps(retrieval_variables or []),
                     dataset,
-                    fingerprint,
+                    fingerprint, os.getpid(), process_identity(os.getpid()),
                 ),
             )
         job = self.get(job_id)
@@ -93,6 +95,13 @@ class JobRepository:
         with self._connect() as connection:
             return connection.execute("UPDATE download_jobs SET status='running',updated_at=? WHERE job_id=? AND status='queued'",
                                       (self._now().isoformat(), job_id)).rowcount == 1
+
+    def abandoned_ids(self):
+        from backend.app.services.worker_identity import process_identity
+        with self._connect() as c:
+            rows = c.execute("SELECT job_id,worker_pid,worker_identity FROM download_jobs WHERE status IN ('queued','running')").fetchall()
+        return [r['job_id'] for r in rows if r['worker_pid'] and r['worker_identity'] and
+                (identity := process_identity(r['worker_pid'])) is not None and identity != r['worker_identity']]
 
     def list_jobs(self, limit=100, offset=0):
         with self._connect() as connection:
@@ -187,6 +196,7 @@ class JobRepository:
             # Additive migration: retain existing jobs, status, files and timestamps.
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(download_jobs)")}
             for name, sql_type in {
+                "worker_pid": "INTEGER", "worker_identity": "TEXT",
                 "source": "TEXT", "location_latitude": "REAL", "location_longitude": "REAL",
                 "retrieval_variables": "TEXT NOT NULL DEFAULT '[]'",
                 "quality_json": "TEXT",

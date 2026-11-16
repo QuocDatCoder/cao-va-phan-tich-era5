@@ -236,3 +236,26 @@ Trước khi bàn giao, kiểm tra backend/frontend khởi động được trê
 Trend trong một ngày chỉ mô tả hồi quy trong khoảng chọn, không chứng minh xu hướng khí hậu dài hạn. Anomaly hiện so với trung bình khoảng nền được chọn. Map hiển thị vị trí truy vấn, chưa phải bản đồ trường dữ liệu phủ toàn cầu. API cực trị kèm thời điểm chưa tách riêng; nhóm AI có thể xác định từ timeseries bằng xử lý số liệu.
 
 Tài liệu chi tiết: [API cho AI Agent](docs/AI_API_HANDOFF.md) · [ERA5 provider, lưu trữ và đồng bộ](docs/era5_provider.md).
+
+### Đợt 4: ổn định tải và kiểm tra demo
+
+Đã bổ sung chạy job tuần tự trong một tiến trình, retry có giới hạn theo loại lỗi và phục hồi job gián đoạn mà không xóa phần đã nhập. Scheduler vẫn mặc định tắt. Xem [checklist và giới hạn đợt 4](docs/DOT_4_ON_DINH_TAI_VA_DEMO.md).
+
+Kiểm tra dữ liệu đang có, không gửi CDS:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 scripts/check_demo_data.py --require-source land
+```
+
+Hiện đã kiểm chứng bốn bộ ERA5-Land trên máy phát triển. **Chưa có bộ ERA5 thật đạt kiểm tra**, vì vậy chưa công bố nghiệm thu dữ liệu biển hoặc hoàn thành toàn bộ minh chứng đợt 4. Các bộ dữ liệu thật không được đưa vào Git.
+
+Kiểm thử toàn bộ và khởi động backend/frontend trên DB riêng, chặn CDS và credential files:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 scripts/baseline_offline.py
+.\.venv\Scripts\python.exe -X utf8 scripts/browser_review.py
+```
+
+Lệnh Chromium cần Playwright và trình duyệt Chromium đã cài. Script dùng mock qua backend thử riêng, không đưa lại lựa chọn Demo vào giao diện sản phẩm. Log, CSV và ảnh nằm trong `output/`, được Git bỏ qua.
+
+Chế độ tải thật của script audit đòi hỏi đồng thời `--allow-live` và `--live-request`. Nhận HTTP 202 chỉ xác nhận tiếp nhận job, không phải xác nhận tải thành công.

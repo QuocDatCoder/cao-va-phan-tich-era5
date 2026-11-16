@@ -10,5 +10,6 @@ def apply_appearance():
     [data-testid="stVerticalBlock"] {gap:.8rem;}
     [data-testid="stMetricValue"] {font-size:1.6rem;}
     .st-key-workflow_section {margin-bottom:.4rem;}
+    .st-key-workflow_content {min-height:65vh;}
     @media(max-width:640px) {.block-container {padding-left:1rem;padding-right:1rem;}}
     </style>""", unsafe_allow_html=True)

@@ -5,6 +5,7 @@ import sqlite3
 import os
 import json
 from hashlib import sha256
+from threading import RLock
 
 from backend.app.domain.schemas import (
     DownloadArea,
@@ -16,10 +17,16 @@ from backend.app.domain.schemas import (
 )
 
 
+_SCHEMA_LOCK = RLock()
+
+
 class JobRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
-        self._ensure_schema()
+        # Concurrent first API requests may both miss the dependency's lru_cache.
+        # Keep column inspection and additive migration atomic in this process.
+        with _SCHEMA_LOCK:
+            self._ensure_schema()
 
     def create(self, job_id: str, request: DownloadRequest, *, dataset: str | None = None,
                retrieval_variables: list[str] | None = None) -> DownloadJob:

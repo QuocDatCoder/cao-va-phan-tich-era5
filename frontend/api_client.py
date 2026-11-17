@@ -24,6 +24,15 @@ class DashboardApiClient:
     def health(self) -> dict[str, Any]:
         return self._get("/health")
 
+    def agent_status(self):
+        return self._get('/api/v1/agent/status')
+
+    def agent_chat(self, payload):
+        return self._post('/api/v1/agent/chat', payload)
+
+    def resolve_agent_action(self,payload):
+        return self._post('/api/v1/agent/resolve-action',payload)
+
     def get_timeseries(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._get("/api/v1/climate/timeseries", params=params)
 

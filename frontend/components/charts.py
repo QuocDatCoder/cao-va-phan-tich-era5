@@ -65,6 +65,17 @@ def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
         yaxis_title=f"{variable} ({unit})" if unit else variable,
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
+    if len(frame)==1:
+        # Plotly's automatic range around a single datetime is +/- milliseconds.
+        # Show one honest period label rather than a row of meaningless tiny ticks.
+        stamp=frame['time'].iloc[0]
+        width=pd.Timedelta(hours=1)
+        if 'period_end' in frame and pd.notna(frame['period_end'].iloc[0]):
+            end=vietnam_display_times(frame['period_end']).iloc[0]
+            if end>stamp: width=end-stamp
+        frequency=payload.get('frequency','hourly')
+        date_format={'daily':'%d/%m/%Y','monthly':'%m/%Y','yearly':'%Y'}.get(frequency,'%d/%m/%Y %H:%M')
+        fig.update_xaxes(range=[stamp-width/2,stamp+width/2],tickmode='array',tickvals=[stamp],ticktext=[stamp.strftime(date_format)])
     return fig
 
 

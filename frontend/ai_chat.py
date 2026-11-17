@@ -230,7 +230,11 @@ def _view_form(api,data,index):
     lo,hi=(datetime.fromisoformat(choices[k]).astimezone(local) for k in ['requested_start','requested_end'])
     start=datetime.fromisoformat(draft['start']).astimezone(local) if draft.get('start') else None
     end=datetime.fromisoformat(draft['end']).astimezone(local) if draft.get('end') else None
-    variables=choices['variables']
+    from backend.app.domain.public_variables import public_variables
+    variables=public_variables(choices['variables'])
+    if not variables:
+        st.info('Bộ dữ liệu chưa có biến chính được hỗ trợ.')
+        return
     selected=next((i for i,v in enumerate(variables) if variable_label(v)==variable_label(draft.get('variable') or '')),None)
     grids=choices['grids']
     grid=dict(latitude=draft.get('latitude'),longitude=draft.get('longitude'))

@@ -2,11 +2,14 @@
 from datetime import datetime,timedelta,timezone
 
 from backend.app.domain.ui_actions import PrepareView,UIAction,ViewParameters
+from backend.app.domain.public_variables import PUBLIC_VARIABLES
 
 
 def resolve_action(tools,action: UIAction):
     if action.type=='find_data':
         return dict(status='ok',action=action.model_dump(mode='json'))
+    if action.parameters and action.parameters.variable not in PUBLIC_VARIABLES:
+        return dict(status='invalid_arguments',message='Chỉ hỗ trợ 6 biến chính: nhiệt độ, lượng mưa, điểm sương, tốc độ gió, hướng gió và bức xạ mặt trời. Gió u/v là dữ liệu bổ sung nội bộ.')
     info=tools.execute('describe_collection',dict(collection_id=action.collection_id))
     if info['status']!='ok':
         return info

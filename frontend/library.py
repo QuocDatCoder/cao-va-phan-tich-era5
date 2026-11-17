@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 from frontend.components.charts import variable_label
 from frontend.api_client import DashboardApiError
-from backend.app.domain.wind import WIND_COMPONENTS,DERIVED_WIND_UNITS
+from backend.app.domain.public_variables import public_variables
 
 STATUS = dict(queued='Đang chờ', running='Đang thu thập', complete='Đủ dữ liệu',
               partial='Thiếu một phần', failed='Thất bại', interrupted='Bị gián đoạn', cancelling='Đang hủy', cancelled='Đã hủy')
@@ -354,9 +354,16 @@ def render_saved(client, charts=False):
         if charts and st.session_state.pop('chart_collapse_filters', None) == selected:
             st.session_state[filter_key] = False
         with st.expander('Bộ lọc biểu đồ', expanded=True, key=filter_key, on_change='rerun') if charts else nullcontext():
-            variables=[m['primary_variable']]+[v['variable'] for v in entry['variables'] if v['variable']!=m['primary_variable']]
-            if set(WIND_COMPONENTS).issubset(variables):
-                variables.extend(v for v in DERIVED_WIND_UNITS if v not in variables)
+            variables=public_variables([m['primary_variable']]+[v['variable'] for v in entry['variables']])
+            if not variables:
+                st.info('Bộ dữ liệu chưa có biến chính được hỗ trợ để xem hoặc vẽ.')
+                return
+            primary=next((v for v in variables if variable_label(v)==variable_label(m['primary_variable'])),None)
+            if primary:
+                variables=[primary]+[v for v in variables if v!=primary]
+            variable_key=prefix+'_variable_'+selected
+            if st.session_state.get(variable_key) not in variables:
+                st.session_state[variable_key]=variables[0]
             st.caption('Chọn biến, điểm lưới và khoảng ngày, rồi bấm nút bên dưới để cập nhật kết quả. Thay đổi trong form chưa được áp dụng.')
             if charts:
                 kind = st.selectbox('Loại biểu đồ',['Chuỗi thời gian','Bản đồ nhiệt','Không gian (điểm)','Thống kê và xu hướng'],key='saved_chart_kind')

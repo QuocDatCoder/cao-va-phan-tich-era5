@@ -30,6 +30,8 @@ Hành động và dữ liệu hiển thị được giữ trong lịch sử loca
 
 ## Kiểm thử và giới hạn
 
+Bộ chọn Kho dữ liệu, Biểu đồ và form ARE chỉ hiển thị tối đa 6 biến chính có sẵn: nhiệt độ, lượng mưa, điểm sương, tốc độ gió, hướng gió, bức xạ mặt trời. Alias được gộp, gió u/v vẫn lưu và xuất hiện trong thông tin biến bổ sung, không nằm trong bộ chọn chính. Chỉ bổ sung tốc độ/hướng gió khi có cả hai thành phần. Hành động mở kết quả ARE từ chối biến nội bộ; dữ liệu và API phân tích nền không bị xóa.
+
 Test kiểm tra DTO chặn script/URL/SQL, scope ngày/biến/lưới, không kế thừa bộ khác, nhiều lưới cần lựa chọn, null/rỗng/đơn vị nghi vấn, đúng khoảng 7 giờ, chỉ query một lần, lỗi sau validate giữ kết quả cũ và mở tab khác không làm mất applied của tab trước. Test UI kiểm tra form trong chat không gọi AI, search mở danh sách và generic view không tự query.
 
 Baseline output/are-actions-complete-baseline: 495 passed, 1 skipped (live CDS), backend/frontend HTTP 200, AppTest đạt và user_inputs_unchanged=true. Các kiểm tra bổ sung cho thao tác atomic/UI/history tại output/are-actions-idle-tests: 39 passed. Running-app agent API/Chromium kiểm tra tìm kiếm, mở metadata, áp dụng chu kỳ ngày từ context, form thiếu tham số và các luồng F5/làm mới/không replay; ảnh và log trong output/are-actions-idle-browser-final. Kiểm tra UI này không gọi API AI trả phí/CDS, không có browser error. Chat chỉ phát sự kiện kiểm tra mỗi giây khi có request đang chạy; đã kiểm tra bộ chọn còn mở sau 1,8 giây lúc rảnh. Timer được dọn khi component unmount.

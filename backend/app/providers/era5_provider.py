@@ -8,7 +8,8 @@ import json
 import sqlite3
 import threading
 from uuid import uuid4
-from backend.app.providers.cds_retry import CDSSession, retrieve_with_retry
+from backend.app.providers.cds_retry import CDSSession, CancellableCDSClient, retrieve_with_retry
+from backend.app.domain.cancellation import check_cancelled
 from typing import Any
 
 import numpy as np
@@ -464,6 +465,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
         }
 
     def _retrieve(self, request: dict[str, Any], target_path: Path) -> None:
+        check_cancelled()
         self._ensure_configured()
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -478,6 +480,7 @@ class ERA5ClimateProvider(ClimateDataProvider):
                 if quality is not None:
                     quality.issue('empty_file', 'CDS returned no non-empty data file.', source_file=str(partial))
                 raise ClimateDataError('CDS returned no non-empty data file.')
+            check_cancelled()
             partial.replace(target_path)
         except ClimateProviderError:
             raise
@@ -678,6 +681,6 @@ class ERA5ClimateProvider(ClimateDataProvider):
     def _default_client_factory(self, settings: Settings) -> Any:
         import cdsapi
 
-        return cdsapi.Client(url=settings.cds_url, key=settings.cds_api_key,
+        return CancellableCDSClient(cdsapi.Client(url=settings.cds_url, key=settings.cds_api_key,
                              retry_max=1, timeout=settings.cds_request_timeout_seconds,
-                             sleep_max=30, quiet=True, debug=False, session=CDSSession())
+                             sleep_max=30, quiet=True, debug=False, session=CDSSession()))

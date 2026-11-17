@@ -41,7 +41,19 @@ git push origin NDuong
 
 ## Phạm vi
 
+### Bổ sung hủy tác vụ (17/11/2026)
+
+`POST /api/v1/jobs/{job_id}/cancel`: queued → cancelled ngay; running → cancelling → cancelled khi worker đã dừng. Gọi lại không tạo thêm công việc; job đã completed/failed giữ nguyên. Job cancelling vẫn khóa thao tác xóa và tiếp tục được theo dõi. Thao tác hủy không cần đợi khóa hàng đợi tải; worker nhường khóa sau khi dừng an toàn.
+
+Giao diện có nút **Hủy tác vụ** trong chi tiết tác vụ đang chờ/chạy, nút bị khóa trong **Đang hủy**, và thẻ **Đã hủy** khi worker dừng. Người dùng có thể nhập yêu cầu khác; yêu cầu mới xếp hàng cho đến khi thao tác hiện tại giải phóng khóa.
+
+Hủy có tính hợp tác: kiểm tra khi poll kết quả CDS, retry, streaming HTTP, parse/import và trước công bố file hoàn tất. Với CDS SDK hiện cài dùng API submit/results công khai và chờ ngắt được; không dùng kill thread, không đổi scheduler. Một thao tác mạng đang thực thi có thể cần trả về hoặc timeout trước khi dừng. Không bảo đảm remote job tại CDS được xóa; không báo phần trăm hoặc khẳng định hủy CDS thành công. File partial, file gốc và quan sát đã nhập được giữ; transaction đang nhập có thể rollback phần dở. Job đã hủy không bị ghi đè thành completed/failed bởi worker đến muộn. Khi xác minh worker cũ đã chết, phục hồi cancelling thành cancelled.
+
+Kiểm chứng offline: API/UI hủy queued, idempotency, 404, giữ completed, hủy running và giữ snapshot 24 quan sát, job tiếp theo chạy được, chặn finalizer ghi đè, adapter CDS dừng poll không download, phục hồi hủy sau restart. Chromium API fixture kiểm tra nút hủy → trạng thái đang hủy/nút disabled → đã hủy/nút biến mất. Không gọi CDS thật; ảnh `output/job-loading-browser/cancelling.png`, `cancelled.png`. Kết quả bộ offline cuối ở `output/cancel-jobs-final/`.
+
 Một backend, một tiến trình/worker. Không bật scheduler và không tự gửi CDS thật khi khởi động, phục hồi hoặc kiểm tra local. Giữ nguyên dữ liệu/file hiện có. Chưa làm chatbot.
+
+Kiểm thử sau bổ sung hủy: **342 passed, 1 skipped** (CDS thật), một deprecation warning TestClient; backend/frontend startup và AppTest đạt; inventory dữ liệu người dùng không đổi. Log: `output/cancel-jobs-final/pytest.log`, `baseline.json`, `test_safety.json`.
 
 ## Điều phối và chống trùng
 

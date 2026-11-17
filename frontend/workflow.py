@@ -2,6 +2,8 @@
 from datetime import date, datetime, timedelta, timezone
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
 
 import pandas as pd
 import streamlit as st
@@ -9,7 +11,7 @@ import streamlit as st
 from frontend.api_client import DashboardApiClient, DashboardApiError, DEFAULT_TIMEOUT_SECONDS
 from frontend.components.controls import VARIABLES, local_date_range, search_places
 from frontend.appearance import apply_appearance
-from frontend.dashboard import _poll_collection, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
+from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
 
 SOURCES = {
     "land": "ERA5-Land · Đất liền",
@@ -55,14 +57,41 @@ def render_workspace():
             st.session_state['workflow_section'] = requested_view
     section = st.pills(
         'Chức năng', list(navigation), format_func=navigation.get,
-        default=st.session_state.get('workflow_section') or 'Thu thập', required=True, width='content', wrap=False,
+        default=None if 'workflow_section' in st.session_state else 'Thu thập', required=True, width='content', wrap=False,
         key='workflow_section', label_visibility='collapsed',
     )
     st.query_params['view'] = section
+    # One persistent header row for all sections, outside the loading/content area.
+    with st.container(key='workflow_section_header', horizontal=True,
+                      vertical_alignment='center', gap='small', wrap=False,
+                      height=56, border=False):
+        st.header(section, anchor=False)
+        if section in {'Dữ liệu đã lưu','Biểu đồ'}:
+            prefix = 'chart' if section == 'Biểu đồ' else 'stored'
+            if st.button('Làm mới',key=prefix+'_refresh_library',icon=':material/refresh:',width='content'):
+                from frontend.library import invalidate_reads
+                if prefix == 'chart':
+                    st.session_state['chart_force_refresh'] = True
+                else:
+                    st.session_state.pop(prefix+'_result', None)
+                invalidate_reads()
     switching = st.session_state.get('rendered_workflow_section') != section
+    if switching and section in {'Dữ liệu đã lưu','Biểu đồ'}:
+        prefix = 'chart' if section == 'Biểu đồ' else 'stored'
+        restoring = (st.session_state.get('rendered_workflow_section') is None
+                     and st.query_params.get(prefix+'_mode') == 'details'
+                     and bool(st.query_params.get(prefix+'_applied')))
+        if not st.session_state.get(prefix+'_open_requested'):
+            if prefix+'_details_visible' not in st.session_state:
+                st.session_state[prefix+'_details_visible'] = restoring
+                st.session_state[prefix+'_library_cards'] = not restoring
+            visible = st.session_state[prefix+'_details_visible']
+            st.query_params[prefix+'_mode'] = 'details' if visible else 'list'
+            if visible:
+                st.session_state[prefix+'_restore_filters'] = True
     with st.container(key='workflow_stage'):
         loading = st.empty()
-        if switching:
+        if switching and section == 'Dữ liệu đã lưu':
             loading.html("""
                 <style>
                 .st-key-workflow_stage {position:relative;min-height:65vh;}
@@ -172,11 +201,11 @@ def apply_place(prefix):
 def location_search(prefix):
     """Geocoding is explicit and separate from collection/data query submission."""
     with st.form(prefix+"_place_search", border=False):
-        field, action = st.columns([4, 1], vertical_alignment="bottom")
+        field, action = st.columns([4, 1], vertical_alignment="bottom", wrap=False)
         query = field.text_input("Tìm địa điểm", key=prefix+"_place_query",
             placeholder="Tìm thành phố hoặc nhập tọa độ bên dưới",
             help="Chỉ tên tìm kiếm được gửi đến Open-Meteo khi bấm Tìm. Có thể nhập tọa độ trực tiếp.")
-        submitted = action.form_submit_button("Tìm", key=prefix+"_find_place", use_container_width=True)
+        submitted = action.form_submit_button("Tìm", key=prefix+"_find_place", width="stretch")
     if submitted:
         if len(query.strip()) < 2:
             st.info("Nhập ít nhất 2 ký tự để tìm địa điểm.")
@@ -199,7 +228,6 @@ def location_search(prefix):
 
 def render_collection():
     restore_filter('collect')
-    st.header("Thu thập", anchor=False)
     source = source_input("collect")
     location_search("collect")
     with st.form("collection_form"):
@@ -242,26 +270,84 @@ def render_collection():
                            if source == "era5" else {"location": point})
             api = client(source)
             response = api.create_download(payload)
-            from frontend.library import _shared_read
-            _shared_read.clear()
+            from frontend.library import invalidate_reads, invalidate_job_list
+            invalidate_reads()
             st.session_state.setdefault('job_filters', {})[response['job_id']] = dict(source=source, **params)
             st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}),
                                                     f"{api.base_url}|{source}": response["job_id"]}
             st.session_state["workflow_selected_job"] = response["job_id"]
             st.session_state['latest_collection_id'] = response.get('collection_id')
-            st.session_state.pop("workflow_job_list", None)
+            invalidate_job_list()
             st.session_state.pop('saved_library', None)
             st.success("Đã tiếp nhận tác vụ.")
-    api = client(source)
+    render_collection_jobs(source)
+
+
+@st.cache_resource
+def _job_reader():
+    return ThreadPoolExecutor(max_workers=4, thread_name_prefix='job-list-read')
+
+
+def _submit_job_list(api):
+    # Worker only performs HTTP I/O; all Streamlit/session mutations stay on UI thread.
+    return _job_reader().submit(api.list_jobs)
+
+
+def _update_job_list(api):
+    revision = st.session_state.get('workflow_jobs_revision', 0)
+    pending = st.session_state.get('workflow_jobs_pending')
+    if pending and pending[0] != revision:
+        pending[1].cancel()
+        st.session_state.pop('workflow_jobs_pending', None)
+        pending = None
+    if pending and pending[1].done():
+        st.session_state.pop('workflow_jobs_pending', None)
+        st.session_state['workflow_jobs_due'] = monotonic() + 15
+        try:
+            checked_at = datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M:%S')
+            st.session_state['workflow_job_list'] = [dict(job, _status_checked_at=checked_at)
+                                                     for job in pending[1].result()]
+            st.session_state.pop('workflow_jobs_error', None)
+        except DashboardApiError as exc:
+            st.session_state['workflow_jobs_error'] = str(exc)
+        pending = None
+    jobs = st.session_state.get('workflow_job_list')
+    active = any(j['status'] in {'queued','running','cancelling'} for j in jobs or [])
+    if (pending is None and (jobs is None or active)
+            and monotonic() >= st.session_state.get('workflow_jobs_due', 0)):
+        future = _submit_job_list(api)
+        st.session_state['workflow_jobs_pending'] = (revision, future)
+        # Handles already-completed reads without adding an artificial delay.
+        if future.done():
+            _update_job_list(api)
+
+
+@st.fragment(run_every=1)
+def render_collection_jobs(source):
+    # All job widgets and details belong to one fragment. Polling replaces this
+    # region instead of leaving outputs owned by a nested polling fragment.
+    try:
+        _render_collection_jobs(client(source))
+    except DashboardApiError as exc:
+        st.error(str(exc))
+
+
+def _render_collection_jobs(api):
     st.divider()
-    from frontend.library import cached_read, _shared_read
+    from frontend.library import invalidate_reads, invalidate_job_list
     with st.container(horizontal=True, vertical_alignment='center', gap='small', wrap=False):
         st.header("Tác vụ thu thập", anchor=False)
         if st.button("Làm mới", key="refresh_jobs", width="content", icon=":material/refresh:"):
-            _shared_read.clear()
-            st.session_state.pop('workflow_job_list', None)
-    if "workflow_job_list" not in st.session_state:
-        st.session_state["workflow_job_list"] = cached_read(api, 'list_jobs')
+            invalidate_reads()
+            invalidate_job_list()
+    _update_job_list(api)
+    error = st.session_state.get('workflow_jobs_error')
+    if error:
+        st.error(error)
+    if 'workflow_jobs_pending' in st.session_state:
+        st.info('Đang tải tác vụ thu thập… Bạn vẫn có thể tìm địa điểm và điền form phía trên.', icon=':material/sync:')
+    if 'workflow_job_list' not in st.session_state:
+        return
     jobs = st.session_state.get("workflow_job_list", [])
     if not jobs:
         st.info("Chưa có tác vụ thu thập. Bạn có thể gửi yêu cầu bằng form ở trên.")
@@ -276,16 +362,21 @@ def render_collection():
             "Tạo lúc UTC+7": created.isoformat(), "Trạng thái": job['status'],
             "Chất lượng": quality.get('status', 'Chưa kiểm tra'), "Cảnh báo": quality.get('issue_count')})
     with st.expander("Lịch sử thu thập · "+str(len(rows))+" tác vụ", expanded=False):
-        st.caption("100 tác vụ gần nhất. Bấm Làm mới để cập nhật bảng; tác vụ đang xem cập nhật mỗi 15 giây.")
-        st.dataframe(rows, hide_index=True, use_container_width=True)
+        st.caption("100 tác vụ gần nhất. Tự cập nhật mỗi 15 giây khi có tác vụ đang chờ/chạy; bấm Làm mới để kiểm tra ngay.")
+        st.dataframe(rows, hide_index=True, width='stretch')
     ids = [j['job_id'] for j in jobs]
     if st.session_state.get("workflow_selected_job") not in ids:
         st.session_state["workflow_selected_job"] = ids[0]
     labels = {j['job_id']: f"{j.get('collection_name') or (j['start_date']+' → '+j['end_date']+' UTC')} · {j.get('source') or 'Nguồn cũ'} · {j['status']} · {j['job_id'][:8]}" for j in jobs}
-    selected = st.selectbox("Xem tác vụ và báo cáo", ids, format_func=labels.get, key="workflow_selected_job")
+    # Streamlit can retain the displayed formatted label for an unchanged ID.
+    # Remount only when labels change; preserve the selected job independently.
+    choice_key = 'workflow_job_choice_' + str(hash(tuple(labels.items())))
+    selected = st.selectbox("Xem tác vụ và báo cáo", ids, format_func=labels.get,
+                            index=ids.index(st.session_state['workflow_selected_job']), key=choice_key)
+    st.session_state['workflow_selected_job'] = selected
     context = "workflow_selected"
     st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}), context: selected}
-    _poll_collection(api, context)
+    _render_job_status(api, context, job=next(job for job in jobs if job['job_id'] == selected))
 
 
 def query_form(prefix, charts=False):

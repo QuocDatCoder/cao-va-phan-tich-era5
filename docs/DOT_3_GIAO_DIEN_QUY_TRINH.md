@@ -156,3 +156,50 @@ Chromium trên dịch vụ/DB thử riêng, hai snapshot mock 24 quan sát mỗi
 Thử API danh sách cố tình chậm 2,5 giây: khung mới hiện sau 0,500 giây, danh sách sẵn sàng 3,328 giây; mục cũ không còn nhìn thấy. Sau khi bổ sung loading theo xác nhận người dùng, nội dung mới cũng được ẩn trong thời gian chờ. Ảnh kiểm tra loading ở `output/loading-browser-ok/`, số đo JSON ở `output/speed-run3/`, `output/speed-selected/`, `output/speed-delayed/`. Đây là artifact local, không commit thư mục output.
 
 Mốc kiểm thử bàn giao cuối và tình trạng dữ liệu thật xem `docs/DOT_4_ON_DINH_TAI_VA_DEMO.md`.
+
+## Sửa cập nhật vùng tác vụ thu thập (17/11/2026)
+
+### Ghi nhớ từng tab trong phiên — quy tắc điều hướng hiện hành
+
+Thay quy tắc trước đây luôn về danh sách khi bấm tab: lần đầu vào mỗi tab vẫn là danh sách; sau khi chủ động xem/vẽ, chuyển tab rồi quay lại giữ bộ, kết quả và cấu hình đã áp dụng của riêng tab đó. Quay lại danh sách là thao tác tường minh và được nhớ qua lần chuyển tab tiếp theo. Khi widget bị Streamlit dọn do tab không hiển thị, khôi phục variable/grid/ngày/loại/chu kỳ từ cấu hình đã áp dụng trước khi dựng lại widget. Không dùng bộ của tab kia, không truy vấn lại chuỗi dữ liệu nếu kết quả còn trong phiên. F5 phục hồi tab hiện tại theo URL, đường dẫn gốc không tự mở bộ cũ. Xóa bộ đang xem đưa tab liên quan về danh sách như trước.
+
+Kiểm chứng: **35 test workflow đạt**, gồm hai tab xem hai bộ khác nhau, giữ chu kỳ daily khi quay lại, không tăng lời gọi API trong vòng chuyển tab và nhớ chế độ danh sách. Chromium chuyển Kho dữ liệu ↔ Biểu đồ giữ bảng/đồ thị, F5/CSV/mobile/xóa đạt (`output/browser_review/20261117-173212/`).
+
+### Thu gọn bộ lọc sau khi vẽ
+
+Bộ lọc Biểu đồ nằm trong expander: chọn bộ mở sẵn; submit thành công tự đóng và cuộn đến Plotly (thống kê dùng khối kết quả). Ngày sai/API lỗi không đóng bộ lọc và giữ kết quả đã áp dụng. F5 kết quả đã vẽ mặc định thu gọn; mở bộ lại vẫn thấy bộ lọc để chỉnh. Tự cuộn theo bố cục dựng trong khoảng tối đa 1,5 giây để tránh nhắm DOM cũ lúc rerun; dừng ngay khi người dùng chạm/bấm/cuộn. Nếu đã tới cuối trang, giữ biểu đồ trọn trong khung nhìn thay vì thêm khoảng trắng chỉ để ép nó lên sát đầu. Chromium kiểm tra ba lần đổi ngày/tháng/năm: bộ lọc đóng sau thành công và Plotly hiển thị đúng vị trí, cùng F5/CSV/mobile/xóa đạt (`output/browser_review/20261117-172215/`). Test workflow: 32 đạt (`output/chart-collapse-final/`).
+
+### Luồng Biểu đồ sau rà soát
+
+Thứ tự mới: danh sách/tìm kiếm → Quay lại danh sách + tên bộ → chi tiết/chất lượng thu gọn → loại biểu đồ → form biến/lưới/ngày/chu kỳ + nút Vẽ → cấu hình đã áp dụng/cảnh báo → biểu đồ/bảng CSV. Ngày hiển thị trực tiếp; chu kỳ chỉ xuất hiện cho chuỗi thời gian, heatmap dùng tháng. Đổi loại biểu đồ chỉ đổi cấu hình, chưa truy vấn.
+
+Vào tab Biểu đồ mở danh sách, không tự dùng lựa chọn Kho dữ liệu. Nút Vẽ từ Kho dữ liệu chuyển bộ/biến/lưới/khoảng ngày tường minh. Hai mục có collection/preferred/mode/visible riêng. Chọn bộ đóng danh sách, cuộn đến bộ lọc; Vẽ thành công cuộn đến kết quả. Quay lại giữ tìm kiếm/phân trang. URL chart_mode + chart_applied phục hồi bộ/cấu hình đã vẽ khi F5, không phục hồi bản nháp chưa submit. Đổi bộ đặt lại loại/chu kỳ mặc định để không dùng nhầm cấu hình toàn cục.
+
+Kết quả nằm sau form, spinner cập nhật đặt dưới form; không có overlay che toàn trang Biểu đồ. Ngày sai hoặc API lỗi giữ kết quả trước và URL đã áp dụng; không tự retry chỉ vì đổi lựa chọn. Làm mới đọc lại cấu hình đã vẽ, không áp dụng bản nháp loại biểu đồ. Xóa bộ đang xem đưa về danh sách mở.
+
+Kiểm chứng: nền **348 passed, 1 skipped**, startup/AppTest đạt (`output/chart-workflow-final/`); test F5, danh sách trước khi chọn, lỗi truy vấn giữ kết quả/URL. Chromium xác nhận form ở trên Plotly, ngày hiển thị trực tiếp, giờ/ngày/tháng/năm, F5, CSV, mobile và xóa (`output/browser_review/20261117-171111/`). Không gọi CDS thật hoặc thay dữ liệu người dùng.
+
+### Điều hướng Kho dữ liệu và F5
+
+Bấm tab Kho dữ liệu mở danh sách trước, không tự hiện bộ cũ. Bấm Xem dữ liệu đóng danh sách và cuộn tới chi tiết. URL lưu `stored_mode=details` cùng bộ lọc đã áp dụng để F5 giữ đúng bộ/bộ lọc đang xem; vào đường dẫn gốc không tự mở dữ liệu cũ. Nút Quay lại danh sách đóng chi tiết, mở/cuộn về danh sách, giữ từ khóa và trang tìm kiếm; URL chuyển về chế độ list nên F5 lúc này vẫn ở danh sách. Query params cũ có stored_applied nhưng thiếu stored_mode không tự mở chi tiết. Kiểm chứng: 30 test workflow đạt; Chromium xác nhận reload chi tiết, quay về danh sách, mở lại, chuyển tab, cuộn đúng vị trí và luồng CSV/biểu đồ/xóa (`output/browser_review/20261117-170244/`).
+
+### Form Thu thập dùng được trước khi lịch sử tải xong
+
+Bỏ lớp loading che toàn mục Thu thập. Phần nguồn/tìm địa điểm/form dựng trước; việc đọc GET jobs chạy trên executor riêng, worker chỉ làm HTTP I/O, không truy cập Streamlit/session state. Vùng tác vụ kiểm tra Future mỗi giây, chỉ gửi GET mỗi 15 giây khi còn job active, hoặc lúc thiếu danh sách/Làm mới. Lúc đang chờ chỉ vùng này hiện thông báo; không chặn form phía trên. Giữ một request đang chờ cho mỗi revision, bỏ kết quả cũ sau tạo/hủy/xóa/Làm mới để tránh phản hồi trễ ghi đè danh sách mới. Báo cáo quality đang mở đọc tối đa mỗi 15 giây hoặc khi summary thay đổi; giờ kiểm tra hiển thị theo lần nhận kết quả API, không cập nhật giả mỗi nhịp render.
+
+Test offline nền: **344 passed, 1 skipped**, startup/AppTest đạt (`output/nonblocking-collection/`). Test Future chưa hoàn tất xác nhận form vẫn dùng được và đổi nguồn không tạo thêm request lịch sử. Chromium với GET jobs cố tình chậm **7 giây**: form hiện và xử lý submit tìm kiếm rỗng sau **1,45 giây**, trước khi GET jobs hoàn tất. Cả hủy, trạng thái, chuyển mục, API lỗi/phục hồi và mobile đạt; artifact `output/job-loading-browser/`. Đây là fixture cục bộ, không phải thời gian phản hồi CDS thật.
+
+### Tránh đọc lại thư viện sau xóa và chuyển mục
+
+Danh sách trang/từ khóa được giữ trong phiên (tối đa 128 mục), dùng chung giữa Kho dữ liệu và Biểu đồ. Hết TTL 60 giây của cache dùng chung không làm mất danh sách trong phiên. Sau DELETE thành công, loại ID đã xóa khỏi các trang đầu đã đọc và giữ kết quả bộ khác; không gọi lại list API cho thư viện nhỏ. Trang sau bị vô hiệu do offset thay đổi; trang đầy 51 mục cần đọc lại để bù dòng và xác định phân trang đúng. Nút Làm mới, tạo/hủy job và quan sát job kết thúc vẫn vô hiệu danh sách để đọc thay đổi thật. Thay đổi từ phiên/máy khác cần bấm Làm mới. Spinner chỉ tạo khi thiếu trang trong cache phiên, không xuất hiện ở mỗi lần render danh sách đã có.
+
+Kiểm chứng: test giả lập cache chung hết hiệu lực, xóa một trong hai bộ, giữ kết quả bộ còn lại, đổi Kho dữ liệu/Biểu đồ không tăng GET list; Làm mới tăng đúng một lượt GET. Bộ offline **343 passed, 1 skipped**, startup/AppTest đạt (`output/library-cache-fix/`); Chromium luồng CSV/biểu đồ/F5/xóa đạt (`output/browser_review/20261117-164302/`).
+
+Trạng thái được làm nổi bật bằng thẻ có viền màu, biểu tượng và mô tả: xanh dương đang chạy, vàng đang chờ/có cảnh báo, xanh lá hoàn tất, đỏ thất bại. Queued/running có vòng xoay CSS, nhãn tự cập nhật 15 giây và giờ kiểm tra; chuyển động tắt theo prefers-reduced-motion. Không giả phần trăm hoặc tiến độ phía CDS. Thẻ hỗ trợ thông báo trạng thái cho trình đọc màn hình; CSS chỉ áp dụng cho thẻ. Bộ offline sau đổi giao diện: 337 passed, 1 skipped; startup/AppTest đạt (`output/job-status-highlight/`). Chromium kiểm tra làm mới, tự chuyển trạng thái, điều hướng, lỗi/phục hồi và mobile đạt (`output/job-loading-browser/`).
+
+- Gom lịch sử, chọn tác vụ và trạng thái/chi tiết vào cùng fragment 15 giây. Chi tiết dùng hàm render thường bên trong fragment này; không đăng ký thêm fragment poll con.
+- Khi còn job queued/running, đọc lại danh sách trực tiếp và dùng cùng payload cho lịch sử, nhãn lựa chọn và chi tiết. Job đã kết thúc dùng danh sách trong phiên; Làm mới chủ động đọc lại API. Không gọi thêm get_job cho cùng lần render.
+- Khi job kết thúc, vô hiệu cache đọc bộ dữ liệu, không rerun toàn trang hoặc dựng lại form thu thập.
+- Tách ID tác vụ đang chọn khỏi widget hiển thị. Khi nhãn/trạng thái đổi, dựng lại riêng ô chọn để tránh giữ chữ running cũ; giữ nguyên ID đang chọn nếu còn trong danh sách.
+- Kiểm tra Chromium trên API fixture có độ trễ: Làm mới ba lần, chỉ một trạng thái/khung chi tiết, tự chuyển running → completed và cập nhật nhãn, chuyển mục hai vòng, API lỗi rồi phục hồi, màn hình 390px. Đạt; log/ảnh ở `output/job-loading-browser/`. Không gọi CDS hoặc thao tác trên dữ liệu thật.
+- Regression browser luồng lưu/CSV/biểu đồ/F5/xóa đạt tại `output/browser_review/20261117-141501/`. Bộ offline cuối: **337 passed, 1 skipped**, startup và AppTest đạt, dữ liệu người dùng không đổi; log ở `output/fix-job-loading-final/`. Agent API kiểm tra phiên chạy thật đạt trạng thái ready, snapshot ở `output/job-loading-browser/agent-snapshot.json`.

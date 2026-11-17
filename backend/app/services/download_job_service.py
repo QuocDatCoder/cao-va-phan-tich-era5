@@ -1,6 +1,7 @@
 from uuid import uuid4
 from threading import RLock
 from collections.abc import Callable
+from time import monotonic
 
 from backend.app.domain.schemas import (
     DownloadCreateResponse,
@@ -19,10 +20,12 @@ from backend.app.providers.base import ClimateDataProvider
 from backend.app.storage.job_repository import JobRepository
 from backend.app.domain.quality import QualityCollector, current_quality
 from backend.app.storage.collection_repository import CollectionRepository, current_collection, recover_abandoned
+from backend.app.domain.cancellation import current_cancellation, check_cancelled
 
 
 # One collection executes at a time in this process; this is not a distributed queue.
 _JOB_LOCK = RLock()
+_CANCEL_LOCK = RLock()
 
 
 class JobNotFoundError(Exception):
@@ -94,7 +97,52 @@ class DownloadJobService:
 
     def run_job(self, job_id: str) -> None:
         with _JOB_LOCK:
-            self._run_job_locked(job_id)
+            last_check, cancelled = float('-inf'), False
+            def is_cancelled():
+                nonlocal last_check, cancelled
+                now = monotonic()
+                if now-last_check >= .1:
+                    stored_job = self._repository.get(job_id)
+                    cancelled = stored_job is None or stored_job.status in {'cancelling','cancelled'}
+                    last_check = now
+                return cancelled
+            token = current_cancellation.set(is_cancelled)
+            try:
+                self._run_job_locked(job_id)
+            except JobNotFoundError:
+                # A queued background callback may outlive cancellation/deletion.
+                return
+            finally:
+                try:
+                    # Cover cancellation racing with the success/error finalizer.
+                    stored_job = self._repository.get(job_id)
+                    if stored_job is not None and stored_job.status == 'cancelling':
+                        self._finish_cancelled(job_id)
+                finally:
+                    current_cancellation.reset(token)
+
+    def cancel_job(self, job_id):
+        with _CANCEL_LOCK:
+            return self._cancel_job_locked(job_id)
+
+    def _cancel_job_locked(self, job_id):
+        self.get_job(job_id)
+        job = self._repository.request_cancel(job_id)
+        if self.collections and job.status in {'cancelled', 'cancelling'}:
+            self.collections.set_cancel_state(job_id, job.status)
+            if job.status == 'cancelled':
+                self._finish_cancelled(job_id)
+        return self.get_job(job_id)
+
+    def _finish_cancelled(self, job_id):
+        with _CANCEL_LOCK:
+            self._finish_cancelled_locked(job_id)
+
+    def _finish_cancelled_locked(self, job_id):
+        if self.collections:
+            self._finish_collection(job_id, None, error='Cancelled by user; previously imported data retained.')
+            self.collections.set_cancel_state(job_id, 'cancelled')
+        self._repository.mark_cancelled(job_id)
 
     def _run_job_locked(self, job_id: str) -> None:
         job = self.get_job(job_id)
@@ -130,6 +178,7 @@ class DownloadJobService:
             try:
                 artifact = download(variable=job.variable, **spatial, start_date=job.start_date,
                                     end_date=job.end_date, frequency=job.frequency)
+                check_cancelled()
                 if collector is not None and (collector.report.rows_read or collector.report.issue_count) and not collector.report.imported_values:
                     raise ValueError("No valid observations were imported; original files were preserved.")
                 if job.collection_id:
@@ -151,6 +200,9 @@ class DownloadJobService:
             if job.source is not None and artifact.dataset != job.dataset:
                 raise ValueError("Provider returned a different dataset than the recorded collection source.")
         except Exception as exc:
+            if self.get_job(job_id).status in {'cancelling', 'cancelled'}:
+                self._finish_cancelled(job_id)
+                return
             if job.collection_id:
                 self._finish_collection(job_id, None, error=self._safe_error(exc))
             self._mark_failed_or_raise(job_id=job_id, error=self._safe_error(exc))
@@ -163,6 +215,8 @@ class DownloadJobService:
 
         try:
             self._repository.mark_completed(job_id=job_id, artifact=artifact)
+            if self.get_job(job_id).status in {'cancelling','cancelled'}:
+                self._finish_cancelled(job_id)
         except Exception as exc:
             self._mark_failed_or_raise(
                 job_id=job_id,

@@ -32,7 +32,7 @@ class JobRepository:
             "dataset": dataset, "variables": retrieval_variables or []}, sort_keys=True).encode()).hexdigest()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            active = connection.execute("SELECT * FROM download_jobs WHERE request_key=? AND status IN ('queued','running') ORDER BY created_at LIMIT 1",
+            active = connection.execute("SELECT * FROM download_jobs WHERE request_key=? AND status IN ('queued','running','cancelling') ORDER BY created_at LIMIT 1",
                                         (fingerprint,)).fetchone()
             if active is not None:
                 return self._row_to_job(active)
@@ -96,10 +96,25 @@ class JobRepository:
             return connection.execute("UPDATE download_jobs SET status='running',updated_at=? WHERE job_id=? AND status='queued'",
                                       (self._now().isoformat(), job_id)).rowcount == 1
 
+    def request_cancel(self, job_id):
+        with self._connect() as c:
+            c.execute("""UPDATE download_jobs SET
+                status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancelling' END,
+                updated_at=?, completed_at=CASE WHEN status='queued' THEN ? ELSE NULL END
+                WHERE job_id=? AND status IN ('queued','running')""",
+                (self._now().isoformat(), self._now().isoformat(), job_id))
+        return self.get(job_id)
+
+    def mark_cancelled(self, job_id):
+        with self._connect() as c:
+            c.execute("UPDATE download_jobs SET status='cancelled',updated_at=?,completed_at=?,progress=0 WHERE job_id=? AND status IN ('queued','running','cancelling')",
+                      (self._now().isoformat(),self._now().isoformat(),job_id))
+        return self.get(job_id)
+
     def abandoned_ids(self):
         from backend.app.services.worker_identity import process_identity
         with self._connect() as c:
-            rows = c.execute("SELECT job_id,worker_pid,worker_identity FROM download_jobs WHERE status IN ('queued','running')").fetchall()
+            rows = c.execute("SELECT job_id,worker_pid,worker_identity FROM download_jobs WHERE status IN ('queued','running','cancelling')").fetchall()
         return [r['job_id'] for r in rows if r['worker_pid'] and r['worker_identity'] and
                 (identity := process_identity(r['worker_pid'])) is not None and identity != r['worker_identity']]
 
@@ -116,7 +131,7 @@ class JobRepository:
                 UPDATE download_jobs
                 SET status = ?, progress = ?, updated_at = ?, completed_at = ?,
                     dataset = ?, file_path = ?, error = NULL
-                WHERE job_id = ?
+                WHERE job_id = ? AND status NOT IN ('cancelling','cancelled')
                 """,
                 (
                     DownloadJobStatus.COMPLETED.value,
@@ -154,7 +169,7 @@ class JobRepository:
                 """
                 UPDATE download_jobs
                 SET status = ?, progress = ?, updated_at = ?, completed_at = ?, error = ?
-                WHERE job_id = ?
+                WHERE job_id = ? AND status NOT IN ('cancelling','cancelled')
                 """,
                 (
                     status.value,

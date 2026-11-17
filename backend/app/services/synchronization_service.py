@@ -159,7 +159,7 @@ class SynchronizationService:
                 error=f"Related download job '{state.job_id}' was not found.",
             )
 
-        if job.status in {DownloadJobStatus.QUEUED, DownloadJobStatus.RUNNING}:
+        if job.status in {DownloadJobStatus.QUEUED, DownloadJobStatus.RUNNING, DownloadJobStatus.CANCELLING}:
             return state
 
         if job.status == DownloadJobStatus.COMPLETED:

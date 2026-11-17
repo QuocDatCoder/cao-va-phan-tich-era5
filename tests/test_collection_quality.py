@@ -38,6 +38,49 @@ def land_rows():
     return [[str(datetime(2025, 1, 1)+timedelta(hours=h)), "300", "295", "3", "4", ".001", "2000000", "10.8", "106.7"] for h in range(24)]
 
 
+@pytest.mark.parametrize('suspect_hours', [(0,), tuple(range(24))], ids=['one-cell', 'whole-column'])
+def test_land_suspect_temperature_units_keep_values_and_durable_warnings(collection, suspect_hours):
+    rows = land_rows()
+    for hour in suspect_hours:
+        rows[hour][1:3] = ['25', '20']
+    text = 'valid_time,t2m,d2m,u10,v10,tp,ssrd,latitude,longitude\n' + '\n'.join(','.join(row) for row in rows)
+    job, client = collect(collection, 'land', text)
+    assert job.status.value == 'completed'
+    assert job.quality.status == 'warnings' and not job.quality.complete
+    assert job.quality.issue_counts == {'suspicious_value': 2 * len(suspect_hours)}
+    assert job.quality.valid_values == job.quality.imported_values == 144
+    settings = collection[0]
+    restarted = JobRepository(settings.job_metadata_db_path).get(job.job_id)
+    assert restarted.quality == job.quality
+    from backend.app.storage.collection_repository import CollectionRepository
+    snapshots = CollectionRepository(settings.climate_data_db_path, read_only=True)
+    entry = snapshots.get(job.job_id)
+    assert entry['status'] == 'complete'  # Hourly coverage is distinct from quality.
+    assert entry['summary']['quality']['status'] == 'warnings'
+    issues = snapshots.issues(job.job_id)['issues']
+    assert len(issues) == 2 * len(suspect_hours)
+    assert {i['variable'] for i in issues} == {'2m_temperature', '2m_dewpoint_temperature'}
+    for issue in issues:
+        assert issue['code'] == 'suspicious_value'
+        assert issue['source_file'] and issue['row_number'] >= 2 and issue['time_utc']
+        assert 'Kelvin' in issue['message'] and 'Original value retained' in issue['message']
+    with sqlite3.connect(settings.climate_data_db_path) as db:
+        value = db.execute("SELECT value FROM collection_observations WHERE collection_id=? AND variable='2m_temperature' ORDER BY time_utc LIMIT 1", (job.job_id,)).fetchone()[0]
+        assert value == 25  # Never guess Celsius or add 273.15 during import.
+    payload = client.get(f'/api/v1/collections/{job.job_id}/timeseries').json()
+    assert payload['data'][0]['value'] == pytest.approx(-248.15)
+    assert payload['collection_quality']['status'] == 'warnings'
+    details = client.get(f'/api/v1/jobs/{job.job_id}/quality').json()
+    assert details['total'] == len(issues)
+
+
+def test_land_kelvin_temperatures_do_not_trigger_unit_warning(collection):
+    text = 'valid_time,t2m,d2m,u10,v10,tp,ssrd,latitude,longitude\n' + '\n'.join(','.join(row) for row in land_rows())
+    job, _ = collect(collection, 'land', text)
+    assert job.status.value == 'completed'
+    assert job.quality.status == 'passed' and job.quality.issue_count == 0
+
+
 @pytest.mark.parametrize("problem,code,valid", [
     ("empty_cell", "missing_value", 143), ("nan", "nonfinite_value", 143),
     ("bad_time", "invalid_time", 138), ("missing_column", "missing_column", 120),

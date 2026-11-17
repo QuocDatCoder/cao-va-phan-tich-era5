@@ -27,6 +27,8 @@ def capture(connection, records):
     context = current_collection.get()
     if context is None:
         return
+    from backend.app.domain.cancellation import check_cancelled
+    check_cancelled()
     collection_id, dataset = context
     for record in records:
         # Normalize binary float noise only in the new snapshot, preserving legacy cache keys.
@@ -142,12 +144,12 @@ class CollectionRepository(ClimateRepository):
             entry = c.execute('SELECT job_id,status FROM collections WHERE id=?', (collection_id,)).fetchone()
             if entry is None:
                 raise LookupError('Bộ dữ liệu không còn tồn tại.')
-            if entry['status'] in {'queued', 'running'}:
+            if entry['status'] in {'queued', 'running', 'cancelling'}:
                 raise ValueError('Không thể xóa bộ dữ liệu đang chờ hoặc đang thu thập.')
             job_id = entry['job_id']
             if jobs_schema:
                 job = c.execute(f'SELECT status FROM {jobs_schema}.download_jobs WHERE job_id=?', (job_id,)).fetchone()
-                if job and job['status'] in {'queued', 'running'}:
+                if job and job['status'] in {'queued', 'running', 'cancelling'}:
                     raise ValueError('Không thể xóa khi tác vụ vẫn đang chờ hoặc đang chạy.')
                 c.execute(f'DELETE FROM {jobs_schema}.download_quality_issues WHERE job_id=?', (job_id,))
                 c.execute(f'DELETE FROM {jobs_schema}.download_jobs WHERE job_id=?', (job_id,))
@@ -196,10 +198,14 @@ class CollectionRepository(ClimateRepository):
             c.execute("UPDATE collections SET status='running',worker_pid=?,worker_identity=? WHERE id=? AND status='queued'",
                       (os.getpid(),process_identity(os.getpid()),collection_id))
 
+    def set_cancel_state(self, collection_id, state):
+        with self._connect() as c:
+            c.execute('UPDATE collections SET status=? WHERE id=?', (state,collection_id))
+
     def abandoned(self):
         from backend.app.services.worker_identity import process_identity
         with self._connect() as c:
-            rows=c.execute("SELECT id,worker_pid,worker_identity FROM collections WHERE status IN ('queued','running')").fetchall()
+            rows=c.execute("SELECT id,worker_pid,worker_identity FROM collections WHERE status IN ('queued','running','cancelling')").fetchall()
         return [r['id'] for r in rows if r['worker_pid'] and r['worker_identity'] and
                 (identity := process_identity(r['worker_pid'])) is not None and identity != r['worker_identity']]
 
@@ -286,5 +292,11 @@ def recover_abandoned(collections, jobs):
             jobs.save_quality(collection_id,job.quality)
         if collections.get(collection_id):
             collections.finish(collection_id,issues,job.quality.model_dump(mode='json') if job.quality else None,error=message)
-            collections.interrupted(collection_id)
-        jobs.mark_failed(collection_id,message)
+            if job.status == 'cancelling':
+                collections.set_cancel_state(collection_id,'cancelled')
+            else:
+                collections.interrupted(collection_id)
+        if job.status == 'cancelling':
+            jobs.mark_cancelled(collection_id)
+        else:
+            jobs.mark_failed(collection_id,message)

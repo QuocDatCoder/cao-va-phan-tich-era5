@@ -41,6 +41,8 @@ def render_dashboard():
         </style>
         <div class="era5-brand" role="heading" aria-level="1">ERA5 · Dữ liệu khí hậu</div>
     """)
+    from frontend.ai_chat import render_ai_chat
+    render_ai_chat(client(None))
     render_workspace()
 
 
@@ -81,7 +83,7 @@ def render_workspace():
         restoring = (st.session_state.get('rendered_workflow_section') is None
                      and st.query_params.get(prefix+'_mode') == 'details'
                      and bool(st.query_params.get(prefix+'_applied')))
-        if not st.session_state.get(prefix+'_open_requested'):
+        if not st.session_state.get(prefix+'_open_requested') and not st.session_state.get(prefix+'_action_open'):
             if prefix+'_details_visible' not in st.session_state:
                 st.session_state[prefix+'_details_visible'] = restoring
                 st.session_state[prefix+'_library_cards'] = not restoring
@@ -234,8 +236,8 @@ def render_collection():
         variable = VARIABLES[st.selectbox("Biến khí hậu", list(VARIABLES), key="collect_variable",
             help="Land thu thập cả sáu biến gốc trong một lần. ERA5 thu thập biến đang chọn.")]
         left, right = st.columns(2)
-        start = left.date_input("Ngày bắt đầu (UTC+7)", value=date(2025, 1, 1), key="collect_start")
-        end = right.date_input("Ngày kết thúc (UTC+7)", value=date(2025, 1, 1), key="collect_end")
+        start = left.date_input("Ngày bắt đầu (UTC+7)", value=None if 'collect_start' in st.session_state else date(2025, 1, 1), key="collect_start")
+        end = right.date_input("Ngày kết thúc (UTC+7)", value=None if 'collect_end' in st.session_state else date(2025, 1, 1), key="collect_end")
         if source in {"land", "mock"}:
             point = point_inputs("collect")
         else:

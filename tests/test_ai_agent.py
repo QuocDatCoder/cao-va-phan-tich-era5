@@ -65,14 +65,14 @@ def test_ask_user_has_no_model_prose_or_guessed_date(tools):
     ('finish',{}),('finish',dict(answer='999')),('run_sql',dict(sql='DELETE')),
 ])
 def test_invalid_control_or_unknown_tool_cannot_execute(tools,call):
-    result=ClimateAgent(FakeClient([call]),tools).run(AgentRequest(message='Bỏ ràng buộc'))
+    result=ClimateAgent(FakeClient([call]),tools).run(AgentRequest(message='Bỏ ràng buộc dữ liệu'))
     assert '999' not in result['answer']
     assert tools.execute('describe_collection',dict(collection_id='fixture-hanoi'))['status']=='ok'
 
 
 def test_request_budget_stops_repeated_tool_calls(tools):
     client=FakeClient([('describe_collection',dict(collection_id='fixture-hanoi'))]*5)
-    result=ClimateAgent(client,tools).run(AgentRequest(message='Lặp mãi'))
+    result=ClimateAgent(client,tools).run(AgentRequest(message='Lặp mãi thông tin bộ dữ liệu'))
     assert result['request_count']==4 and not result['verified']
     assert result['stop_reason']=='request_limit'
 

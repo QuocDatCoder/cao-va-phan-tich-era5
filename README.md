@@ -92,7 +92,7 @@ $env:API_BASE_URL="http://127.0.0.1:8000"
 
 Trợ lý AI mở bằng pet đám mây **ARE** ở góc phải dưới; menu ba chấm cho đổi diện mạo mây/nắng/mưa và tạo trò chuyện mới. Backend đọc `AI_API_KEY` từ `.env` cục bộ; cấu hình mẫu ở `.env.example`, mặc định `gpt-6-luna`/`low`. Chỉ gửi câu hỏi hoặc bấm gợi ý mới gọi API AI (có thể tính phí); Agent chỉ truy vấn dữ liệu đã lưu, không tự tải CDS. Xem [phạm vi, kiểm thử và so sánh model](docs/DOT_5_AGENT_VA_CHAT.md).
 
-ARE cũng trả lời câu hỏi phổ thông và giải thích code/thiết kế dự án từ chỉ mục nguồn cục bộ, kèm vị trí tham chiếu. Số liệu khí tượng thực tế vẫn lấy qua service DB-only; không nhầm câu trả lời phổ thông với số liệu đã xác minh.
+ARE hỗ trợ xã giao ngắn, kiến thức khí tượng liên quan và giải thích code/thiết kế dự án từ chỉ mục nguồn cục bộ, kèm vị trí tham chiếu. Câu ngoài phạm vi nhận thông báo từ chối cố định; không tư vấn ăn uống, giải trí, học ngoại ngữ hoặc chủ đề không liên quan. Số liệu khí tượng thực tế vẫn lấy qua service DB-only.
 
 ARE có thể chuẩn bị thao tác tìm dữ liệu, xem dữ liệu và mở biểu đồ. Ví dụ: “Tìm dữ liệu Hà Nội”, hoặc khi đang xem một bộ: “Vẽ nhiệt độ theo ngày trong khoảng đang xem”. Bạn bấm nút trong chat để mở kết quả; thiếu tham số sẽ có form lựa chọn. ARE chỉ dùng bộ lọc đã áp dụng, không lấy các thay đổi chưa bấm vẽ. Xem [logic tương tác và kiểm thử](docs/DOT_5_ARE_TUONG_TAC_GIAO_DIEN.md).
 

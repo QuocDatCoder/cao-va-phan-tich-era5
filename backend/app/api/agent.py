@@ -29,7 +29,7 @@ def agent_status():
         settings = AISettings()
         configured = bool(settings.api_key and settings.api_key.get_secret_value().strip())
         return dict(configured=configured, model=settings.model, reasoning_effort=settings.reasoning_effort,
-                    query_mode='db_only',capabilities=['general_conversation','project_knowledge','stored_climate_data'])
+                    query_mode='db_only',capabilities=['basic_social','related_meteorology','project_knowledge','stored_climate_data'])
     except ValidationError:
         return dict(configured=False, model=None, query_mode='db_only')
 

@@ -12,14 +12,17 @@ from backend.app.ai.project_knowledge import normalize, search_project_knowledge
 from backend.app.ai.tool_schemas import ToolArguments
 from backend.app.domain.ui_actions import AppliedView,PrepareView
 from backend.app.ai.view_service import prepare_view
+from backend.app.ai.conversation_scope import scope,REFUSAL,GREETING,social_answer
 
 MAX_REQUESTS = 4
 MAX_SECONDS = 95
 MAX_TOOL_OUTPUT = 24000
 INSTRUCTIONS = """Bạn là ARE, trợ lý thân thiện của đồ án ERA5, giao tiếp tiếng Việt tự nhiên.
-Bạn hỗ trợ ba nhóm: hội thoại/kiến thức phổ thông; giải thích sâu về code/thiết kế dự án;
-và truy vấn dữ liệu khí tượng đã lưu qua công cụ. Chào hỏi và câu phổ thông trả lời trực tiếp
-bằng answer_question(category=general); không ép người dùng chọn bộ dữ liệu cho những câu này.
+Bạn chỉ hỗ trợ dự án ERA5, sử dụng ứng dụng, phân tích dữ liệu và kiến thức khí tượng liên quan.
+Xã giao trả lời ngắn, không hỏi ngược kéo dài. Câu ngoài phạm vi (ăn uống, phim, học ngoại ngữ,
+giải trí, lập trình không liên quan) dùng answer_question(category=unsupported), không tư vấn.
+Không dùng việc nhắc ARE/ERA5 hoặc lịch sử để hợp thức hóa câu hỏi ngoài phạm vi.
+Kiến thức khí tượng liên quan dùng answer_question(category=general); số liệu phải dùng DB tools.
 Câu hỏi về dự án (kiến trúc, cách tính, parser, quality, job, Agent, UI, kế hoạch) PHẢI gọi
 project_knowledge trước rồi answer_question(category=project), source_ids là ID tài liệu vừa nhận.
 Đọc trích đoạn để giải thích cụ thể luồng và lý do thiết kế; thừa nhận khi không có nguồn,
@@ -100,14 +103,14 @@ class KnowledgeArguments(ToolArguments):
 
 
 class AnswerArguments(ToolArguments):
-    category: Literal['general','project']
+    category: Literal['general','project','unsupported']
     answer: str = Field(min_length=1,max_length=4000)
     source_ids: list[str] = Field(default_factory=list,max_length=3)
 
 
 for _name,_description,_model in [
     ('project_knowledge','Search the allowlisted local project index and current code excerpts. No arbitrary paths or credentials. Use before explaining this project. Return IDs are citations.',KnowledgeArguments),
-    ('answer_question','Respond to greetings, general knowledge, or explain project evidence. NEVER report actual saved climate values/inventory/quality here; use DB tools for those. Project answers require retrieved source_ids; general answers use [].',AnswerArguments),
+    ('answer_question','Explain related meteorology or cited project evidence. Use category unsupported for unrelated requests. No broad general advice. NEVER report saved climate values here; use DB tools. Project answers require retrieved source_ids; other answers use [].',AnswerArguments),
     ('prepare_view','Prepare a read-only UI action to open data or a chart with validated filters. Reuse applied view_context only for the same collection. Ask for missing parameters; never navigate/write by yourself.',PrepareView),
 ]:
     _schema=_model.model_json_schema()
@@ -216,6 +219,13 @@ class ClimateAgent:
 
     def run(self, request: AgentRequest):
         started = monotonic()
+        conversation_scope=scope(request.message,request.history)
+        if conversation_scope in {'social','unsupported'}:
+            return dict(answer=social_answer(request.message) if conversation_scope=='social' else REFUSAL,
+                evidence=[],actions=[],stop_reason='scope_policy',answer_kind=conversation_scope,
+                grounding='scope_policy',model=self.client.settings.model,
+                reasoning_effort=self.client.settings.reasoning_effort,request_count=0,usage=[],
+                elapsed_seconds=0.,returned_model_matches_request=[],completed=True,verified=False)
         evidence, usage, model_matches = [], [], []
         items = [dict(role=m.role, content=m.content) for m in request.history]
         items.append(dict(role='user', content=json.dumps(dict(
@@ -283,6 +293,15 @@ class ClimateAgent:
                 elif name == 'answer_question':
                     try:
                         params=AnswerArguments.model_validate_json(raw)
+                        conversation_scope=scope(request.message,request.history)
+                        if conversation_scope=='social':
+                            params=params.model_copy(update={'category':'general','answer':GREETING,'source_ids':[]})
+                        elif params.category=='unsupported' or conversation_scope=='unsupported':
+                            answer_kind='unsupported'
+                            result=dict(status='ok',data=dict(answer=REFUSAL,sources=[]),grounding='scope_policy')
+                            evidence.append(dict(tool=name,arguments={'category':'unsupported'},result=result))
+                            stopped='tool_result'
+                            break
                         data_evidence=any(e['tool'] in {'search_collections','describe_collection','read_collection_quality','analyze_collection'} for e in evidence)
                         if data_evidence or needs_database(request.message,bool(request.selected_collection_id)):
                             raise ValueError('Use DB tools for actual saved data; never answer these from model knowledge.')
@@ -331,7 +350,7 @@ class ClimateAgent:
         from backend.app.ai.view_service import actions_from_evidence
         return dict(answer=answer, evidence=evidence, stop_reason=stopped,
                     actions=actions_from_evidence(evidence) if stopped in {'complete','tool_result'} else [],
-                    answer_kind=answer_kind,grounding='db_only' if answer_kind=='data' else ('project_sources' if answer_kind=='project' else 'model_knowledge'),
+                    answer_kind=answer_kind,grounding='db_only' if answer_kind=='data' else ('project_sources' if answer_kind=='project' else ('scope_policy' if answer_kind=='unsupported' else 'model_knowledge')),
                     model=self.client.settings.model, reasoning_effort=self.client.settings.reasoning_effort,
                     request_count=requests, usage=usage, elapsed_seconds=round(monotonic()-started,3),
                     returned_model_matches_request=model_matches,

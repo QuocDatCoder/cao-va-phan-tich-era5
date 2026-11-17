@@ -9,14 +9,10 @@ import streamlit as st
 
 VARIABLES = {
     "Nhiệt độ": "temperature",
-    "Nhiệt độ 2m": "2m_temperature",
     "Lượng mưa": "precipitation",
-    "Tổng lượng mưa": "total_precipitation",
-    "Điểm sương 2m": "dewpoint",
-    "Tốc độ gió 10m": "wind_speed",
-    "Hướng gió 10m": "wind_direction",
-    "Thành phần gió u (Đông–Tây)": "wind_u",
-    "Thành phần gió v (Bắc–Nam)": "wind_v",
+    "Điểm sương": "dewpoint",
+    "Tốc độ gió": "wind_speed",
+    "Hướng gió": "wind_direction",
     "Bức xạ mặt trời": "solar_radiation",
 }
 

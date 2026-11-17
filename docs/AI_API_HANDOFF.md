@@ -1,5 +1,25 @@
 # Bàn giao API dữ liệu cho nhóm AI Agent
 
+## Hợp đồng cho Agent đợt 5 — ưu tiên tài liệu này
+
+Agent mới chỉ dùng **SQLite-only theo collection**, không dùng API `/api/v1/climate/...` hoặc synchronization để tự tải phần thiếu. Các phần legacy phía dưới mô tả API cũ và không phải danh sách tool được phép của Agent mới.
+
+| GET | Công dụng |
+|---|---|
+| `/api/v1/collections` | Tìm bộ đã lưu (`search`, `limit`, `offset`) |
+| `/api/v1/collections/{id}` | Metadata, nguồn, biến, điểm lưới, summary và artifact |
+| `/api/v1/collections/{id}/quality` | Cảnh báo có phân trang |
+| `/api/v1/collections/{id}/timeseries` | Chuỗi giờ đã lưu |
+| `/api/v1/collections/{id}/statistics` | Thống kê phần đã lưu |
+| `/api/v1/collections/{id}/aggregate` | Tổng hợp theo chu kỳ |
+| `/api/v1/collections/{id}/trend` | Trend khi đủ điều kiện |
+| `/api/v1/collections/{id}/heatmap` | Tổng hợp tháng kèm cờ kỳ chưa trọn |
+| `/api/v1/collections/{id}/map` | Giá trị tại đúng điểm lưới được chọn |
+
+Mỗi tool query nhận collection ID, biến thuộc bộ, điểm lưới thực và khoảng nằm trong yêu cầu gốc. Kiểm tra `coverage`, `complete`, `missing_ranges`, `undefined_count`, `collection_quality` và `partial_period` trước khi diễn giải. `statistics` của mưa là thống kê các quan sát, không tự hiểu mean thành tổng mưa. Tổng mưa/bức xạ cần aggregate, kiểm tra giờ biên và coverage. Dataset ERA5 hỗ trợ cả đất liền và biển, không phải bộ lọc chỉ biển. Không trộn các bộ vì trùng tọa độ.
+
+Chưa có anomaly/compare DB-only theo collection. Không cho mô hình viết SQL, gọi command hoặc tạo/hủy/xóa job tự do. Khi thiếu dữ liệu, giải thích và dẫn người dùng sang Thu thập; không tự gọi CDS. Adapter mô hình và danh sách tool cụ thể triển khai ở đợt 5, hiện chưa có chatbot hoàn chỉnh.
+
 ## Phạm vi phiên bản tích hợp
 
 Nhóm AI có thể bắt đầu tích hợp các chức năng nhiệt độ, điểm sương, lượng mưa, gió và bức xạ,

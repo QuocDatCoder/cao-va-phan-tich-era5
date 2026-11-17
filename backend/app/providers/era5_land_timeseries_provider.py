@@ -28,6 +28,7 @@ from backend.app.domain.schemas import (
 )
 from backend.app.domain.time_utils import to_utc_naive, hourly_timestamps
 from backend.app.domain.quality import current_quality
+from backend.app.domain.cancellation import check_cancelled
 from backend.app.domain.wind import DERIVED_WIND_UNITS
 from backend.app.providers.era5_provider import (
     _CDS_LOCK,
@@ -51,6 +52,8 @@ TIME_COLUMNS = ("valid_time", "time", "datetime", "date")
 LAT_COLUMNS = ("latitude", "lat")
 LON_COLUMNS = ("longitude", "lon")
 TEMPERATURE_VARIABLES = ("2m_temperature", "2m_dewpoint_temperature")
+# Existing unit-mismatch heuristic, not a meteorological validity bound.
+TEMPERATURE_UNIT_SUSPECT_BELOW_K = 100
 ALL_VARIABLES_NAME = "all_variables"
 
 
@@ -238,7 +241,7 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
 
         for cds_name in TEMPERATURE_VARIABLES:
             values = [p.value for p in series.get(cds_name, {}).values()]
-            if current_quality.get() is None and values and max(values) < 100:
+            if current_quality.get() is None and values and max(values) < TEMPERATURE_UNIT_SUSPECT_BELOW_K:
                 raise ClimateDataError(
                     f"'{cds_name}' values look like °C, but Kelvin was expected. "
                     "Check the units of the downloaded CSV before using it."
@@ -301,6 +304,7 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
         for cds_name in value_cols:
             series.setdefault(cds_name, {})
         for row in reader:
+            check_cancelled()
             row_number = numbered[min(reader.line_num - 1, len(numbered)-1)][0]
             if quality is not None:
                 quality.report.rows_read += 1
@@ -351,6 +355,17 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
                         continue
                 elif quality is not None:
                     quality.report.valid_values += 1
+                if (quality is not None and cds_name in TEMPERATURE_VARIABLES
+                        and raw < TEMPERATURE_UNIT_SUSPECT_BELOW_K):
+                    quality.issue(
+                        "suspicious_value",
+                        f"temperature_unit_suspect_below_100K: source value {raw:g} "
+                        f"is below {TEMPERATURE_UNIT_SUSPECT_BELOW_K} K; Kelvin is expected "
+                        "for ERA5-Land temperature/dewpoint. Possible unit mismatch, "
+                        "not confirmed Celsius. Original value retained without conversion; "
+                        "verify source units before interpreting this observation.",
+                        **details,
+                    )
                 points[stamp] = point
 
     @staticmethod

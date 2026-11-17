@@ -170,6 +170,7 @@ class DownloadJobStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    CANCELLING = "cancelling"
 
 
 class DownloadRequest(BaseModel):

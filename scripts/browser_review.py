@@ -83,9 +83,50 @@ def main():
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(f'http://127.0.0.1:{ui_port}/?'+urllib.parse.urlencode({'view':'D\u1eef li\u1ec7u \u0111\u00e3 l\u01b0u'}))
+            if '--headers-only' in sys.argv:
+                nav=page.locator('.st-key-workflow_section')
+                measurements=[]
+                for width in [1280,620,390]:
+                    page.set_viewport_size(dict(width=width,height=900))
+                    positions=[]
+                    for tab,title in [('Thu thập','Thu thập'),('Kho dữ liệu','Dữ liệu đã lưu'),('Biểu đồ','Biểu đồ')]:
+                        before=finished[0]
+                        nav.get_by_text(tab,exact=True).click()
+                        wait_done(before)
+                        heading=page.locator('.st-key-workflow_section_header').get_by_role('heading',name=title,exact=True)
+                        expect(heading).to_be_visible()
+                        a,b=nav.bounding_box(),heading.bounding_box()
+                        positions.append(dict(title=title,x=b['x'],offset=b['y']-a['y']-a['height']))
+                    assert max(p['offset'] for p in positions)-min(p['offset'] for p in positions)<1,positions
+                    assert max(p['x'] for p in positions)-min(p['x'] for p in positions)<1,positions
+                    measurements.append(dict(width=width,positions=positions))
+                    page.screenshot(path=str(OUT/f'headers-{width}.png'),full_page=True)
+                (OUT/'result.json').write_text(json.dumps(dict(passed=True,measurements=measurements),ensure_ascii=False,indent=2),encoding='utf-8')
+                browser.close()
+                print(json.dumps(dict(passed=True,output=str(OUT),scope='headers-only')))
+                return
             page.get_by_role('button',name='Xem d\u1eef li\u1ec7u',exact=True).click(timeout=30000)
             export = page.get_by_role('button',name='T\u1ea3i CSV',exact=True)
             export.wait_for()
+            if '--search-only' in sys.argv:
+                page.get_by_role('textbox',name='Tìm bộ dữ liệu đã lưu',exact=True).fill('mock')
+                before_search=finished[0]
+                page.get_by_role('button',name='Tìm dữ liệu',exact=True).click()
+                wait_done(before_search)
+                expect(page.locator('.st-key-stored_library_cards details')).to_have_attribute('open', '')
+                before_clear=finished[0]
+                page.get_by_role('button',name='Xóa tìm kiếm',exact=True).click()
+                wait_done(before_clear)
+                expect(page.locator('.st-key-stored_library_cards details')).to_have_attribute('open', '')
+            page.reload()
+            export.wait_for()
+            page.get_by_role('button',name='Quay lại danh sách',exact=True).click()
+            expect(export).to_have_count(0)
+            page.get_by_role('button',name='Xem d\u1eef li\u1ec7u',exact=True).click()
+            export.wait_for()
+            expect(page.locator('.st-key-stored_library_cards details')).not_to_have_attribute('open', '')
+            detail = page.locator('.st-key-stored_collection_detail')
+            page.wait_for_function("() => { const el = document.querySelector('.st-key-stored_collection_detail'); return el && el.getBoundingClientRect().top >= 50 && el.getBoundingClientRect().top < 160; }")
             with page.expect_download() as download:
                 export.click()
             download.value.save_as(str(OUT/'download.csv'))
@@ -97,9 +138,37 @@ def main():
             page.get_by_role('button',name='V\u1ebd bi\u1ec3u \u0111\u1ed3 t\u1eeb d\u1eef li\u1ec7u n\u00e0y',exact=True).click()
             wait_done(before)
             page.locator('.js-plotly-plot').wait_for()
+            plot = page.locator('.js-plotly-plot')
+            if '--search-only' in sys.argv:
+                page.get_by_role('textbox',name='Tìm bộ dữ liệu đã lưu',exact=True).fill('mock')
+                before_search=finished[0]
+                page.get_by_role('button',name='Tìm dữ liệu',exact=True).click()
+                wait_done(before_search)
+                expect(page.locator('.st-key-chart_library_cards details')).to_have_attribute('open', '')
+                before_clear=finished[0]
+                page.get_by_role('button',name='Xóa tìm kiếm',exact=True).click()
+                wait_done(before_clear)
+                result = dict(passed=True, checks=['search opens stored library', 'clear opens stored library', 'search opens chart library', 'clear search'])
+                (OUT/'result.json').write_text(json.dumps(result),encoding='utf-8')
+                browser.close()
+                print(json.dumps(dict(passed=True, output=str(OUT), scope='search-only')))
+                return
+            filters = page.locator('.st-key-chart_filters_'+cid+' details')
+            expect(filters).not_to_have_attribute('open', '')
+            before_open = finished[0]
+            page.get_by_text('Bộ lọc biểu đồ',exact=True).click()
+            wait_done(before_open)
+            draw = page.get_by_role('button',name='Vẽ dữ liệu đã chọn',exact=True)
+            assert draw.bounding_box()['y'] < plot.bounding_box()['y']
+            expect(page.get_by_text('Từ ngày (UTC+7)',exact=True)).to_be_visible()
             for label in ['Ng\u00e0y','Th\u00e1ng','N\u0103m']:
+                filters = page.locator('.st-key-chart_filters_'+cid+' details')
+                if filters.get_attribute('open') is None:
+                    before_open = finished[0]
+                    page.get_by_text('Bộ lọc biểu đồ',exact=True).click()
+                    wait_done(before_open)
+                    expect(filters).to_have_attribute('open', '')
                 page.get_by_role('combobox',name='Chu k\u1ef3',exact=True).click()
-                page.get_by_role('combobox',name='Chu k\u1ef3',exact=True).press('ArrowDown')
                 try:
                     page.get_by_role('option',name=label,exact=True).click(timeout=5000)
                 except Exception:
@@ -110,15 +179,29 @@ def main():
                 page.get_by_role('button',name='V\u1ebd d\u1eef li\u1ec7u \u0111\u00e3 ch\u1ecdn',exact=True).click()
                 wait_done(before)
                 page.locator('.js-plotly-plot').wait_for()
+                expect(filters).not_to_have_attribute('open', '')
+                page.wait_for_timeout(300)
+                (OUT/'chart-position.json').write_text(json.dumps(page.locator('.js-plotly-plot').bounding_box()),encoding='utf-8')
+                page.screenshot(path=str(OUT/'chart-position.png'),full_page=True)
+                page.wait_for_function("() => { const el = document.querySelector('.st-key-chart_collection_detail'); return el && el.getBoundingClientRect().top >= 50 && el.getBoundingClientRect().top < 160; }")
+                page.screenshot(path=str(OUT/'chart-collapsed.png'),full_page=True)
             page.get_by_text('B\u1ea3ng d\u1eef li\u1ec7u v\u00e0 t\u1ea3i CSV',exact=True).click()
             page.get_by_role('button',name='T\u1ea3i b\u1ea3ng d\u1eef li\u1ec7u (CSV)',exact=True).wait_for()
             page.screenshot(path=str(OUT/'chart.png'),full_page=True)
+            nav = page.locator('.st-key-workflow_section')
+            nav.get_by_text('Kho dữ liệu',exact=True).click()
+            export.wait_for()
+            nav.get_by_text('Biểu đồ',exact=True).click()
+            page.locator('.js-plotly-plot').wait_for()
             page.reload()
             page.locator('.js-plotly-plot').wait_for()
             nav = page.locator('.st-key-workflow_section')
             nav.get_by_text('Kho d\u1eef li\u1ec7u',exact=True).click()
+            expect(export).to_have_count(0)
+            page.get_by_role('button',name='Xem d\u1eef li\u1ec7u',exact=True).click()
             export.wait_for()
             page.set_viewport_size(dict(width=390,height=900))
+            page.wait_for_timeout(1600)
             heading = page.get_by_role('heading',name='D\u1eef li\u1ec7u \u0111\u00e3 l\u01b0u',exact=True)
             heading.scroll_into_view_if_needed()
             refresh = page.get_by_role('button',name='L\u00e0m m\u1edbi',exact=True)

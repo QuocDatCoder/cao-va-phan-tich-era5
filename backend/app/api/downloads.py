@@ -9,6 +9,11 @@ from backend.app.services.download_job_service import DownloadJobService
 router = APIRouter(tags=["downloads"])
 
 
+@router.post('/api/v1/jobs/{job_id}/cancel', response_model=DownloadJob)
+def cancel_download(job_id: str, service: Annotated[DownloadJobService, Depends(get_download_job_service)]):
+    return service.cancel_job(job_id)
+
+
 @router.get("/api/v1/jobs")
 def list_jobs(service: Annotated[DownloadJobService, Depends(get_download_job_service)],
               limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):

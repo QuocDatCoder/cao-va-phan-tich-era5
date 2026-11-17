@@ -1,5 +1,6 @@
 import os
 import json
+from html import escape
 from datetime import UTC, datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Callable
@@ -109,19 +110,103 @@ def _render_collection(client, params):
 
 @st.fragment(run_every=15)
 def _poll_collection(client, context):
+    _render_job_status(client, context)
+
+
+def _show_job_status(job):
+    status = job['status']
+    active = status in {'queued', 'running', 'cancelling'}
+    warnings = status == 'completed' and (job.get('quality') or {}).get('status') in {'warnings', 'failed'}
+    tone = 'warning' if warnings or status == 'queued' else {
+        'running': 'active', 'cancelling': 'warning', 'completed': 'success', 'failed': 'error',
+    }.get(status, 'neutral')
+    title = 'Trạng thái thu thập: ' + _translate_status(status)
+    if warnings:
+        title += ' · Có cảnh báo'
+    descriptions = {
+        'queued': 'Yêu cầu đã được tiếp nhận, đang chờ đến lượt xử lý.',
+        'running': 'Hệ thống đang xử lý yêu cầu thu thập. CDS có thể cần thời gian xếp hàng và tải dữ liệu.',
+        'completed': 'Tác vụ đã kết thúc. Bạn có thể xem dữ liệu đã lưu và báo cáo chất lượng.',
+        'failed': 'Tác vụ đã dừng do lỗi. Xem thông báo bên dưới để biết nguyên nhân.',
+        'cancelling': 'Đã nhận yêu cầu hủy. Đang chờ thao tác mạng hoặc nhập dữ liệu hiện tại dừng an toàn, rồi nhường lượt cho tác vụ tiếp theo.',
+        'cancelled': 'Đã dừng thu thập trên ứng dụng. Phần dữ liệu đã lưu được giữ lại; bạn có thể tạo yêu cầu khác. Không bảo đảm yêu cầu trên CDS đã bị xóa.',
+    }
+    description = descriptions.get(status, 'Xem chi tiết tác vụ bên dưới.')
+    if active:
+        stamp = job.get('_status_checked_at') or datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M:%S')
+        footnote = f'Tự cập nhật mỗi 15 giây · Kiểm tra lúc {stamp} (UTC+7)'
+    else:
+        footnote = 'Có cảnh báo chất lượng cần kiểm tra trước khi sử dụng dữ liệu.' if warnings else 'Bấm Làm mới để kiểm tra lại danh sách tác vụ.'
+    icon = '!' if tone in {'error', 'warning'} else '✓' if tone == 'success' else '•'
+    motion = ' job-state-moving' if active else ''
+    st.html(f"""
+        <style>
+        .job-state {{ --job-accent:#64748b; display:flex; align-items:flex-start;
+            gap:1rem; padding:1.1rem 1.25rem; border-radius:12px;
+            border:1px solid color-mix(in srgb,var(--job-accent) 35%,transparent);
+            border-left:5px solid var(--job-accent);
+            background:color-mix(in srgb,var(--job-accent) 8%,var(--background-color)); }}
+        .job-state-active {{ --job-accent:#0ea5e9; }}
+        .job-state-warning {{ --job-accent:#d97706; }}
+        .job-state-success {{ --job-accent:#16a34a; }}
+        .job-state-error {{ --job-accent:#ef4444; }}
+        .job-state-icon {{ flex:none; display:grid; place-items:center; width:28px;
+            height:28px; margin-top:2px; border-radius:50%; color:var(--job-accent);
+            border:2px solid var(--job-accent); font-size:1.1rem; font-weight:700; }}
+        .job-state-moving .job-state-icon {{ font-size:0;
+            border-color:color-mix(in srgb,var(--job-accent) 20%,transparent);
+            border-top-color:var(--job-accent); animation:job-state-spin 1s linear infinite; }}
+        .job-state strong {{ display:block; font-size:1.12rem; line-height:1.5; }}
+        .job-state p {{ margin:.25rem 0 .65rem; line-height:1.5; }}
+        .job-state small {{ opacity:.75; line-height:1.5; }}
+        @keyframes job-state-spin {{ to {{ transform:rotate(360deg); }} }}
+        @media(prefers-reduced-motion:reduce) {{ .job-state-moving .job-state-icon {{ animation:none; }} }}
+        @media(max-width:640px) {{ .job-state {{ padding:1rem; gap:.75rem; }} }}
+        </style>
+        <div class="job-state job-state-{tone}{motion}" role="status" aria-live="polite" aria-atomic="true">
+            <span class="job-state-icon" aria-hidden="true">{icon}</span>
+            <div><strong>{escape(title)}</strong><p>{escape(description)}</p><small>{escape(footnote)}</small></div>
+        </div>
+    """)
+
+
+def _cancel_selected_job(client, job_id):
+    try:
+        client.cancel_job(job_id)
+        from frontend.library import invalidate_reads, invalidate_job_list
+        invalidate_reads()
+        invalidate_job_list()
+        st.session_state.pop('cancel_job_error', None)
+    except DashboardApiError as exc:
+        st.session_state['cancel_job_error'] = (job_id, str(exc))
+
+
+def _render_job_status(client, context, job=None):
+    """Render inside the caller's fragment, without registering another timer."""
     job_id = st.session_state.get("collection_jobs", {}).get(context)
     if not job_id:
         return
     try:
         statuses = st.session_state.setdefault('observed_job_statuses', {})
         previous_status = statuses.get(job_id)
-        if previous_status in {'completed', 'failed'}:
+        if job is not None:
+            pass
+        elif previous_status in {'completed', 'failed', 'cancelled'}:
             from frontend.library import cached_read
             job = cached_read(client, 'get_job', job_id)
         else:
             job = client.get_job(job_id)
         statuses[job_id] = job['status']
-        st.write("Trạng thái thu thập: " + _translate_status(job["status"]))
+        _show_job_status(job)
+        if job['status'] in {'queued', 'running', 'cancelling'}:
+            st.button('Đang hủy tác vụ' if job['status'] == 'cancelling' else 'Hủy tác vụ',
+                      key='cancel_job_'+job_id, icon=':material/stop_circle:',
+                      disabled=job['status'] == 'cancelling',
+                      on_click=_cancel_selected_job, args=(client,job_id))
+            st.caption('Hủy sẽ dừng xử lý cục bộ và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để dừng; yêu cầu phía CDS có thể vẫn tồn tại.')
+        cancel_error = st.session_state.get('cancel_job_error')
+        if cancel_error and cancel_error[0] == job_id:
+            st.error(cancel_error[1])
         with st.expander("Chi tiết nguồn và biến"):
             st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
             if job.get("retrieval_variables"):
@@ -135,12 +220,17 @@ def _poll_collection(client, context):
             if report.open:
                 with report:
                     st.json(quality)
-                    details = client.get_job_quality(job_id)
+                    key = (job_id, json.dumps(quality, sort_keys=True))
+                    previous = st.session_state.get('displayed_job_quality')
+                    if previous is None or previous[0] != key or monotonic()-previous[1] >= 15:
+                        previous = (key, monotonic(), client.get_job_quality(job_id))
+                        st.session_state['displayed_job_quality'] = previous
+                    details = previous[2]
                     st.caption(f"Hiển thị {len(details['issues'])}/{details['total']} cảnh báo đầu tiên.")
                     if details["issues"]:
                         st.dataframe(details["issues"], hide_index=True)
                     if st.button("Chuẩn bị toàn bộ báo cáo chất lượng", key="prepare_quality_"+job_id,
-                                 disabled=job["status"] in {"queued", "running"}):
+                                 disabled=job["status"] in {"queued", "running", "cancelling"}):
                         st.session_state["quality_export_"+job_id] = json.dumps(
                             client.get_all_job_quality(job_id), ensure_ascii=False, indent=2)
                     if "quality_export_"+job_id in st.session_state:
@@ -149,12 +239,12 @@ def _poll_collection(client, context):
                             mime="application/json", key="download_quality_"+job_id, on_click="ignore")
         if job.get("error"):
             st.error(job["error"])
+        if job["status"] in {'completed', 'failed', 'cancelled'} and previous_status in {'queued', 'running', 'cancelling'}:
+            from frontend.library import invalidate_reads
+            invalidate_reads()
         if job["status"] == "completed" and st.session_state.get("collection_completed") != job_id:
             st.session_state["collection_completed"] = job_id
             _cached_get.clear()
-            # Historical completed jobs do not need to redraw the page on entry.
-            if previous_status in {'queued', 'running'}:
-                st.rerun(scope="app")
     except DashboardApiError as exc:
         st.error(str(exc))
 
@@ -523,6 +613,7 @@ def _translate_status(status: Any) -> str:
         "completed": "Hoàn tất",
         "failed": "Thất bại",
         "cancelled": "Đã hủy",
+        "cancelling": "Đang hủy",
         "up_to_date": "Đã cập nhật đủ",
     }
     return translations.get(str(status), str(status))

@@ -5,6 +5,7 @@ import numpy as np
 import xarray as xr
 
 from backend.app.domain.quality import current_quality
+from backend.app.domain.cancellation import check_cancelled
 from backend.app.domain.time_utils import hourly_timestamps
 
 
@@ -46,6 +47,7 @@ def import_area(provider, path, spec, area, start_date, end_date):
         # Keep time indices only; buffer one grid while choosing first valid cells.
         first = {}
         for i, value in enumerate(data[tc].values):
+            check_cancelled()
             quality.report.rows_read += len(latitudes) * len(longitudes)
             try:
                 stamp = provider._to_datetime(value)
@@ -65,6 +67,7 @@ def import_area(provider, path, spec, area, start_date, end_date):
 
         def records():
             for stamp, indices in first.items():
+                check_cancelled()
                 cells = {}
                 for i in indices:
                     for (a, b), raw in np.ndenumerate(data.isel({tc: i}).values):

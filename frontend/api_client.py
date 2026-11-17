@@ -5,7 +5,9 @@ import requests
 
 
 class DashboardApiError(Exception):
-    pass
+    def __init__(self, message, *, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 DEFAULT_TIMEOUT_SECONDS = 180.0
@@ -51,6 +53,9 @@ class DashboardApiClient:
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/jobs/{job_id}")
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        return self._post(f'/api/v1/jobs/{job_id}/cancel', {})
 
     def get_job_quality(self, job_id: str, offset: int = 0, limit: int = 100) -> dict[str, Any]:
         return self._get(f"/api/v1/jobs/{job_id}/quality", params={"limit": limit, "offset": offset})
@@ -158,7 +163,7 @@ class DashboardApiClient:
                 detail = "Yêu cầu không hợp lệ. Vui lòng kiểm tra bộ lọc đã chọn."
             if not isinstance(detail, str) or not detail:
                 detail = f"Yêu cầu tới máy chủ API thất bại với mã {response.status_code}."
-            raise DashboardApiError(detail)
+            raise DashboardApiError(detail, status_code=response.status_code)
 
         if not isinstance(payload, dict):
             raise DashboardApiError("Máy chủ API trả về phản hồi ngoài dự kiến.")

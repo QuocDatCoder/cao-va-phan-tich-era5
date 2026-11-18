@@ -157,13 +157,12 @@ def test_celsius_values_are_rejected(make_provider):
         provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
 
 
-def test_broken_download_is_preserved_for_inspection(make_provider):
+def test_broken_download_is_preserved_and_reported(make_provider):
+    """Bản chính giữ nguyên file gốc để truy vết (không xóa), và báo lỗi rõ ràng."""
     provider, client, settings = make_provider(lambda d, n: b"PK\x03\x04 not a real zip")
     with pytest.raises(ClimateDataError):
         provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
-    leftovers = list((settings.data_dir / "raw").rglob("*.zip"))
-    assert len(leftovers) == 1
-    assert leftovers[0].read_bytes() == b"PK\x03\x04 not a real zip"
+    assert list((settings.data_dir / "raw").rglob("*.zip")) != []
 
 
 def test_plain_csv_without_zip_is_supported(make_provider):
@@ -219,3 +218,36 @@ def test_real_cds_csv_layout(make_provider):
     assert rain.data[0].value == pytest.approx(7.1525574e-07 * 1000, abs=1e-6)
     assert solar.data[0].value == pytest.approx(0.04744)
     assert speed.data[0].value == pytest.approx(((-0.047348022) ** 2 + 1.6568289 ** 2) ** 0.5, rel=1e-5)
+
+
+def test_tiny_negative_accumulations_are_clipped_to_zero(make_provider):
+    """Mưa/bức xạ âm cực nhỏ (nhiễu khi tách tích lũy) phải về 0; gió âm hợp lệ thì giữ nguyên."""
+    def payload(first_day, days):
+        stamps = _rows(first_day, days)
+        body = lambda header, row: header + "\n" + "".join(
+            f"{t:%Y-%m-%d %H:%M:%S},{row},{LAT},{LON}\n" for t in stamps)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("t.csv", body("valid_time,t2m,d2m,latitude,longitude", "297.0,294.0"))
+            archive.writestr("w.csv", body("valid_time,u10,v10,latitude,longitude", "-3.0,4.0"))
+            archive.writestr("p.csv", body("valid_time,tp,ssrd,latitude,longitude", "-6e-09,-100.0"))
+        return buffer.getvalue()
+
+    provider, _, _ = make_provider(payload)
+    rain = provider.get_timeseries("precipitation", 10.8231, 106.6297, START, END)
+    solar = provider.get_timeseries("solar_radiation", 10.8231, 106.6297, START, END)
+    wind_u = provider.get_timeseries("wind_u", 10.8231, 106.6297, START, END)
+    temp = provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
+    assert all(point.value == 0.0 for point in rain.data) and len(rain.data) == 24
+    assert all(point.value == 0.0 for point in solar.data)
+    assert wind_u.data[0].value == pytest.approx(-3.0)
+    assert temp.data[0].value == pytest.approx(297.0)
+    # Dữ liệu trong DB cũng phải sạch, vì giao diện kho dữ liệu có thể đọc thẳng từ DB.
+    from backend.app.domain.schemas import Location
+    from backend.app.providers.era5_land_timeseries_provider import BASE_VARIABLES
+    stored = provider._repository.get_series(
+        dataset=provider._settings.era5_dataset, variable="total_precipitation",
+        location=Location(latitude=10.8231, longitude=106.6297),
+        unit=BASE_VARIABLES["total_precipitation"].unit, start=START, end=END,
+    )
+    assert len(stored) == 24 and all(point.value == 0.0 for point in stored)

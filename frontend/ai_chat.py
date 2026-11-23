@@ -9,6 +9,7 @@ from uuid import uuid4
 import streamlit as st
 
 from frontend.api_client import DashboardApiError
+from frontend.notifications import notify_error
 from frontend.chat_history import sync_history
 from frontend.chat_actions import applied_view,execute_action
 from backend.app.domain.ui_actions import UIAction,VIEW_LABELS
@@ -222,6 +223,7 @@ def _actions(api,result,index):
     error=st.session_state.get('ai_chat_action_error')
     if error and error[0]==index:
         st.error(error[1])
+        notify_error(f"Lỗi AI: {error[1]}")
 
 
 def _view_form(api,data,index):

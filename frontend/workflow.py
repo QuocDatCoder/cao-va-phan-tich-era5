@@ -12,6 +12,7 @@ from frontend.api_client import DashboardApiClient, DashboardApiError, DEFAULT_T
 from frontend.components.controls import VARIABLES, local_date_range, search_places
 from frontend.appearance import apply_appearance
 from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
+from frontend.notifications import notify_error, notify_warning, notify_success, notify_info
 
 SOURCES = {
     "land": "ERA5-Land · Đất liền",
@@ -136,6 +137,7 @@ def render_section(section):
             render_charts()
     except DashboardApiError as exc:
         st.error(str(exc))
+        notify_error(f"Lỗi API: {str(exc)}")
 
 
 def source_input(prefix):
@@ -210,18 +212,24 @@ def location_search(prefix):
         submitted = action.form_submit_button("Tìm", key=prefix+"_find_place", width="stretch")
     if submitted:
         if len(query.strip()) < 2:
-            st.info("Nhập ít nhất 2 ký tự để tìm địa điểm.")
+            msg = "Nhập ít nhất 2 ký tự để tìm địa điểm."
+            st.info(msg)
+            notify_warning(msg, icon="ℹ️")
         else:
             places = search_places(query.strip())
             if places is None:
-                st.warning("Chưa kết nối được dịch vụ tìm địa điểm. Bạn vẫn có thể nhập tọa độ.")
+                msg = "Chưa kết nối được dịch vụ tìm địa điểm. Bạn vẫn có thể nhập tọa độ."
+                st.warning(msg)
+                notify_warning(msg, icon="⚠️")
             elif not places:
-                st.info("Không tìm thấy. Thử tên khác hoặc nhập tọa độ trực tiếp.")
-                st.session_state[prefix+"_places"] = []
+                msg = f"Không tìm thấy địa điểm '{query.strip()}'. Thử tên khác hoặc nhập tọa độ trực tiếp."
+                st.info(msg)
+                notify_warning(msg, icon="📍")
             else:
                 st.session_state[prefix+"_places"] = places
                 st.session_state[prefix+"_place"] = places[0]['label']
                 apply_place(prefix)
+                notify_success(f"Đã tìm thấy {len(places)} địa điểm phù hợp!", icon="📍")
     places = st.session_state.get(prefix+"_places", [])
     if places:
         st.selectbox("Kết quả địa điểm", [p['label'] for p in places], key=prefix+"_place",
@@ -230,29 +238,39 @@ def location_search(prefix):
 
 def render_collection():
     restore_filter('collect')
-    source = source_input("collect")
-    location_search("collect")
+    col_src, col_loc = st.columns([1, 2], vertical_alignment="top")
+    with col_src:
+        source = source_input("collect")
+    with col_loc:
+        location_search("collect")
     with st.form("collection_form"):
-        variable = VARIABLES[st.selectbox("Biến khí hậu", list(VARIABLES), key="collect_variable",
-            help="Land thu thập cả sáu biến gốc trong một lần. ERA5 thu thập biến đang chọn.")]
-        left, right = st.columns(2)
-        start = left.date_input("Ngày bắt đầu (UTC+7)", value=None if 'collect_start' in st.session_state else date(2025, 1, 1), key="collect_start")
-        end = right.date_input("Ngày kết thúc (UTC+7)", value=None if 'collect_end' in st.session_state else date(2025, 1, 1), key="collect_end")
+        c_var, c_start, c_end = st.columns([1.4, 1, 1])
+        with c_var:
+            variable = VARIABLES[st.selectbox("Biến khí hậu", list(VARIABLES), key="collect_variable",
+                help="Land thu thập cả sáu biến gốc trong một lần. ERA5 thu thập biến đang chọn.")]
+        with c_start:
+            start = st.date_input("Ngày bắt đầu (UTC+7)", value=None if 'collect_start' in st.session_state else date(2025, 1, 1), key="collect_start")
+        with c_end:
+            end = st.date_input("Ngày kết thúc (UTC+7)", value=None if 'collect_end' in st.session_state else date(2025, 1, 1), key="collect_end")
         if source in {"land", "mock"}:
             point = point_inputs("collect")
         else:
-            top, bottom = st.columns(2)
-            north = top.number_input("Bắc", min_value=-90., max_value=90., value=11., key="collect_north")
-            south = top.number_input("Nam", min_value=-90., max_value=90., value=10., key="collect_south")
-            west = bottom.number_input("Tây", min_value=-180., max_value=180., value=106., key="collect_west")
-            east = bottom.number_input("Đông", min_value=-180., max_value=180., value=107., key="collect_east")
+            c_n, c_s, c_w, c_e = st.columns(4)
+            north = c_n.number_input("Bắc", min_value=-90., max_value=90., value=11., key="collect_north")
+            south = c_s.number_input("Nam", min_value=-90., max_value=90., value=10., key="collect_south")
+            west = c_w.number_input("Tây", min_value=-180., max_value=180., value=106., key="collect_west")
+            east = c_e.number_input("Đông", min_value=-180., max_value=180., value=107., key="collect_east")
         submitted = st.form_submit_button("Bắt đầu thu thập", key="collect_now", type="primary")
-    with st.popover("Thông tin nguồn và thời gian"):
-        st.write("Land: một điểm, sáu biến gốc. ERA5: một vùng, gồm đất liền và biển.")
-        st.write("Chọn ngày Việt Nam. Ứng dụng lấy các ngày UTC bao phủ khoảng này để đủ giờ khi xem; có thể tải lại phần đã có, không chỉ từng giờ thiếu.")
+
     if submitted:
-        if start > end or (source == "era5" and (north < south or west > east)):
-            st.error("Khoảng ngày hoặc các biên vùng không hợp lệ.")
+        if start > end:
+            msg = "Khoảng ngày không hợp lệ: Ngày bắt đầu phải trước hoặc bằng ngày kết thúc!"
+            st.error(msg)
+            notify_error(msg)
+        elif source == "era5" and (north < south or west > east):
+            msg = "Tọa độ vùng không hợp lệ: Vĩ độ Bắc phải lớn hơn Nam, và Kinh độ Tây phải nhỏ hơn Đông!"
+            st.error(msg)
+            notify_error(msg)
         else:
             a,b = local_date_range(start,end)
             centre = point if source != 'era5' else dict(latitude=(north+south)/2,longitude=(west+east)/2)
@@ -282,7 +300,175 @@ def render_collection():
             invalidate_job_list()
             st.session_state.pop('saved_library', None)
             st.success("Đã tiếp nhận tác vụ.")
+            notify_success("Đã tiếp nhận tác vụ thu thập ERA5 thành công!")
     render_collection_jobs(source)
+    _render_page_footer()
+
+
+def _render_page_footer():
+    """Render a website-style footer at the bottom of the collection tab."""
+    st.html("""
+<style>
+.era5-footer {
+    margin-top: 3rem;
+    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    padding-top: 2rem;
+    font-size: 0.82rem;
+    color: var(--text-color, #4a5568);
+}
+.era5-footer-top {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 1.5rem 2rem;
+    padding-bottom: 1.75rem;
+}
+.era5-footer-col h4 {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin: 0 0 .75rem;
+    color: var(--text-color, #1a202c);
+}
+.era5-footer-col ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.era5-footer-col ul li {
+    margin-bottom: .4rem;
+    line-height: 1.4;
+}
+.era5-footer-col ul li a {
+    color: var(--primary-color, #0f766e);
+    text-decoration: none;
+}
+.era5-footer-col ul li a:hover {
+    text-decoration: underline;
+}
+.era5-footer-bottom {
+    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    padding-top: 1.25rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem 2rem;
+}
+.era5-footer-org h5 {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin: 0 0 .5rem;
+    color: var(--text-color, #1a202c);
+}
+.era5-footer-org p {
+    margin: 0;
+    line-height: 1.6;
+    color: var(--text-color, #4a5568);
+}
+.era5-footer-badges {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--text-color, #718096);
+}
+.era5-footer-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .2rem .55rem;
+    border: 1px solid var(--secondary-background-color, #cbd5e0);
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+@media(max-width: 640px) {
+    .era5-footer-bottom { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="era5-footer">
+  <!-- TOP: 4 columns -->
+  <div class="era5-footer-top">
+    <div class="era5-footer-col">
+      <h4>Nguồn dữ liệu</h4>
+      <ul>
+        <li><a href="https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5" target="_blank">ERA5 · ECMWF</a></li>
+        <li><a href="https://cds.climate.copernicus.eu/" target="_blank">Copernicus CDS</a></li>
+        <li><a href="https://open-meteo.com/" target="_blank">Open-Meteo (Geocoding)</a></li>
+        <li>ERA5-Land · Phân giải cao</li>
+        <li>ERA5 · Đất liền &amp; Biển</li>
+      </ul>
+    </div>
+    <div class="era5-footer-col">
+      <h4>Biến khí hậu</h4>
+      <ul>
+        <li>Nhiệt độ 2m</li>
+        <li>Lượng mưa</li>
+        <li>Tốc độ &amp; Hướng gió 10m</li>
+        <li>Độ ẩm tương đối</li>
+        <li>Bức xạ mặt trời</li>
+      </ul>
+    </div>
+    <div class="era5-footer-col">
+      <h4>Hướng dẫn sử dụng</h4>
+      <ul>
+        <li>Chọn nguồn &amp; vị trí</li>
+        <li>Đặt khoảng thời gian</li>
+        <li>Bắt đầu thu thập dữ liệu</li>
+        <li>Xem và phân tích ở Biểu đồ</li>
+        <li>Xuất dữ liệu JSON / CSV</li>
+      </ul>
+    </div>
+    <div class="era5-footer-col">
+      <h4>Về ứng dụng</h4>
+      <ul>
+        <li>ERA5 · Dữ liệu khí hậu</li>
+        <li>Phân giải: 0.1° × 0.1° (Land)</li>
+        <li>Múi giờ UTC+7 (Việt Nam)</li>
+        <li>Dữ liệu tái phân tích ECMWF</li>
+        <li>Phiên bản ERA5: v5</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- BOTTOM: 2 org blocks -->
+  <div class="era5-footer-bottom">
+    <div class="era5-footer-org">
+      <h5>Dữ liệu tái phân tích ERA5</h5>
+      <p>
+        Nguồn: European Centre for Medium-Range Weather Forecasts (ECMWF)<br>
+        Chương trình Copernicus Climate Change Service (C3S)<br>
+        Tần suất: Hàng giờ · Từ 1940 đến nay<br>
+        Phân giải không gian: 0.25° (ERA5) · 0.1° (ERA5-Land)
+      </p>
+    </div>
+    <div class="era5-footer-org">
+      <h5>Thông tin thu thập</h5>
+      <p>
+        Dữ liệu được tải từ Copernicus Data Store (CDS) và lưu trữ cục bộ.<br>
+        Ngày hiển thị theo múi giờ UTC+7 (Việt Nam).<br>
+        Dữ liệu ERA5 thường có độ trễ khoảng 5 ngày so với ngày hiện tại.<br>
+        Land: Thu một điểm, 6 biến. ERA5: Thu một vùng, 1 biến / lần.
+      </p>
+    </div>
+  </div>
+
+  <!-- BADGES -->
+  <div class="era5-footer-badges">
+    <span>© 2024–2026 ERA5 Dashboard</span>
+    <span class="era5-footer-badge">🛰️ Copernicus C3S</span>
+    <span class="era5-footer-badge">🌍 ECMWF ERA5</span>
+    <span class="era5-footer-badge">🐍 Python · Streamlit</span>
+    <span class="era5-footer-badge">📡 Open-Meteo</span>
+  </div>
+</div>
+""")
 
 
 @st.cache_resource
@@ -332,6 +518,7 @@ def render_collection_jobs(source):
         _render_collection_jobs(client(source))
     except DashboardApiError as exc:
         st.error(str(exc))
+        notify_error(f"Lỗi API: {str(exc)}")
 
 
 def _render_collection_jobs(api):
@@ -346,6 +533,7 @@ def _render_collection_jobs(api):
     error = st.session_state.get('workflow_jobs_error')
     if error:
         st.error(error)
+        notify_error(f"Lỗi tải danh sách tác vụ: {error}")
     if 'workflow_jobs_pending' in st.session_state:
         st.info('Đang tải tác vụ thu thập… Bạn vẫn có thể tìm địa điểm và điền form phía trên.', icon=':material/sync:')
     if 'workflow_job_list' not in st.session_state:
@@ -356,29 +544,32 @@ def _render_collection_jobs(api):
         return
     rows = []
     for job in jobs:
-        quality = job.get("quality") or {}
         created = datetime.fromisoformat(job['created_at'].replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=7)))
         rows.append({"Bộ dữ liệu": job.get('collection_name') or 'Tác vụ cũ — thiếu thông tin yêu cầu',
-            "Mã tác vụ": job['job_id'], "Nguồn": job.get('source'), "Dataset": job.get('dataset'),
-            "Biến": job['variable'], "Từ UTC": job['start_date'], "Đến UTC": job['end_date'],
-            "Tạo lúc UTC+7": created.isoformat(), "Trạng thái": job['status'],
-            "Chất lượng": quality.get('status', 'Chưa kiểm tra'), "Cảnh báo": quality.get('issue_count')})
+            "Mã tác vụ": job['job_id'],
+            "Tạo lúc UTC+7": created.strftime('%d/%m/%Y %H:%M'), "Trạng thái": job['status']})
     with st.expander("Lịch sử thu thập · "+str(len(rows))+" tác vụ", expanded=False):
         st.caption("100 tác vụ gần nhất. Tự cập nhật mỗi 15 giây khi có tác vụ đang chờ/chạy; bấm Làm mới để kiểm tra ngay.")
         st.dataframe(rows, hide_index=True, width='stretch')
     ids = [j['job_id'] for j in jobs]
     if st.session_state.get("workflow_selected_job") not in ids:
         st.session_state["workflow_selected_job"] = ids[0]
-    labels = {j['job_id']: f"{j.get('collection_name') or (j['start_date']+' → '+j['end_date']+' UTC')} · {j.get('source') or 'Nguồn cũ'} · {j['status']} · {j['job_id'][:8]}" for j in jobs}
+    _VAR_VI = {v: k for k, v in VARIABLES.items()}
+    labels = {j['job_id']: (
+        f"{j.get('collection_name') or (j['start_date']+' đến '+j['end_date'])}"
+        f" · {j.get('source') or 'cũ'}"
+        f" · {_VAR_VI.get(j.get('variable',''), j.get('variable',''))}"
+        f" · {j['status']}"
+    ) for j in jobs}
     # Streamlit can retain the displayed formatted label for an unchanged ID.
     # Remount only when labels change; preserve the selected job independently.
     choice_key = 'workflow_job_choice_' + str(hash(tuple(labels.items())))
-    selected = st.selectbox("Xem tác vụ và báo cáo", ids, format_func=labels.get,
+    selected = st.selectbox("Xem chi tiết tác vụ", ids, format_func=labels.get,
                             index=ids.index(st.session_state['workflow_selected_job']), key=choice_key)
     st.session_state['workflow_selected_job'] = selected
     context = "workflow_selected"
     st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}), context: selected}
-    _render_job_status(api, context, job=next(job for job in jobs if job['job_id'] == selected))
+    _render_job_status(api, context, job=next(job for job in jobs if job['job_id'] == selected), show_quality=False)
 
 
 def query_form(prefix, charts=False):

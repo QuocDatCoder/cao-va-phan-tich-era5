@@ -17,10 +17,6 @@ from frontend.notifications import notify_error, notify_warning, notify_success,
 from frontend.auth import render_login_gate
 from frontend.workspace_sidebar import render_sidebar
 
-SOURCES = {
-    "land": "ERA5-Land · Đất liền",
-    "era5": "ERA5 · Đất liền và biển",
-}
 FREQUENCIES = {"Giờ": "hourly", "Ngày": "daily", "Tháng": "monthly", "Năm": "yearly"}
 
 
@@ -132,9 +128,7 @@ def render_section(section):
 
 
 def source_input(prefix):
-    if st.session_state.get(prefix+'_source') not in SOURCES:
-        st.session_state[prefix+'_source'] = 'land'
-    return st.selectbox("Nguồn dữ liệu", list(SOURCES), format_func=SOURCES.get, key=prefix+"_source")
+    return 'land'
 
 
 def remember(source, params):
@@ -245,11 +239,8 @@ def submit_collection_job(api, payload, params):
 
 def render_collection():
     restore_filter('collect')
-    col_src, col_loc = st.columns([1, 2], vertical_alignment="top")
-    with col_src:
-        source = source_input("collect")
-    with col_loc:
-        location_search("collect")
+    source = source_input("collect")
+    location_search("collect")
     with st.form("collection_form"):
         if source in {"land", "era5"}:
             variable = "temperature"  # Primary variable required by the existing download API.
@@ -411,7 +402,6 @@ body:has(.era5-shell[data-theme="dark"]) .era5-footer {
         <li><a href="https://cds.climate.copernicus.eu/" target="_blank">Copernicus CDS</a></li>
         <li><a href="https://open-meteo.com/" target="_blank">Open-Meteo (Geocoding)</a></li>
         <li>ERA5-Land · Phân giải cao</li>
-        <li>ERA5 · Đất liền &amp; Biển</li>
       </ul>
     </div>
     <div class="era5-footer-col">
@@ -427,7 +417,7 @@ body:has(.era5-shell[data-theme="dark"]) .era5-footer {
     <div class="era5-footer-col">
       <h4>Hướng dẫn sử dụng</h4>
       <ul>
-        <li>Chọn nguồn &amp; vị trí</li>
+        <li>Chọn vị trí</li>
         <li>Đặt khoảng thời gian</li>
         <li>Bắt đầu thu thập dữ liệu</li>
         <li>Xem và phân tích ở Biểu đồ</li>
@@ -453,8 +443,8 @@ body:has(.era5-shell[data-theme="dark"]) .era5-footer {
       <p>
         Nguồn: European Centre for Medium-Range Weather Forecasts (ECMWF)<br>
         Chương trình Copernicus Climate Change Service (C3S)<br>
-        Tần suất: Hàng giờ · Từ 1940 đến nay<br>
-        Phân giải không gian: 0.25° (ERA5) · 0.1° (ERA5-Land)
+        Tần suất: Hàng giờ · Từ 1950 đến nay<br>
+        Phân giải không gian: 0.1° (ERA5-Land)
       </p>
     </div>
     <div class="era5-footer-org">
@@ -563,7 +553,6 @@ def _render_collection_jobs(api):
         return
     rows = []
     local = timezone(timedelta(hours=7))
-    source_names = {'land': 'ERA5-Land', 'era5': 'ERA5', 'mock': 'Giả lập'}
     for job in jobs:
         created = datetime.fromisoformat(job['created_at']).astimezone(local)
         place = job.get('place_name')
@@ -581,7 +570,6 @@ def _render_collection_jobs(api):
             period = f"{job['start_date']} – {job['end_date']} (UTC)"
         rows.append({
             'Địa điểm / vùng': place or 'Chưa ghi nhận',
-            'Nguồn': source_names.get(job.get('source'), 'Chưa ghi nhận'),
             'Khoảng ngày dữ liệu': period,
             'Tạo lúc (UTC+7)': created.strftime('%d/%m/%Y %H:%M:%S'),
             'Trạng thái': _translate_status(job['status']),
@@ -595,7 +583,8 @@ def _render_collection_jobs(api):
     labels = {
         job['job_id']: (
             f"{row['Địa điểm / vùng']} · {row['Khoảng ngày dữ liệu']}"
-            f" · {row['Nguồn']} · {row['Trạng thái']}"
+            + (" · Giả lập" if job.get('source') == 'mock' else "")
+            + f" · {row['Trạng thái']}"
         )
         for job, row in zip(jobs, rows)
     }
@@ -664,7 +653,7 @@ def render_charts():
 
 def show_metadata(payload, prefix):
     st.caption("Kết quả của bộ lọc đã thực hiện; bản nháp trong form chưa áp dụng.")
-    st.caption(f"{SOURCES[payload['source']]} · {payload['dataset']} · UTC+7")
+    st.caption("UTC+7")
     grid = payload.get('grid_location')
     requested = payload['location']
     st.caption(f"Điểm yêu cầu: {requested['latitude']:.4f}, {requested['longitude']:.4f}" +

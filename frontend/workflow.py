@@ -33,12 +33,16 @@ def client(source):
 def render_dashboard():
     st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
     apply_appearance()
+    if st.query_params.get('retry_admin') == '1':
+        st.session_state['admin_handoff_done'] = False
+        del st.query_params['retry_admin']
     if not render_login_gate(client(None)):
         return
     if st.session_state.pop('are_open_collection_jobs', False):
         st.session_state['workflow_section'] = 'Thu thập'
         st.session_state['apply_shared'] = True
         st.session_state['ai_chat_open'] = False
+    st.session_state.setdefault('auth_admin_username', os.getenv('ADMIN_USERNAME', 'admin').casefold())
     render_sidebar(client(None))
     from frontend.ai_chat import render_ai_chat
     with st.container(key='era5_floating_chat'):

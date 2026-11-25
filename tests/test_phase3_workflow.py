@@ -50,7 +50,8 @@ def ui(collection, monkeypatch):
     from frontend.library import _shared_read
     _shared_read.clear()
     monkeypatch.setattr(workflow, 'render_login_gate', lambda *_: True)
-    monkeypatch.setattr(workflow, 'SOURCES', {**workflow.SOURCES, 'mock': 'Test fixture'})
+    monkeypatch.setattr(workflow, 'source_input', lambda prefix: workflow.st.selectbox(
+        'Nguồn (kiểm thử)', ['land', 'era5', 'mock'], key=prefix+'_source'))
     bridge = Bridge(collection[-1])
     monkeypatch.setattr(workflow, 'client', lambda source: DashboardApiClient(
         base_url='http://phase3.test', source=source, stored_only=True, session=bridge))

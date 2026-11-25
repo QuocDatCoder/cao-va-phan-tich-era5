@@ -15,7 +15,7 @@ Ví dụ, để khảo sát nhiệt độ tại Hà Nội trong một tháng, ng
 
 | Chức năng | Kết quả |
 | --- | --- |
-| Thu thập | Tạo tác vụ ERA5-Land theo điểm hoặc ERA5 theo vùng, theo dõi tiến độ và lịch sử. |
+| Thu thập | Tạo tác vụ ERA5-Land theo điểm, theo dõi tiến độ và lịch sử. |
 | Kho dữ liệu | Tìm bộ đã lưu, xem nguồn, điểm lưới, độ phủ và cảnh báo, tải CSV. |
 | Biểu đồ | Phân tích bộ đã lưu qua sáu chế độ trình bày. |
 | Trợ lý ARE | Hướng dẫn thao tác, tra cứu bộ đã lưu và phân tích kết quả. Người dùng xác nhận trước khi gửi tác vụ thu thập. |
@@ -150,7 +150,7 @@ Tài liệu chi tiết về [luồng dữ liệu](docs/DOT_3_GIAO_DIEN_QUY_TRINH
 ### Đăng nhập và thu thập
 
 1. Mở dashboard và đăng ký hoặc đăng nhập.
-2. Vào **Thu thập**. Chọn **ERA5-Land** cho một điểm trên đất liền hoặc **ERA5** cho một vùng tọa độ.
+2. Vào **Thu thập** để lấy dữ liệu ERA5-Land cho một điểm trên đất liền.
 3. Nhập địa điểm hoặc tọa độ, chọn khoảng ngày và bấm **Bắt đầu thu thập**. Mỗi tác vụ lấy cả sáu biến khí tượng.
 4. Theo dõi **Tác vụ thu thập**. Khi tác vụ hoàn tất, mở **Kho dữ liệu** để xem dữ liệu đã lưu và cảnh báo. CDS có thể xếp hàng hoặc chưa công bố dữ liệu cho ngày gần nhất.
 

@@ -59,7 +59,7 @@ def render_collection_draft(api, draft, index):
     options = list(VARIABLES)
     default = next((i for i, label in enumerate(options) if VARIABLES[label] == draft.get('variable')), None)
     with st.form(prefix+'_form'):
-        st.caption('ERA5-Land · một điểm · theo giờ · UTC+7')
+        st.caption('Một điểm · theo giờ · UTC+7')
         chosen = st.selectbox('Điểm lấy dữ liệu', range(len(rows)), format_func=lambda i: rows[i]['label'])
         label = st.selectbox('Biến khí hậu', options, index=default)
         a = st.date_input('Từ ngày', value=date.fromisoformat(draft['start']) if draft.get('start') else None)
@@ -96,7 +96,7 @@ def render_collection_draft(api, draft, index):
         return
     payload=preview['payload']
     st.write(f"{payload['place_name']} · {preview['label']} · {payload['requested_start'][:10]} – {payload['requested_end'][:10]}")
-    st.caption(f"Điểm {payload['location']['latitude']:.4f}, {payload['location']['longitude']:.4f} · ERA5-Land · UTC+7")
+    st.caption(f"Điểm {payload['location']['latitude']:.4f}, {payload['location']['longitude']:.4f} · UTC+7")
     if preview['existing']:
         st.button('Xem dữ liệu đã có', key=prefix+'_existing', on_click=execute_action,
             args=(api,preview['existing'],index))

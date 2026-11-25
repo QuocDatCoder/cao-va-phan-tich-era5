@@ -139,7 +139,7 @@ def _evidence(api,result, index):
             for row in payload.get('data') or []:
                 with st.container(border=True):
                     st.text(row['name'])
-                    st.caption(f"{row['source']} · {_date_label(row['requested_start'])} → {_date_label(row['requested_end'])}")
+                    st.caption(f"{_date_label(row['requested_start'])} → {_date_label(row['requested_end'])}")
                     st.button('Chọn và tiếp tục',key=f'ai_pick_{index}_{n}_{row["collection_id"]}',
                               on_click=_choose_and_continue,args=(api,row['collection_id'],row['name'],index),
                               disabled=bool(st.session_state.get('ai_chat_pending')),help='Chọn bộ và gửi tiếp yêu cầu cho ARE')
@@ -155,7 +155,7 @@ def _evidence(api,result, index):
     last = evidence[-1]['result']
     p = last.get('provenance') or {}
     if p:
-        st.caption(f"{p.get('source')} · {p.get('timezone')}")
+        st.caption(f"{p.get('timezone')}")
         if p.get('start'):
             st.caption(f"{_date_label(p['start'])} → {_date_label(p['end'])}")
     data = last.get('data')
@@ -178,7 +178,7 @@ def _evidence(api,result, index):
                     st.text(reference)
     if evidence[-1]['tool']=='describe_collection' and isinstance(data,dict):
         st.text(data['name'])
-        st.caption(f"{data['source']} · {_date_label(data['requested_start'])} → {_date_label(data['requested_end'])}")
+        st.caption(f"{_date_label(data['requested_start'])} → {_date_label(data['requested_end'])}")
         st.caption('Biến: '+', '.join(variable_label(v) for v in data['variables']))
     if evidence[-1]['tool']=='read_collection_quality' and isinstance(data,dict):
         for issue in data.get('issues',[]):

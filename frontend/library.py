@@ -75,7 +75,7 @@ def invalidate_job_list():
 def label(entry):
     m=entry['metadata']
     a,b=(datetime.fromisoformat(m[k]).strftime('%d/%m/%Y') for k in ['requested_start','requested_end'])
-    return f"{variable_label(m['primary_variable'])} — {m['place_name']} — {a} đến {b} · {m['source']} · {entry['id'][:8]}"
+    return f"{variable_label(m['primary_variable'])} — {m['place_name']} — {a} đến {b} · {entry['id'][:8]}"
 
 
 def decode_saved_view(raw):
@@ -358,7 +358,7 @@ def render_saved(client, charts=False):
         a,b=(datetime.fromisoformat(m[k]).astimezone(timezone(timedelta(hours=7))).strftime('%d/%m/%Y %H:%M') for k in ['requested_start','requested_end'])
         st.write(f"{a} → {b} (UTC+7)")
         with st.expander('Chi tiết bộ dữ liệu và chất lượng', expanded=False) if charts else nullcontext():
-            st.caption(f"{m['dataset']} · {STATUS.get(entry['status'],entry['status'])}" + (' · DỮ LIỆU GIẢ LẬP' if m['source']=='mock' else ''))
+            st.caption(f"{STATUS.get(entry['status'],entry['status'])}" + (' · DỮ LIỆU GIẢ LẬP' if m['source']=='mock' else ''))
             if m.get('location'):
                 st.caption(f"Điểm yêu cầu: {m['location']['latitude']:.4f}, {m['location']['longitude']:.4f}")
             else: st.caption('Phạm vi yêu cầu: '+str(m.get('area')))
@@ -497,9 +497,9 @@ def render_saved(client, charts=False):
                             if 'baseline_start' in saved else (),
                             min_value=lo.date(), max_value=hi.date(), key='chart_baseline_'+selected,
                         )
-                col_sub, col_rst = st.columns(2)
-                submit = col_sub.form_submit_button('Vẽ dữ liệu đã chọn' if charts else 'Áp dụng bộ lọc', key=prefix+'_selected_submit', type='primary')
-                reset_filters = col_rst.form_submit_button('Làm mới bộ lọc', key=prefix+'_reset_filters', icon=':material/refresh:')
+                with st.container(horizontal=True, gap='small', wrap=True):
+                    submit = st.form_submit_button('Vẽ dữ liệu đã chọn' if charts else 'Áp dụng bộ lọc', key=prefix+'_selected_submit', type='primary')
+                    reset_filters = st.form_submit_button('Làm mới bộ lọc', key=prefix+'_reset_filters', icon=':material/refresh:')
         if reset_filters:
             for k in [
                 prefix + '_range_start_' + selected,
@@ -815,9 +815,8 @@ def render_library_list(api, prefix, detail_slot):
             info=st.container()
             info.markdown(f"**{variable_label(meta['primary_variable'])} · {meta['place_name']}**")
             dates=[datetime.fromisoformat(meta[k]).strftime('%d/%m/%Y') for k in ['requested_start','requested_end']]
-            source={'land':'ERA5-Land','era5':'ERA5','mock':'Demo · giả lập'}.get(meta['source'],meta['source'])
             badge=' · Vừa thu thập' if item['id']==st.session_state.get('latest_collection_id') else ''
-            info.caption(f"{dates[0]} → {dates[1]} · {source}{badge}")
+            info.caption(f"{dates[0]} → {dates[1]}{badge}")
             status=STATUS.get(item['status'],item['status'])
             color='green' if item['status']=='complete' else 'orange' if item['status'] in {'partial','queued','running'} else 'red'
             info.badge(status,color=color)

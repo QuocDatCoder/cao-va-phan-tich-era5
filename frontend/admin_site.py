@@ -214,7 +214,7 @@ def _render_overview(api: DashboardApiClient) -> None:
         history = [job for job in history if job["user_id"] == selected_id]
     if history:
         columns = {
-            "username": "Tài khoản", "job_id": "Mã tác vụ", "source": "Nguồn",
+            "username": "Tài khoản", "job_id": "Mã tác vụ",
             "variable": "Biến khí hậu", "start_date": "Từ ngày", "end_date": "Đến ngày",
             "frequency": "Tần suất", "status": "Trạng thái", "progress": "Tiến độ %",
             "created_at": "Bắt đầu", "completed_at": "Kết thúc",

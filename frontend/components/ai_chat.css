@@ -47,6 +47,12 @@
 .weather-pet[data-mode="moon"],
 body:has(.era5-shell[data-theme="dark"]) .weather-pet[data-mode="sun"] {display:none;}
 body:has(.era5-shell[data-theme="dark"]) .weather-pet[data-mode="moon"] {display:block;}
+body:has(.era5-shell[data-theme="dark"]) .st-key-ai_chat_launcher::before {
+ background:#181818;border-bottom-color:#363636;
+}
+body:has(.era5-shell[data-theme="dark"]) .pet-launch-lines span {
+ background:#343434;border-color:#505050;color:#F3F3F3;
+}
 body:has(.era5-shell[data-theme="dark"]) .st-key-ai_chat_shell {
  background:#2D2D2D;border-color:#3B3B3B;box-shadow:0 12px 36px #0005;
 }

@@ -92,6 +92,10 @@ $env:API_BASE_URL="http://127.0.0.1:8000"
 
 ### Đăng ký/đăng nhập bằng username và mật khẩu
 
+Để tạo admin cố định, thiết lập `ADMIN_USERNAME` (mặc định `admin`) và `ADMIN_PASSWORD` (ít nhất 8 ký tự) trong `.env` trước khi khởi động backend. Tài khoản được tạo ở lần chạy đầu; mật khẩu đã đặt được giữ nguyên khi khởi động lại. Để đổi mật khẩu, cập nhật `ADMIN_PASSWORD` rồi khởi động lại. Đăng nhập bằng admin để mở mục **Quản trị** trên thanh bên, nơi có thể cấp/thu hồi quyền quản trị và khóa/mở các tài khoản khác.
+
+Trang quản trị độc lập chạy tại `http://localhost:8502` khi khởi động bằng `run_all.bat` ở chế độ headless, không tự bật tab trình duyệt. Đăng nhập admin tại trang chính `http://localhost:8501` sẽ tự chuyển tới admin site bằng mã bàn giao một lần, không cần đăng nhập lần hai. Phiên admin được khôi phục sau F5 từ `sessionStorage` của tab và được xác thực lại với backend. Thanh bên admin có hai mục **Tổng quan** và **Quản lý tài khoản**; Tổng quan hiển thị số liệu hệ thống và lịch sử tác vụ thu thập, lọc theo tài khoản. Quản lý tài khoản cho phép khóa, phân quyền hoặc xóa tài khoản; xóa sẽ xóa cả dữ liệu riêng của tài khoản đó.
+
 Tài khoản được lưu trong SQLite riêng tại `data/cache/auth.sqlite3`; mật khẩu
 được băm Argon2id, không lưu dạng rõ. Phiên đăng nhập dùng bearer token ngẫu
 nhiên, chỉ lưu bản băm trong DB và hết hạn sau 12 giờ. Các API dữ liệu yêu cầu

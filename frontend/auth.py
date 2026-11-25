@@ -1,4 +1,5 @@
 import time
+import os
 from dataclasses import replace
 from hashlib import sha256
 
@@ -10,6 +11,16 @@ from frontend.api_client import DashboardApiClient, DashboardApiError
 _TOKEN_KEY = "auth_access_token"
 _EXPIRY_KEY = "auth_expires_at"
 _USERNAME_KEY = "auth_username"
+
+_ADMIN_REDIRECT = st.components.v2.component(
+    "era5_admin_redirect",
+    html='<span aria-hidden="true"></span>',
+    js="""
+export default function({data}) {
+  if (data.url && window.top.location.href !== data.url) window.top.location.assign(data.url);
+}
+""",
+)
 
 _SESSION_BRIDGE = st.components.v2.component("era5_auth_session",
     html="<span aria-hidden='true'></span>", js="""
@@ -33,6 +44,9 @@ def _store_session(payload: dict) -> None:
     st.session_state[_TOKEN_KEY] = payload["access_token"]
     st.session_state[_EXPIRY_KEY] = payload["expires_at"]
     st.session_state[_USERNAME_KEY] = payload["username"]
+    st.session_state['auth_is_admin'] = bool(payload.get('is_admin', False))
+    st.session_state['auth_admin_username'] = os.getenv('ADMIN_USERNAME', 'admin').casefold()
+    st.session_state['admin_handoff_done'] = False
 
 
 def render_login_gate(api: DashboardApiClient) -> bool:
@@ -67,10 +81,27 @@ def render_login_gate(api: DashboardApiClient) -> bool:
                             st.rerun()
                         return False
                 else:
-                    _store_session(dict(access_token=saved_token,expires_at=deadline,username=user['username']))
+                    _store_session(dict(access_token=saved_token,expires_at=deadline,username=user['username'],is_admin=user.get('is_admin',False)))
         st.session_state['auth_restore_ready'] = True
         st.rerun()
     if valid:
+        try:
+            user = replace(api, access_token=token, timeout_seconds=8).current_user()
+        except DashboardApiError as exc:
+            if exc.status_code in {401, 403}:
+                st.session_state.clear()
+                st.session_state['auth_restore_ready'] = True
+                notify_warning('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
+                return False
+            st.warning('Chưa kiểm tra được quyền tài khoản. Vui lòng thử lại.')
+            if st.button('Thử lại', key='auth_retry_current_user'):
+                st.rerun()
+            return False
+        st.session_state[_USERNAME_KEY] = user['username']
+        st.session_state['auth_is_admin'] = bool(user.get('is_admin', False))
+        st.session_state['auth_admin_username'] = os.getenv('ADMIN_USERNAME', 'admin').casefold()
+        if user.get('is_admin') and not st.session_state.get('admin_handoff_done'):
+            _redirect_to_admin(replace(api, access_token=token, timeout_seconds=8))
         return True
     if token:
         st.session_state.clear()
@@ -112,8 +143,13 @@ def _render_login_forms(api):
             try:
                 _store_session(api.login(login_username, login_password))
             except DashboardApiError as exc:
-                notify_error(str(exc))
+                if exc.status_code == 401:
+                    notify_error("Tên đăng nhập hoặc mật khẩu không đúng. Nếu tài khoản đã bị khóa, hãy liên hệ quản trị viên để được mở lại.")
+                else:
+                    notify_error(str(exc))
             else:
+                if st.session_state.get('auth_is_admin'):
+                    _redirect_to_admin(replace(api, access_token=st.session_state[_TOKEN_KEY]))
                 st.rerun()
 
     with register_tab:
@@ -140,3 +176,19 @@ def _render_login_forms(api):
             else:
                 st.rerun()
     return False
+
+
+def _redirect_to_admin(api: DashboardApiClient) -> None:
+    from urllib.parse import quote
+
+    try:
+        ticket = api.create_admin_handoff()
+    except DashboardApiError as exc:
+        from frontend.notifications import notify_error
+        notify_error(f"Không thể mở trang quản trị: {exc}")
+        return
+    st.session_state['admin_handoff_done'] = True
+    admin_url = os.getenv('ADMIN_BASE_URL', 'http://localhost:8502').rstrip('/')
+    target = f"{admin_url}/?handoff={quote(ticket)}"
+    _ADMIN_REDIRECT(key='admin_redirect', data={'url': target}, height=0)
+    st.stop()

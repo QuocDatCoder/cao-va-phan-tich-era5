@@ -49,6 +49,7 @@ class Bridge:
 def ui(collection, monkeypatch):
     from frontend.library import _shared_read
     _shared_read.clear()
+    monkeypatch.setattr(workflow, 'render_login_gate', lambda *_: True)
     monkeypatch.setattr(workflow, 'SOURCES', {**workflow.SOURCES, 'mock': 'Test fixture'})
     bridge = Bridge(collection[-1])
     monkeypatch.setattr(workflow, 'client', lambda source: DashboardApiClient(

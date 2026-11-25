@@ -22,15 +22,25 @@ class FakeSession:
         self.response = response or FakeResponse({"status": "ok"})
         self.error = error
         self.calls = []
+        self.headers = None
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, headers=None):
         self.calls.append(("GET", url, params, timeout))
+        self.headers = headers
         if self.error:
             raise self.error
         return self.response
 
-    def post(self, url, json=None, timeout=None):
+    def post(self, url, json=None, timeout=None, headers=None):
         self.calls.append(("POST", url, json, timeout))
+        self.headers = headers
+        if self.error:
+            raise self.error
+        return self.response
+
+    def delete(self, url, timeout=None, headers=None):
+        self.calls.append(("DELETE", url, None, timeout))
+        self.headers = headers
         if self.error:
             raise self.error
         return self.response
@@ -130,6 +140,15 @@ def test_client_handles_malformed_json() -> None:
         client.health()
 
 
+def test_client_explains_validation_errors_without_climate_specific_text():
+    client = DashboardApiClient(
+        session=FakeSession(response=FakeResponse({"detail": [{"msg": "invalid"}]}, 422))
+    )
+
+    with pytest.raises(DashboardApiError, match="kiểm tra thông tin đã nhập"):
+        client.login("user", "password")
+
+
 def test_stored_client_explicit_source_routes_to_db_only_endpoints():
     session = FakeSession(response=FakeResponse({"data": []}))
     client = DashboardApiClient(base_url="http://api.test", session=session, source="land", stored_only=True)
@@ -145,3 +164,25 @@ def test_stored_client_requires_a_source_and_does_not_fall_back_to_legacy():
     with pytest.raises(DashboardApiError, match="nguồn dữ liệu"):
         DashboardApiClient(session=session, stored_only=True).get_timeseries({})
     assert session.calls == []
+
+
+def test_client_sends_bearer_token_to_protected_endpoints():
+    session = FakeSession()
+    client = DashboardApiClient(
+        base_url="http://api.test",
+        session=session,
+        access_token="session-token",
+    )
+
+    client.get_job("job-1")
+
+    assert session.headers == {"Authorization": "Bearer session-token"}
+
+
+def test_login_does_not_send_an_existing_bearer_token():
+    session = FakeSession()
+    client = DashboardApiClient(session=session, access_token="old-session")
+
+    client.login("user", "pass phrase")
+
+    assert session.headers is None

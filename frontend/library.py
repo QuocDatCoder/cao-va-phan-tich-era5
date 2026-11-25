@@ -16,24 +16,25 @@ STATUS = dict(queued='Đang chờ', running='Đang thu thập', complete='Đủ 
 
 
 @st.cache_data(ttl=60, max_entries=128, show_spinner=False)
-def _shared_read(base_url, source, stored_only, method, args_json, _api):
-    """Cache local API reads across browser reloads, independently of sessions."""
+def _shared_read(base_url, source, stored_only, access_token, method, args_json, _api):
+    """Cache local API reads across reloads without sharing results across accounts."""
     return getattr(_api, method)(*json.loads(args_json))
 
 
 def cached_read(api, method, *args):
+    access_token = getattr(api, 'access_token', None)
     if method == 'list_collections':
-        key = json.dumps([api.base_url, api.source, api.stored_only, args], sort_keys=True)
+        key = json.dumps([api.base_url, api.source, api.stored_only, access_token, args], sort_keys=True)
         pages = st.session_state.setdefault('library_pages', {})
         if key not in pages:
             with st.spinner('Đang đọc thư viện dữ liệu…'):
-                payload = _shared_read(api.base_url, api.source, api.stored_only, method,
+                payload = _shared_read(api.base_url, api.source, api.stored_only, access_token, method,
                                        json.dumps(args, sort_keys=True), _api=api)
             if len(pages) >= 128:
                 pages.pop(next(iter(pages)))
             pages[key] = payload
         return deepcopy(pages[key])
-    return _shared_read(api.base_url, api.source, api.stored_only, method,
+    return _shared_read(api.base_url, api.source, api.stored_only, access_token, method,
                         json.dumps(args, sort_keys=True), _api=api)
 
 
@@ -185,7 +186,7 @@ def forget_deleted(collection_id, job_id):
     pages = st.session_state.get('library_pages', {})
     for key in list(pages):
         entries = pages[key]['collections']
-        _, _, _, args = json.loads(key)
+        args = json.loads(key)[-1]
         if args[2] > 0:
             del pages[key]
             continue

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     climate_provider: Literal["mock", "era5", "era5_land_timeseries"] = "era5"
     data_dir: Path = Path("data")
+    auth_enabled: bool = True
+    auth_db_path: Path = Path("data/cache/auth.sqlite3")
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
     climate_data_db_path: Path = Path("data/cache/climate.sqlite3")
 

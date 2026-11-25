@@ -28,6 +28,7 @@ def build_client() -> DashboardApiClient:
         timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
         source=st.session_state.get("stored_source", "land"),
         stored_only=True,
+        access_token=st.session_state.get("auth_access_token"),
     )
 
 
@@ -38,9 +39,11 @@ def main() -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key: tuple, revision: str = "",
-                source: str | None = None, stored_only: bool = False) -> dict[str, Any]:
+                source: str | None = None, stored_only: bool = False,
+                access_token: str | None = None) -> dict[str, Any]:
     client = DashboardApiClient(base_url=base_url, timeout_seconds=timeout_seconds,
-                                source=source, stored_only=stored_only)
+                                source=source, stored_only=stored_only,
+                                access_token=access_token)
     params = dict(params_key)
     if endpoint == "timeseries":
         if params.get("frequency", "hourly") != "hourly":
@@ -70,6 +73,7 @@ def _load_cached(client: DashboardApiClient, endpoint: str, params: dict[str, An
         revision=st.session_state.get("live_revision", ""),
         source=client.source,
         stored_only=client.stored_only,
+        access_token=client.access_token,
     )
 
 

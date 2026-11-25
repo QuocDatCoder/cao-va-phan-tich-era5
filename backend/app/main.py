@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 
+from backend.app.api.auth import router as auth_router
+from backend.app.api.auth_dependencies import require_current_user
 from backend.app.api.climate import router as climate_router
 from backend.app.api.downloads import router as downloads_router
 from backend.app.api.routes import router
@@ -69,7 +71,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     from backend.app.storage.collection_repository import CollectionRepository, recover_abandoned
     from backend.app.storage.job_repository import JobRepository
-    if settings.job_metadata_db_path.exists():
+    if settings.auth_enabled:
+        if settings.auth_db_path.exists():
+            from backend.app.core.user_settings import get_settings_for_user
+            from backend.app.storage.auth_repository import AuthRepository
+
+            auth_repository = AuthRepository(settings.auth_db_path)
+            for user_id in auth_repository.list_user_ids():
+                user_settings = get_settings_for_user(user_id)
+                if user_settings.job_metadata_db_path.exists():
+                    recover_abandoned(
+                        CollectionRepository(user_settings.climate_data_db_path),
+                        JobRepository(user_settings.job_metadata_db_path),
+                    )
+    elif settings.job_metadata_db_path.exists():
         recover_abandoned(CollectionRepository(settings.climate_data_db_path),
                           JobRepository(settings.job_metadata_db_path))
     if settings.era5_sync_enabled:
@@ -90,12 +105,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(router)
-    app.include_router(climate_router)
-    app.include_router(stored_climate_router)
-    app.include_router(collections_router)
-    app.include_router(agent_router)
-    app.include_router(downloads_router)
-    app.include_router(synchronization_router)
+    app.include_router(auth_router)
+    protected_routers = (
+        climate_router,
+        stored_climate_router,
+        collections_router,
+        agent_router,
+        downloads_router,
+        synchronization_router,
+    )
+    for protected_router in protected_routers:
+        app.include_router(
+            protected_router,
+            dependencies=[Depends(require_current_user)],
+        )
     app.add_exception_handler(UnsupportedVariableError, unsupported_variable_handler)
     app.add_exception_handler(ClimateConfigurationError, climate_configuration_handler)
     app.add_exception_handler(ClimateDataError, climate_data_handler)

@@ -201,12 +201,16 @@ def test_collection_shows_only_supported_spatial_inputs(ui):
 
 
 
+def notices(app):
+    return [element for element in app.get('html') if '<template id="are-notice-' in element.value]
+
+
 def test_geocoding_failure_keeps_manual_coordinates_usable(ui, monkeypatch):
     app, bridge, _ = ui
     monkeypatch.setattr(workflow, 'search_places', lambda query: None)
     app.text_input(key='collect_place_query').set_value('Hà Nội')
     app.button(key='collect_find_place').click().run()
-    assert len(app.get("toast")) == 1 and not app.exception and not app.warning
+    assert len(notices(app)) == 1 and not app.exception and not app.warning
     assert not any(c[0] == 'POST' for c in bridge.calls)
     app.selectbox(key='collect_source').set_value('mock').run()
     app.number_input(key='collect_latitude').set_value(21.)
@@ -366,7 +370,7 @@ def test_chart_failed_filter_keeps_applied_result_and_url(ui, monkeypatch):
     monkeypatch.setattr(DashboardApiClient,'query_collection',fail)
     app.button(key='chart_selected_submit').click().run()
     assert not app.exception
-    assert app.get("toast") and not app.error
+    assert notices(app) and not app.error
     assert app.session_state['chart_result']==old
     assert app.query_params['chart_applied']==url
     assert app.get('plotly_chart')
@@ -389,7 +393,7 @@ def test_invalid_chart_dates_keep_old_plot_and_do_not_query(ui):
     app.date_input(key='chart_range_start_'+cid).set_value(date(2025,1,2))
     app.date_input(key='chart_range_end_'+cid).set_value(date(2025,1,1))
     app.button(key='chart_selected_submit').click().run()
-    assert not app.exception and app.get("toast") and not app.error
+    assert not app.exception and notices(app) and not app.error
     assert app.session_state['chart_result']==old
     assert app.session_state['chart_filters_'+cid] is True
     assert app.get('plotly_chart')
@@ -407,7 +411,7 @@ def test_invalid_saved_chart_url_falls_back_without_querying(ui,raw):
     fresh.run(timeout=15)
     assert not fresh.exception and not fresh.error
     assert fresh.session_state['chart_details_visible'] is False
-    assert fresh.get("toast") and not fresh.warning
+    assert notices(fresh) and not fresh.warning
     assert not any('/timeseries' in c[1] for c in bridge.calls[before:])
 
 
@@ -422,7 +426,7 @@ def test_deleted_in_another_session_returns_to_library_on_refresh(ui):
     assert not app.exception and not app.error
     assert app.session_state['stored_details_visible'] is False
     assert not any(b.key=='stored_selected_submit' for b in app.button)
-    assert app.get("toast") and not app.warning
+    assert notices(app) and not app.warning
 
 
 def test_tabs_keep_independent_results_and_applied_chart_controls(ui):
@@ -484,14 +488,15 @@ def test_city_persisted_and_extra_variable_carried_to_chart(ui,monkeypatch):
     assert collection[3].collections.get(cid)['metadata']['place_name']==place['label']
     open_latest_collection(app)
     assert app.session_state['selected_collection_id']==cid
-    app.selectbox(key='stored_variable_'+cid).set_value('2m_dewpoint_temperature')
+    app.checkbox(key='stored_var_2m_temperature_'+cid).uncheck()
+    app.checkbox(key='stored_var_2m_dewpoint_temperature_'+cid).check()
     app.button(key='stored_selected_submit').click().run()
     assert not app.exception and not app.error
     before=sum(c[0]=='POST' for c in bridge.calls)
     next(b for b in app.button if b.label=='Vẽ biểu đồ từ dữ liệu này').click().run()
-    assert app.selectbox(key='chart_variable_'+cid).value=='2m_dewpoint_temperature'
+    assert app.checkbox(key='stored_var_2m_dewpoint_temperature_'+cid).value
     app.button(key='chart_selected_submit').click().run()
-    assert bridge.calls[-1][2]['variable']=='2m_dewpoint_temperature'
+    assert app.session_state['chart_result'][2]['variable']=='2m_dewpoint_temperature'
     assert sum(c[0]=='POST' for c in bridge.calls)==before
     assert not app.exception and not app.error
 
@@ -664,7 +669,7 @@ def test_delete_api_error_keeps_collection_and_applied_result(ui, monkeypatch):
     monkeypatch.setattr(DashboardApiClient, 'delete_collection', fail)
     app.button(key='stored_delete_confirm_'+cid).click().run()
     assert not app.exception
-    assert any('Delete fixture failure' in e.value for e in app.get('toast'))
+    assert any('Delete fixture failure' in e.value for e in notices(app))
     assert collection[3].collections.get(cid) is not None
     assert app.session_state['stored_result'] == original
     assert 'stored_applied' in app.query_params
@@ -704,12 +709,12 @@ def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
     service.run_job(jid)
     app.button(key='refresh_jobs').click().run()
     assert not any('class="job-state job-state-' in m.value for m in app.html)
-    assert any('Đã hoàn tất thu thập' in toast.value for toast in app.get('toast'))
+    assert any('Đã hoàn tất thu thập' in toast.value for toast in notices(app))
     assert 'completed' in next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options[0]
     before = len(bridge.calls)
     app.run()
     assert not any('class="job-state job-state-' in m.value for m in app.html)
-    assert not any('Đã hoàn tất thu thập' in toast.value for toast in app.get('toast'))
+    assert not any('Đã hoàn tất thu thập' in toast.value for toast in notices(app))
     assert len(bridge.calls) == before
     next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).select(jid).run()
     assert_single_status('Hoàn tất')

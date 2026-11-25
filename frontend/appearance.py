@@ -81,13 +81,6 @@ def apply_appearance():
     }
 
     .st-key-era5_auth_bridge {display:none;}
-    body:has(.era5-shell[data-theme="dark"]) {
-        --background-color:#18181b;
-        --secondary-background-color:#242428;
-        --text-color:#ececf1;
-        --border-color:#3a3a41;
-        --primary-color:#82aaff;
-    }
     .st-key-era5_login_card {max-width:30rem;margin:clamp(1rem,8vh,5rem) auto 0;}
     @media (orientation:portrait) {
         .st-key-era5_login_card {margin-top:0;}

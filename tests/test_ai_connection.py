@@ -21,7 +21,7 @@ def test_responses_roundtrip_is_bounded_low_and_stateless():
     def handle(request):
         body=json.loads(request.content)
         requests.append(body)
-        assert str(request.url)=='https://api.modelapi.vn/v1/responses'
+        assert str(request.url)=='https://modelapi.vn/v1/responses'
         assert request.headers['Authorization']=='Bearer fixture-secret'
         assert body['model']=='gpt-6-luna'
         assert body['reasoning']=={'effort':'low'}

@@ -11,7 +11,7 @@ SOCIAL = {
     'ok', 'oke', 'duoc roi',
 }
 DOMAIN = re.compile(r'\b(era5|khi tuong|khi hau|nhiet do|luong mua|diem suong|toc do gio|huong gio|buc xa|kelvin|celsius|utc|do phu|du lieu|bieu do|thong ke|phan tich|cds|copernicus|dataset|collection|snapshot|parser|quality|backend|frontend|streamlit|fastapi|sqlite|du an|do an|ung dung|code du an|temperature|precipitation|wind|radiation|climate|weather|coverage)\b')
-OUTSIDE = re.compile(r'\b(com tam|an gi|mon an|nau an|xem phim|hoc tieng anh|choi game|ca cuoc|danh bac|movie|netflix|learn english)\b')
+OUTSIDE = re.compile(r'\b(com tam|an gi|mon an|nau an|xem phim|hoc tieng anh|choi game|ca cuoc|danh bac|movie|netflix|learn english|viet bai van)\b')
 
 
 def social_answer(question):
@@ -53,4 +53,6 @@ def scope(question, history=()):
         if ('dia diem' in prompt and len(text.split())<=8 and len(text)<=100
                 and not re.search(r'\b(muon|hay|hoc|viet|ke|phim|game|an|uong|ignore)\b', text)):
             return 'domain'
-    return 'unsupported'
+    # Lack of a keyword is not proof that a question is unrelated. The Agent
+    # must classify this branch with context before exposing any regular tools.
+    return 'ambiguous'

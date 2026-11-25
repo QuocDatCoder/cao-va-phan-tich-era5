@@ -46,9 +46,18 @@ def child(args):
         def create(self,**kwargs):
             time.sleep(3)
             question=json.loads(next(x['content'] for x in reversed(kwargs['input_items']) if x.get('role')=='user'))['question']
-            if 'Chào ARE' in question:
+            if [t['name'] for t in kwargs['tools']]==['classify_scope']:
+                name,arguments='classify_scope',dict(scope='domain')
+            elif question=='Bạn là ai?':
+                name='answer_question'
+                arguments=dict(category='general',answer='Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',source_ids=[])
+            elif 'Chào ARE' in question:
                 name='answer_question'
                 arguments=dict(category='general',answer='Chào bạn! ARE có thể trò chuyện cùng bạn.',source_ids=[])
+            elif 'Phân tích biểu đồ' in question:
+                name='analyze_chart'
+                arguments=dict(collection_id=None,variable=None,latitude=None,longitude=None,
+                               start=None,end=None,frequency=None,focus='overview')
             elif 'Vẽ theo ngày' in question:
                 name='prepare_view'
                 arguments=dict(target='open_chart',collection_id=None,variable=None,latitude=None,longitude=None,
@@ -161,6 +170,8 @@ def main():
             page.get_by_text('Nắng',exact=True).click()
             expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','sun')
             page.get_by_text('Tự động',exact=True).click()
+            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','cloud')
+            shell.get_by_role('button',name='Tùy chọn',exact=False).click()
             shell.get_by_role('button',name='Thu gọn',exact=True).click()
             expect(shell).not_to_be_visible()
             page.get_by_role('button',name='AI chat',exact=True).click()
@@ -213,6 +224,9 @@ def main():
             chat_input.press('Enter')
             expect(shell.get_by_text('ARE không hỗ trợ nội dung ngoài phạm vi dự án. Bạn có thể hỏi về dữ liệu ERA5, phân tích khí tượng hoặc cách sử dụng ứng dụng.',exact=True)).to_be_visible(timeout=15000)
             page.screenshot(path=str(out/'scope-refusal.png'))
+            chat_input.fill('Bạn là ai?')
+            chat_input.press('Enter')
+            expect(shell.get_by_text('Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',exact=True)).to_be_visible(timeout=20000)
             chat_input.fill('Giải thích kiến trúc dự án')
             chat_input.press('Enter')
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).to_be_visible(timeout=15000)
@@ -231,6 +245,12 @@ def main():
             page.screenshot(path=str(out/'applied-daily-action.png'))
             page.get_by_role('button',name='AI chat',exact=True).click()
             chat_input=shell.get_by_placeholder('Hỏi ARE…')
+            chart_url=page.url
+            chat_input.fill('Phân tích biểu đồ đang xem')
+            chat_input.press('Enter')
+            expect(shell.get_by_text('Phân tích Nhiệt độ · °C · chu kỳ ngày',exact=False)).to_be_visible(timeout=15000)
+            assert page.url==chart_url  # Analysis does not change the active plot.
+            page.screenshot(path=str(out/'chart-analysis.png'))
             chat_input.fill('Tìm dữ liệu Hà Nội fixture')
             chat_input.press('Enter')
             expect(shell.get_by_role('button',name='Mở kết quả trong Kho dữ liệu',exact=True)).to_be_visible(timeout=15000)

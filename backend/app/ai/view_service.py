@@ -98,7 +98,7 @@ def actions_from_evidence(evidence):
     if not cid:
         return []
     actions=[UIAction(type='open_data',collection_id=cid).model_dump(mode='json')]
-    if last['tool']=='analyze_collection' and r['status'] in {'ok','partial'}:
+    if last['tool'] in {'analyze_collection','analyze_chart'} and r['status'] in {'ok','partial'}:
         m=r['metadata']
         args=last['arguments']
         params=ViewParameters(variable=m['variable'],**m['grid_location'],start=p['start'],end=p['end'],

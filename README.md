@@ -94,6 +94,10 @@ Trợ lý AI mở bằng pet đám mây **ARE** ở góc phải dưới; menu ba
 
 ARE hỗ trợ xã giao ngắn, kiến thức khí tượng liên quan và giải thích code/thiết kế dự án từ chỉ mục nguồn cục bộ, kèm vị trí tham chiếu. Câu ngoài phạm vi nhận thông báo từ chối cố định; không tư vấn ăn uống, giải trí, học ngoại ngữ hoặc chủ đề không liên quan. Số liệu khí tượng thực tế vẫn lấy qua service DB-only.
 
+Câu rõ ràng ngoài phạm vi và xã giao được xử lý nhanh ở server. Câu chưa rõ được phân loại bằng model dựa trên lịch sử gần nhất trước khi mở các công cụ thường, tránh từ chối chỉ vì thiếu từ khóa. Bước phân loại có thể tốn thêm một lượt gọi AI nhưng vẫn nằm trong giới hạn 4 request/lượt chat; không tăng reasoning hoặc tự retry. Lỗi xác thực upstream HTTP 401 được báo riêng.
+
+Khi đang xem biểu đồ, có thể hỏi “Phân tích chuyên sâu biểu đồ đang xem”, “Đỉnh này ở thời điểm nào?” hoặc “Biến động và xu hướng thế nào?”. ARE đọc lại đúng chuỗi DB theo bộ lọc đã áp dụng, tính thống kê, cực trị kèm thời điểm, chênh lệch và hồi quy mô tả. Phân tích theo ngày/tháng dùng giá trị từng kỳ đang vẽ; không nhầm với cực trị từng giờ. Không hồi quy qua dữ liệu thiếu/kỳ chưa trọn, không hồi quy tuyến tính hướng gió, không suy diễn nguyên nhân/dự báo từ một chuỗi. Hiện hỗ trợ chuỗi thời gian, chuỗi tháng sau heatmap và thống kê tại một điểm; chưa phân tích phân bố bản đồ hoặc ảnh tải lên.
+
 ARE có thể chuẩn bị thao tác tìm dữ liệu, xem dữ liệu và mở biểu đồ. Ví dụ: “Tìm dữ liệu Hà Nội”, hoặc khi đang xem một bộ: “Vẽ nhiệt độ theo ngày trong khoảng đang xem”. Bạn bấm nút trong chat để mở kết quả; thiếu tham số sẽ có form lựa chọn. ARE chỉ dùng bộ lọc đã áp dụng, không lấy các thay đổi chưa bấm vẽ. Xem [logic tương tác và kiểm thử](docs/DOT_5_ARE_TUONG_TAC_GIAO_DIEN.md).
 
 F5 giữ lịch sử chat trên cùng trình duyệt. Chỉ nút **Làm mới** trong menu chat chủ động xóa lịch sử; nút làm mới dữ liệu ở trang chính không xóa chat. Tin cũ vẫn xem được qua **Xem tin trước**. F5 lúc đang chờ giữ câu hỏi và không tự gửi lại API.

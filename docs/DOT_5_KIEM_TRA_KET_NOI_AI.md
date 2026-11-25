@@ -2,7 +2,8 @@
 
 ## Cấu hình đã thống nhất
 
-- Gateway: `https://api.modelapi.vn/v1`.
+- Gateway: `https://modelapi.vn/v1`. Ngày 19/11/2026 đã xác nhận cùng khóa: `/models` trên hostname này trả 200 và probe Responses/tool calling đạt; hostname có tiền tố `api.` trả 401 Invalid token. Không suy ra hai hostname dùng chung kho khóa.
+- `/api/v1/agent/status` hiển thị gateway thực tế và key_source (environment/env_file), không trả khóa. Biến môi trường ưu tiên hơn `.env`: nếu probe ở tiến trình mới đạt nhưng backend vẫn 401, kiểm tra biến AI_API_KEY cũ trong terminal và tiến trình uvicorn con còn giữ cổng. Dừng đúng cây tiến trình backend, không dừng Streamlit hoặc ứng dụng Python khác. Khi dùng `.env` cục bộ, bỏ biến ghi đè cũ trong terminal trước khi khởi động backend lại.
 - Model: `gpt-6-luna`.
 - Reasoning effort: `low`.
 - Mỗi request gửi `max_output_tokens=512`, `store=false`, `stream=false`; không tự retry hoặc tự đổi model/giao thức.
@@ -33,7 +34,7 @@ Mặc định dùng `httpx.MockTransport`, bỏ qua `.env` và cấu hình AI_* 
 Mở `.env` đang có ở gốc dự án, **thêm** các dòng bên dưới; không chép đè file hoặc xóa cấu hình CDS đang dùng:
 
 ```dotenv
-AI_BASE_URL=https://api.modelapi.vn/v1
+AI_BASE_URL=https://modelapi.vn/v1
 AI_MODEL=gpt-6-luna
 AI_REASONING_EFFORT=low
 AI_API_KEY=<dien-key-cua-ban-tren-may>

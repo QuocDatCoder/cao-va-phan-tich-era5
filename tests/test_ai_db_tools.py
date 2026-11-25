@@ -213,7 +213,7 @@ def test_guides_are_fixed_and_outside_topics_rejected(toolset):
 def test_schemas_are_strict_nullable_and_small(toolset):
     tools,_,_=toolset
     definitions=tools.definitions()
-    assert len(definitions)==5
+    assert len(definitions)==6
     for tool in definitions:
         schema=tool['parameters']
         assert tool['strict'] and schema['additionalProperties'] is False

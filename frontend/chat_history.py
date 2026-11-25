@@ -96,8 +96,13 @@ export default function(component) {
     state.revision = data.revision;
     try {
       window.localStorage.setItem(data.storage_key, JSON.stringify(data.snapshot));
-      setStateValue('saved', {ok:true, revision:data.revision});
+      // Successful storage needs no server ACK: it would redraw the chat and
+      // close native selectors while the user is interacting. Notify only when
+      // recovering from a previously reported storage error.
+      if (state.failed) setStateValue('saved', {ok:true, revision:data.revision});
+      state.failed = false;
     } catch (_) {
+      state.failed = true;
       setStateValue('saved', {ok:false, revision:data.revision});
     }
   }
@@ -112,7 +117,7 @@ _BRIDGE=st.components.v2.component('era5_are_history',html='<span aria-hidden="t
 
 
 def _rerender_chat():
-    # The component belongs to the chat fragment; its event reruns that fragment.
+    # The bridge belongs to the chat fragment; events rerun that fragment.
     pass
 
 

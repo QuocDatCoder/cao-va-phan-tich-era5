@@ -35,6 +35,11 @@ def _toggle():
         st.session_state['ai_chat_unread'] = False
 
 
+def _close():
+    # Closing is idempotent, including when a preceding widget rerun is pending.
+    st.session_state['ai_chat_open']=False
+
+
 def _select(cid,name='Bộ đang xem'):
     st.session_state['ai_chat_selected'] = cid
     st.session_state['ai_chat_selected_name'] = name
@@ -290,7 +295,7 @@ def render_ai_chat(api):
                     st.pills('Diện mạo',list(PET_THEMES),format_func=PET_THEMES.get,default=None if 'ai_pet_theme' in st.session_state else 'auto',
                              required=True,key='ai_pet_theme',label_visibility='collapsed',persist_state='session')
                     st.button('Làm mới',key='ai_chat_clear',on_click=_clear,disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),icon=':material/refresh:',width='stretch',help='Xóa lịch sử và bắt đầu cuộc trò chuyện mới')
-            st.button('Thu gọn',icon=':material/close:',key='ai_chat_close',on_click=_toggle,type='tertiary',help='Thu gọn, giữ cuộc trò chuyện')
+            st.button('Thu gọn',icon=':material/close:',key='ai_chat_close',on_click=_close,type='tertiary',help='Thu gọn, giữ cuộc trò chuyện')
         selected = st.session_state.get('ai_chat_selected')
         if selected:
             with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_context'):

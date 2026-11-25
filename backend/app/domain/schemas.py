@@ -250,6 +250,9 @@ class DownloadJob(BaseModel):
     quality: QualityReport | None = None
     collection_id: str | None = None
     collection_name: str | None = None
+    place_name: str | None = None
+    requested_start: datetime | None = None
+    requested_end: datetime | None = None
 
 
 class SynchronizationStatus(StrEnum):

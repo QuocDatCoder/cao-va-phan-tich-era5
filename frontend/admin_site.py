@@ -8,6 +8,8 @@ import streamlit as st
 
 from frontend.api_client import DashboardApiClient, DashboardApiError, DEFAULT_TIMEOUT_SECONDS
 from frontend.workspace_sidebar import _SIDEBAR
+from frontend.appearance import apply_appearance
+from frontend.dashboard import _translate_status
 
 
 _TOKEN_KEY = "admin_access_token"
@@ -87,42 +89,24 @@ def _render_admin_sidebar(api: DashboardApiClient, username: str) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="ERA5 · Quản trị", page_icon="🛡️", layout="wide")
-    st.markdown("""
-    <style>
-    .stApp {background:var(--background-color,#f7faf9);color:var(--text-color,#18332f)}
-    .block-container {max-width:1280px;padding-top:2rem}
-    .admin-brand {color:var(--primary-color,#0f766e);font-weight:700;font-size:1.05rem}
-    .st-key-account_search [data-testid="stWidgetLabel"],
-    .st-key-account_search [data-testid="stWidgetLabel"] p,
-    .st-key-account_search label {color:var(--text-color,#18332f)!important;opacity:1!important}
-    .st-key-account_search input {
-      color:var(--text-color,#18332f)!important;
-      background:var(--secondary-background-color,#fff)!important;
-      border-color:var(--border-color,#d5e2df)!important;
-    }
-    .st-key-account_search input::placeholder {color:var(--text-color,#18332f)!important;opacity:.65}
-    div[class*="st-key-site_actions_"] [data-testid="stPopoverButton"] {
-      color:var(--text-color,#18332f)!important;
-      background:var(--secondary-background-color,#fff)!important;
-      border:1px solid var(--border-color,#d5e2df)!important;
-    }
-    [data-testid="stPopoverBody"], [data-testid="stPopover"] {
-      background:#22252a!important;color:#f3f4f6!important;
-    }
-    [data-testid="stPopoverBody"] *, [data-testid="stPopover"] * {
-      color:#f3f4f6!important;
-    }
-    [data-testid="stPopoverBody"] button[kind="secondary"],
-    [data-testid="stPopover"] button[kind="secondary"] {
-      color:#f3f4f6!important;background:#22252a!important;border-color:#626a73!important;
-    }
-    [data-testid="stPopoverBody"] button[kind="primary"],
-    [data-testid="stPopoverBody"] button[kind="primary"] *,
-    [data-testid="stPopover"] button[kind="primary"],
-    [data-testid="stPopover"] button[kind="primary"] * {color:#fff!important}
-    </style>
-    """, unsafe_allow_html=True)
-    st.markdown('<div class="admin-brand">ERA5　/　TRUNG TÂM QUẢN TRỊ</div>', unsafe_allow_html=True)
+    apply_appearance()
+    st.html("""<style>
+        .st-key-era5_admin_sidebar, .st-key-era5_admin_auth_bridge,
+        [data-testid="stElementContainer"]:has(> .st-key-era5_admin_sidebar) {
+            position: absolute;
+            height: 0;
+            min-height: 0;
+            inset-block-start: 0;
+        }
+        .block-container [data-testid="stVerticalBlock"]:has(> div > .st-key-admin_workspace) {
+            gap: 0 !important;
+        }
+        @media (min-width: 761px) {
+            body:has(.era5-shell) .block-container:has(.st-key-admin_workspace) {
+                padding-top: 3rem !important;
+            }
+        }
+    </style>""")
     bridge_key = "era5.admin.v1." + sha256(os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/").encode()).hexdigest()[:20]
     token = st.session_state.get(_TOKEN_KEY)
     expires_at = st.session_state.get(_EXPIRY_KEY)
@@ -198,14 +182,17 @@ def main() -> None:
         st.error("Tài khoản này không được cấp quyền quản trị.")
         return
     _render_admin_sidebar(api, user["username"])
-    if st.session_state.get("admin_section", "overview") == "accounts":
-        _render_accounts(api, user)
-    else:
-        _render_overview(api)
+    accounts = st.session_state.get("admin_section") == "accounts"
+    with st.container(key="admin_workspace"):
+        with st.container(horizontal=True, vertical_alignment="center", height=44, border=False):
+            st.header("Quản lý tài khoản" if accounts else "Tổng quan hệ thống", anchor=False)
+        if accounts:
+            _render_accounts(api, user)
+        else:
+            _render_overview(api)
 
 
 def _render_overview(api: DashboardApiClient) -> None:
-    st.title("Tổng quan hệ thống")
     try:
         overview = api.admin_overview()
         users = api.list_users()
@@ -213,12 +200,10 @@ def _render_overview(api: DashboardApiClient) -> None:
     except DashboardApiError as exc:
         st.error(str(exc))
         return
-    cards = st.columns(5)
-    for col, label, key in zip(cards, ("Tổng tài khoản", "Đang hoạt động", "Đã vô hiệu hóa", "Quản trị viên", "Đăng ký hôm nay"),
-                               ("total_users", "active_users", "disabled_users", "admin_users", "new_today")):
-        with col.container(border=True):
-            st.caption(label)
-            st.subheader(f"{overview[key]:,}")
+    cards = st.grid("auto", min_column_width=145, gap="small")
+    for label, key in zip(("Tổng tài khoản", "Đang hoạt động", "Đã vô hiệu hóa", "Quản trị viên", "Đăng ký hôm nay"),
+                          ("total_users", "active_users", "disabled_users", "admin_users", "new_today")):
+        cards.metric(label, f"{overview[key]:,}", border=True, height="stretch")
     st.subheader("Lịch sử thu thập của người dùng", anchor=False)
     st.caption("Lịch sử tác vụ được tổng hợp từ kho riêng của từng tài khoản.")
     choices = {"Tất cả người dùng": None}
@@ -235,13 +220,13 @@ def _render_overview(api: DashboardApiClient) -> None:
             "created_at": "Bắt đầu", "completed_at": "Kết thúc",
         }
         frame = pd.DataFrame(history)[list(columns)]
+        frame["status"] = frame["status"].map(_translate_status)
         st.dataframe(frame.rename(columns=columns), hide_index=True, width="stretch")
     else:
         st.info("Chưa có lịch sử thu thập phù hợp.")
 
 
 def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
-    st.title("Quản lý tài khoản")
     st.caption("Cấp quyền quản trị, vô hiệu hóa hoặc xóa vĩnh viễn tài khoản.")
     try:
         users = api.list_users()
@@ -249,18 +234,22 @@ def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
         st.error(str(exc))
         return
     query = st.text_input("Tìm tài khoản", placeholder="Nhập tên đăng nhập", key="account_search")
-    filtered = [u for u in users if query.casefold() in u["username"].casefold()]
+    filtered = [u for u in users if query.strip().casefold() in u["username"].casefold()]
+    if not filtered:
+        st.info("Không tìm thấy tài khoản phù hợp.")
     for account in filtered:
         with st.container(border=True):
             identity, role, state, actions = st.columns([3, 2, 2, 3], vertical_alignment="center")
             identity.markdown(f"**{account['username']}**  ·  ID {account['id']}")
             role.write("Quản trị viên" if account["is_admin"] else "Người dùng")
-            state.write("🟢 Đang hoạt động" if account["is_active"] else "🔒 Đã vô hiệu hóa")
+            active = account["is_active"]
+            state.badge("Đang hoạt động" if active else "Đã vô hiệu hóa",
+                        color="green" if active else "orange")
             fixed = account["username"] == os.getenv("ADMIN_USERNAME", "admin").casefold()
             if fixed or account["id"] == current_user["id"]:
                 actions.caption("Tài khoản quản trị được bảo vệ")
             else:
-                with actions.popover("Thao tác", width="stretch", key=f"site_actions_{account['id']}"):
+                with actions.popover("Thao tác", width="stretch", icon=":material/settings:", key=f"site_actions_{account['id']}"):
                     new_admin = st.checkbox("Quyền quản trị", value=bool(account["is_admin"]), key=f"site_admin_{account['id']}")
                     new_active = st.checkbox("Đang hoạt động", value=bool(account["is_active"]), key=f"site_active_{account['id']}")
                     if st.button("Lưu thay đổi", key=f"site_save_{account['id']}", type="primary"):

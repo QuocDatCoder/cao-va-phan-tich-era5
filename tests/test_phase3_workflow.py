@@ -68,6 +68,26 @@ def ui(collection, monkeypatch):
     return app, bridge, collection
 
 
+def test_weather_map_draws_a_single_saved_grid(ui):
+    from frontend.components.climate_views import REGIONAL_MAP
+
+    app, _, _ = ui
+    app.selectbox(key='collect_source').set_value('mock').run()
+    app.button(key='collect_now').click().run()
+    cid = app.session_state['latest_collection_id']
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
+    app.button(key='chart_draw_'+cid).click().run()
+    app.selectbox(key='saved_chart_kind').set_value(REGIONAL_MAP).run()
+    app.button(key='chart_selected_submit').click().run()
+
+    assert not app.exception and not app.warning
+    _, kind, payload = app.session_state['chart_result']
+    assert kind == REGIONAL_MAP
+    assert len(payload['derived_figure'].data[0].lat) == 1
+    assert app.get('plotly_chart')
+
+
 def test_collection_form_does_not_wait_for_job_history(ui, monkeypatch):
     from concurrent.futures import Future
     app, bridge, _ = ui
@@ -244,7 +264,8 @@ def test_visible_labels_have_valid_vietnamese_and_readable_job_names(ui):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     options = next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options
-    assert all('đến' in option and 'mock' in option and 'Nhiệt độ' in option for option in options)
+    assert options
+    assert all('Giả lập' in option and 'UTC+7' in option and 'Nhiệt độ' not in option for option in options)
     assert any('Lịch sử thu thập' in exp.label for exp in app.expander)
 
 
@@ -362,7 +383,7 @@ def test_chart_failed_filter_keeps_applied_result_and_url(ui, monkeypatch):
     old=app.session_state['chart_result']
     url=app.query_params['chart_applied']
     calls=len(bridge.calls)
-    app.selectbox(key='saved_chart_kind').set_value('Bản đồ nhiệt').run()
+    app.selectbox(key='saved_chart_kind').set_value('Thống kê và xu hướng').run()
     assert len(bridge.calls)==calls
     assert not any(w.key=='saved_chart_frequency' for w in app.selectbox)
     def fail(*a,**kw):
@@ -710,7 +731,7 @@ def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
     app.button(key='refresh_jobs').click().run()
     assert not any('class="job-state job-state-' in m.value for m in app.html)
     assert any('Đã hoàn tất thu thập' in toast.value for toast in notices(app))
-    assert 'completed' in next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options[0]
+    assert 'Hoàn tất' in next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options[0]
     before = len(bridge.calls)
     app.run()
     assert not any('class="job-state job-state-' in m.value for m in app.html)

@@ -24,6 +24,15 @@ VARIABLE_LABELS = {
     "surface_solar_radiation_downwards": "Bức xạ mặt trời",
 }
 
+SERIES_STYLE = {
+    "Nhiệt độ": ("line", "#c24134"),
+    "Điểm sương": ("line", "#087d78"),
+    "Lượng mưa": ("bar", "#2366b1"),
+    "Tốc độ gió": ("line", "#6851a8"),
+    "Hướng gió": ("direction", "#2366b1"),
+    "Bức xạ mặt trời": ("bar", "#ad6108"),
+}
+
 
 def variable_label(name: Any) -> str:
     return VARIABLE_LABELS.get(str(name), str(name) if name else "Giá trị")
@@ -47,24 +56,44 @@ def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
     frame = timeseries_frame(payload)
     unit = payload.get("unit", "")
     variable = variable_label(payload.get("variable"))
-    if payload.get("aggregation") == "sum":
-        fig = px.bar(frame, x="time", y="value")
+    style, color = SERIES_STYLE.get(variable, ("line", "#2366b1"))
+    if style == "bar" or payload.get("aggregation") == "sum":
+        fig = px.bar(frame, x="time", y="value", color_discrete_sequence=[color])
+        fig.update_yaxes(rangemode="tozero")
+    elif style == "direction":
+        frame = frame.dropna(subset=["value"]).copy()
+        angles = frame["value"] % 360
+        compass = ["Bắc", "Đông Bắc", "Đông", "Đông Nam", "Nam", "Tây Nam", "Tây", "Tây Bắc"]
+        directions = [compass[int((angle + 22.5) // 45) % 8] for angle in angles]
+        fig = go.Figure(go.Scatter(
+            x=frame["time"], y=angles, mode="markers", customdata=directions,
+            marker={"symbol": "triangle-up", "angle": angles, "size": 10, "color": color},
+            hovertemplate="%{x|%d/%m/%Y %H:%M}<br>%{customdata} · %{y:.1f}°<extra></extra>",
+        ))
+        fig.update_yaxes(range=[-8, 368], tickvals=[0, 90, 180, 270, 360],
+                         ticktext=["Bắc 0°", "Đông 90°", "Nam 180°", "Tây 270°", "Bắc 360°"])
     else:
-        fig = px.line(frame, x="time", y="value", markers=True)
+        fig = px.line(frame, x="time", y="value", markers=len(frame) <= 96,
+                      color_discrete_sequence=[color])
+        if variable == "Tốc độ gió":
+            fig.update_yaxes(rangemode="tozero")
+    if style != "direction":
+        fig.update_traces(
+            hovertemplate=f"%{{x|%d/%m/%Y %H:%M}}<br>{variable}: %{{y:.2f}} {unit}<extra></extra>",
+        )
     if payload.get("aggregation") == "mean" and unit not in {"mm", "MJ/m²", "°"}:
         for column, label in (("min", "Nhỏ nhất trong kỳ"), ("max", "Lớn nhất trong kỳ")):
             if column in frame:
                 fig.add_trace(go.Scatter(x=frame["time"], y=frame[column], mode="lines",
                                          name=label, line={"dash": "dot"}))
-    if payload.get("variable") == "wind_direction":
-        fig.update_traces(mode="markers")
-        fig.update_yaxes(range=[0, 360], tickvals=[0, 90, 180, 270, 360],
-                         ticktext=["Bắc 0°", "Đông 90°", "Nam 180°", "Tây 270°", "Bắc 360°"])
     fig.update_layout(
         xaxis_title="Thời gian Việt Nam (UTC+7)",
         yaxis_title=f"{variable} ({unit})" if unit else variable,
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
     )
+    frequency = payload.get("frequency", "hourly")
+    fig.update_xaxes(tickformat={"daily": "%d/%m/%Y", "monthly": "%m/%Y", "yearly": "%Y"}
+                     .get(frequency, "%H:%M<br>%d/%m"))
     if len(frame)==1:
         # Plotly's automatic range around a single datetime is +/- milliseconds.
         # Show one honest period label rather than a row of meaningless tiny ticks.
@@ -73,7 +102,6 @@ def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
         if 'period_end' in frame and pd.notna(frame['period_end'].iloc[0]):
             end=vietnam_display_times(frame['period_end']).iloc[0]
             if end>stamp: width=end-stamp
-        frequency=payload.get('frequency','hourly')
         date_format={'daily':'%d/%m/%Y','monthly':'%m/%Y','yearly':'%Y'}.get(frequency,'%d/%m/%Y %H:%M')
         fig.update_xaxes(range=[stamp-width/2,stamp+width/2],tickmode='array',tickvals=[stamp],ticktext=[stamp.strftime(date_format)])
     return fig

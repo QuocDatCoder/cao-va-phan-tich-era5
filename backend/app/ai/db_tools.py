@@ -6,7 +6,9 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from backend.app.ai.tool_schemas import ARGUMENT_MODELS, tool_definitions
+from backend.app.ai.tool_schemas import ARGUMENT_MODELS, tool_definitions,AnalysisArguments
+from backend.app.ai.chart_analysis import summarize_plot
+from backend.app.domain.public_variables import PUBLIC_VARIABLES
 from backend.app.domain.time_utils import to_utc_naive
 from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS
 from backend.app.providers.era5_provider import ERA5_VARIABLES
@@ -20,7 +22,7 @@ MAX_QUERY_HOURS = 366*24
 MAX_GRID_CHOICES = 20
 MAX_MISSING_RANGES = 24
 GUIDES = {
-    'supported_questions': 'ARE có thể trò chuyện, trả lời kiến thức phổ thông và giải thích code/thiết kế dự án kèm nguồn. Với số liệu thực tế, ARE tìm bộ đã lưu, xem metadata, kiểm tra thiếu/cảnh báo, thống kê và tổng hợp qua DB. Chỉ cần chọn bộ và khoảng ngày khi phân tích dữ liệu. Chưa dự báo, tìm web, anomaly/compare hay tự thu thập.',
+    'supported_questions': 'ARE hỗ trợ xã giao ngắn, khí tượng liên quan và giải thích code/thiết kế dự án kèm nguồn. Có thể tìm bộ đã lưu, kiểm tra thiếu/cảnh báo, thống kê, tổng hợp và phân tích biểu đồ đang xem qua DB. Khi có bộ lọc đã áp dụng, không cần nhập lại ngày/biến/lưới. Phân tích gồm cực trị, biến động và xu hướng mô tả; chưa kết luận nguyên nhân, dự báo, anomaly khí hậu hoặc tự thu thập.',
     'collect': 'Mở Thu thập, chọn nguồn, địa điểm hoặc vùng, biến và ngày rồi bấm Bắt đầu thu thập. Theo dõi job và đọc cảnh báo. Agent không tạo job hay gọi CDS thay bạn.',
     'saved_data': 'Vào Kho dữ liệu, tìm và bấm Xem dữ liệu. Chọn biến, điểm lưới và ngày rồi Áp dụng bộ lọc; có thể tải CSV. Bộ khác nhau không được tự trộn.',
     'charts': 'Có thể nhờ ARE chuẩn bị nút Mở trong Biểu đồ với biến, lưới, khoảng ngày giờ và chu kỳ cụ thể. Bấm nút để mở kết quả trên trang Biểu đồ. Nếu chưa đủ tham số, chọn trong form ở chat hoặc Bộ lọc biểu đồ. Kỳ tháng/năm chưa trọn không đại diện cho cả kỳ; Agent không tự tải CDS.',
@@ -39,6 +41,7 @@ class DatabaseTools:
             'read_collection_quality':self._quality,
             'analyze_collection':self._analyze,
             'usage_guide':self._guide,
+            'analyze_chart':self._chart,
         }
 
     @staticmethod
@@ -204,6 +207,27 @@ class DatabaseTools:
 
     def _guide(self,args):
         return self._result('ok',data={'topic':args.topic,'instructions':GUIDES[args.topic]},untrusted_text=False)
+
+    def _chart(self,args):
+        if args.variable is not None and args.variable not in PUBLIC_VARIABLES:
+            return self._result('invalid_arguments',message='Chỉ phân tích 6 biến chính; u/v là biến nguồn nội bộ.')
+        checked=self._analyze(AnalysisArguments(**args.model_dump(exclude={'focus'}),operation='statistics'))
+        if checked['status'] not in {'ok','partial','undefined'}:
+            return {**checked,'data':None}
+        if args.frequency is None:
+            return self._need(['frequency'],provenance=checked.get('provenance'))
+        p=checked['provenance']
+        grid=p['grid_location']
+        payload=self.collections.query(args.collection_id,'timeseries' if args.frequency=='hourly' else 'aggregate',
+            checked['metadata']['variable'],grid['latitude'],grid['longitude'],args.start,args.end,args.frequency,'auto')
+        data=summarize_plot(payload,args.frequency)
+        data['focus']=args.focus
+        metadata={**checked['metadata'],**{k:payload.get(k) for k in ['available_count','expected_count','count','coverage','complete','undefined_count']}}
+        status='ok' if payload.get('complete') else 'partial'
+        if not data['point_count']:
+            status='undefined' if payload.get('available_count') else 'no_data'
+        return self._result(status,data=data,metadata=metadata,provenance=p,
+            message='Statistics of the plotted period values, not source-hour extrema or causal inference.')
 
 
 def build_database_tools(settings):

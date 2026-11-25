@@ -42,10 +42,34 @@ class FakeCDS:
             Path(target).write_text("\n".join(lines), encoding="utf-8")
         else:
             times = np.array([np.datetime64("2025-01-01T00")+np.timedelta64(h, "h") for h in range(24)])
-            ds = xr.Dataset({"t2m": (("valid_time", "latitude", "longitude"),
-                                      np.full((24, 1, 1), 290.0))},
+            variables = {
+                "2m_temperature": ("t2m", 290.0),
+                "2m_dewpoint_temperature": ("d2m", 285.0),
+                "10m_u_component_of_wind": ("u10", 3.0),
+                "10m_v_component_of_wind": ("v10", 4.0),
+                "total_precipitation": ("tp", 0.001),
+                "surface_solar_radiation_downwards": ("ssrd", 1000000.0),
+            }
+            requested = request["variable"]
+            if isinstance(requested, str):
+                requested = [requested]
+            ds = xr.Dataset({variables[v][0]: (("valid_time", "latitude", "longitude"),
+                                      np.full((24, 1, 1), variables[v][1])) for v in requested},
                             coords={"valid_time": times, "latitude": [10.75], "longitude": [106.75]})
             ds.to_netcdf(target, engine="scipy")
+
+
+def test_era5_area_bundle_stores_all_variables_in_one_collection(collection):
+    _, _, _, _, _, cds, client = collection
+    created = client.post("/api/v1/downloads", json={
+        "source":"era5", "variable":"temperature", "all_variables":True, "area":AREA, **DATES})
+    assert created.status_code == 202, created.text
+    result = created.json()
+    job = client.get("/api/v1/jobs/"+result["job_id"]).json()
+    assert job["status"] == "completed", job
+    entry = client.get("/api/v1/collections/"+result["collection_id"]).json()
+    assert set(entry["summary"]["counts_by_variable"]) == set(BASE_VARIABLES)
+    assert len(cds.calls) == 6
 
 
 @pytest.fixture

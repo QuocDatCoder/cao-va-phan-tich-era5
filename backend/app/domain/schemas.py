@@ -175,6 +175,7 @@ class DownloadJobStatus(StrEnum):
 
 class DownloadRequest(BaseModel):
     variable: str = Field(min_length=1)
+    all_variables: bool = False
     start_date: date
     end_date: date
     area: DownloadArea | None = None

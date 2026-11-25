@@ -27,8 +27,8 @@ class SavedChat(BaseModel):
     reset_token: str=Field(default='',max_length=64)
 
 
-def storage_key(base_url):
-    return 'era5.are.chat.v1.'+sha256(base_url.rstrip('/').encode()).hexdigest()[:20]
+def storage_key(base_url, username=None):
+    return 'era5.are.chat.v1.'+sha256((base_url.rstrip('/')+('\0'+username if username else '')).encode()).hexdigest()[:20]
 
 
 def snapshot(state):
@@ -38,7 +38,7 @@ def snapshot(state):
         result=message.get('result')
         if result:
             # Keep visible evidence/actions, not request arguments, usage or code excerpts.
-            saved['result']={key:result[key] for key in ['answer_kind','completed','verified','actions'] if key in result}
+            saved['result']={key:result[key] for key in ['answer_kind','completed','verified','actions','collection_job'] if key in result}
             saved['result']['evidence']=[dict(tool=e['tool'],result=e['result'])
                 for e in result.get('evidence',[]) if e.get('tool')!='project_knowledge']
         messages.append(saved)
@@ -96,8 +96,13 @@ export default function(component) {
     state.revision = data.revision;
     try {
       window.localStorage.setItem(data.storage_key, JSON.stringify(data.snapshot));
-      setStateValue('saved', {ok:true, revision:data.revision});
+      // Successful storage needs no server ACK: it would redraw the chat and
+      // close native selectors while the user is interacting. Notify only when
+      // recovering from a previously reported storage error.
+      if (state.failed) setStateValue('saved', {ok:true, revision:data.revision});
+      state.failed = false;
     } catch (_) {
+      state.failed = true;
       setStateValue('saved', {ok:false, revision:data.revision});
     }
   }
@@ -112,7 +117,7 @@ _BRIDGE=st.components.v2.component('era5_are_history',html='<span aria-hidden="t
 
 
 def _rerender_chat():
-    # The component belongs to the chat fragment; its event reruns that fragment.
+    # The bridge belongs to the chat fragment; events rerun that fragment.
     pass
 
 
@@ -126,7 +131,7 @@ def _saved_callback():
 def sync_history(api):
     state=st.session_state
     ready=state.get('ai_chat_history_loaded',False)
-    data=dict(action='load',storage_key=storage_key(api.base_url),pending=bool(state.get('ai_chat_pending')))
+    data=dict(action='load',storage_key=storage_key(api.base_url,state.get('auth_username')),pending=bool(state.get('ai_chat_pending')))
     if ready:
         payload=snapshot(state)
         encoded=json.dumps(payload,ensure_ascii=False,sort_keys=True,allow_nan=False)

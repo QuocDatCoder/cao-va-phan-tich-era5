@@ -10,11 +10,12 @@ textColor = "#18332F"
 borderColor = "#D5E2DF"
 
 [theme.dark]
-primaryColor = "#2DD4BF"
-backgroundColor = "#101B1A"
-secondaryBackgroundColor = "#1B2B29"
-textColor = "#E5F2EF"
-borderColor = "#36504B"
+primaryColor = "#2C67C5"
+linkColor = "#A7CBFC"
+backgroundColor = "#181818"
+secondaryBackgroundColor = "#343434"
+textColor = "#F3F3F3"
+borderColor = "#505050"
 
 [server]
 fileWatcherType = "poll"

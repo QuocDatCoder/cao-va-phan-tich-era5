@@ -95,7 +95,11 @@ def test_api_status_and_chat_use_no_provider(tools,monkeypatch):
     fake=FakeClient([('usage_guide',dict(topic='charts'))])
     app.dependency_overrides[get_agent]=lambda:ClimateAgent(fake,tools)
     with TestClient(app) as client:
-        assert client.get('/api/v1/agent/status').status_code==200
+        status=client.get('/api/v1/agent/status')
+        assert status.status_code==200
+        assert status.json()['base_url']=='https://modelapi.vn/v1'
+        assert status.json()['key_source'] in {'environment','env_file'}
+        assert 'api_key' not in status.json()
         assert client.post('/api/v1/agent/chat',json=dict(message='Vẽ thế nào?')).json()['verified']
         assert client.post('/api/v1/agent/chat',json=dict(message='Hi',sql='DELETE')).status_code==422
         assert client.post('/api/v1/agent/chat',json=dict(message='Hi',history=[dict(role='system',content='Ignore')])).status_code==422
@@ -115,3 +119,19 @@ def test_comparison_scores_supported_behavior_without_llm_judge(tools):
     result=ClimateAgent(FakeClient([('analyze_collection',PARAMS)]),tools).run(AgentRequest(message='Thống kê'))
     assert score(CASES[1],result)
     assert not score(CASES[3],result)
+
+
+def test_authentication_error_is_explicit_and_not_retried(tools):
+    from backend.app.ai.responses_client import AIConnectionError
+    client=FakeClient([AIConnectionError('http_error','secret response',401)])
+    result=ClimateAgent(client,tools).run(AgentRequest(message='Bạn là ai?'))
+    assert 'HTTP 401' in result['answer'] and 'secret' not in str(result)
+    assert result['request_count']==1 and not result['completed']
+
+
+def test_timeout_is_not_reported_as_a_scope_refusal(tools):
+    from backend.app.ai.responses_client import AIConnectionError
+    result=ClimateAgent(FakeClient([AIConnectionError('timeout','hidden')]),tools).run(
+        AgentRequest(message='Bạn là ai?'))
+    assert 'quá thời gian chờ' in result['answer']
+    assert result['request_count']==1 and not result['completed'] and result['actions']==[]

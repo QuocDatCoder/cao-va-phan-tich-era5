@@ -1,4 +1,5 @@
 """AI is opt-in per submitted message; no startup/model calls or CDS dependency."""
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
@@ -30,8 +31,10 @@ def agent_status():
     try:
         settings = AISettings()
         configured = bool(settings.api_key and settings.api_key.get_secret_value().strip())
-        return dict(configured=configured, model=settings.model, reasoning_effort=settings.reasoning_effort,
-                    query_mode='db_only',capabilities=['basic_social','related_meteorology','project_knowledge','stored_climate_data'])
+        return dict(configured=configured, model=settings.model, base_url=settings.base_url,
+                    key_source='environment' if os.environ.get('AI_API_KEY') is not None else 'env_file',
+                    reasoning_effort=settings.reasoning_effort,
+                    query_mode='db_only',capabilities=['general_conversation','project_knowledge','stored_climate_data'])
     except ValidationError:
         return dict(configured=False, model=None, query_mode='db_only')
 

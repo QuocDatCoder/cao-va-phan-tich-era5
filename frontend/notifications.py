@@ -186,22 +186,12 @@ def notify_info(message: str, icon: str = "ℹ️"):
 
 
 def render_empty_data_notice(section_name: str = "dữ liệu"):
-    """Display a prominent visual card when no data is downloaded yet."""
-    st.html(f"""
-        <div class="era5-visual-alert warning">
-            <div class="alert-icon">⚠️</div>
-            <div class="alert-content">
-                <div class="alert-title">Chưa tải dữ liệu khí hậu</div>
-                <div class="alert-desc">
-                    Hệ thống chưa tìm thấy bộ dữ liệu ERA5 nào được lưu trong kho để hiển thị {section_name}. 
-                    Vui lòng sang mục <strong>Thu thập</strong> để tạo tác vụ tải dữ liệu trước.
-                </div>
-            </div>
-        </div>
-    """)
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if st.button("🚀 Sang mục Thu thập ngay", key=f"empty_goto_collect_{section_name}", type="primary"):
-            st.session_state['workflow_section'] = 'Thu thập'
-            st.query_params['view'] = 'Thu thập'
-            st.rerun()
+    """Offer the next action after the empty-library toast."""
+    st.button("Sang mục Thu thập", key=f"empty_goto_collect_{section_name}",
+              type="primary", on_click=_go_to_collection)
+
+
+def _go_to_collection():
+    st.session_state['workflow_section'] = 'Thu thập'
+    st.query_params['view'] = 'Thu thập'
+    st.rerun()

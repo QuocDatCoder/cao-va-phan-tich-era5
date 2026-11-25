@@ -7,10 +7,13 @@ from frontend.api_client import DashboardApiClient
 
 _APP = """
 import streamlit as st
-from frontend.auth import render_login_gate
+from frontend.auth import logout_account, render_login_gate
 from frontend.api_client import DashboardApiClient
 
-render_login_gate(DashboardApiClient())
+st.session_state.setdefault("auth_restore_ready", True)
+api = DashboardApiClient(access_token=st.session_state.get("auth_access_token"))
+if render_login_gate(api):
+    st.button("Đăng xuất", key="auth_logout", on_click=logout_account, args=(api,))
 """
 
 

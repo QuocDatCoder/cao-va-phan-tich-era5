@@ -107,10 +107,8 @@ def _render_collection(client, params):
         try:
             response = client.create_download(payload)
             st.session_state["collection_jobs"] = {**jobs, context: response["job_id"]}
-            st.success("Đã tiếp nhận tác vụ. Theo dõi trạng thái bên dưới.")
             notify_success("Đã tiếp nhận tác vụ thu thập dữ liệu!")
         except DashboardApiError as exc:
-            st.error(str(exc))
             notify_error(f"Lỗi khởi tạo tác vụ: {str(exc)}")
     _poll_collection(client, context)
 
@@ -213,7 +211,6 @@ def _render_job_status(client, context, job=None, show_quality: bool = True):
             st.caption('Hủy sẽ dừng xử lý cục bộ và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để dừng; yêu cầu phía CDS có thể vẫn tồn tại.')
         cancel_error = st.session_state.get('cancel_job_error')
         if cancel_error and cancel_error[0] == job_id:
-            st.error(cancel_error[1])
             notify_error(f"Lỗi khi hủy tác vụ: {cancel_error[1]}")
         with st.container(key="hide_source_details_expander"):
             with st.expander("Chi tiết nguồn và biến"):
@@ -256,7 +253,6 @@ def _render_job_status(client, context, job=None, show_quality: bool = True):
             st.session_state["collection_completed"] = job_id
             _cached_get.clear()
     except DashboardApiError as exc:
-        st.error(str(exc))
         notify_error(f"Lỗi API: {str(exc)}")
 
 
@@ -297,7 +293,6 @@ def _render_live_updates(client, params, follow, days, auto_sync):
             st.caption(f"Tác vụ tải: {_translate_status(job['status'])}")
             if job["status"] == "failed":
                 err_msg = job.get("error") or "Tác vụ tải thất bại."
-                st.error(err_msg)
                 notify_error(f"Lỗi tải dữ liệu: {err_msg}")
         events = completion_events(st.session_state.get("live_events", {}), states, job)
         old_revision = st.session_state.get("live_revision")
@@ -312,7 +307,6 @@ def _render_live_updates(client, params, follow, days, auto_sync):
             current = states[0]
             st.write("Trạng thái: " + _translate_status(current["status"]))
             if current.get("error"):
-                st.error(current["error"])
                 notify_error(f"Lỗi đồng bộ: {current['error']}")
             synced = latest_synced_date(states)
             if synced:
@@ -329,7 +323,6 @@ def _render_live_updates(client, params, follow, days, auto_sync):
             or (follow and previous_latest != latest_synced_date(states))):
             st.rerun(scope="app")
     except DashboardApiError as exc:
-        st.error("Không đọc được trạng thái đồng bộ: " + str(exc))
         notify_error("Không đọc được trạng thái đồng bộ: " + str(exc))
 
 
@@ -597,7 +590,6 @@ def _run_request(
         with st.spinner(f"Đang tải {label.lower()}..."):
             payload = request()
     except DashboardApiError as exc:
-        st.error(str(exc))
         notify_error(f"Lỗi tải dữ liệu: {str(exc)}")
         return
     if payload.get("query_mode") == "db_only":

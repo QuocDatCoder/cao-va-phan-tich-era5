@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AISettings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_prefix='AI_', extra='ignore')
 
-    base_url: str = 'https://api.modelapi.vn/v1'
+    base_url: str = 'https://modelapi.vn/v1'
     api_key: SecretStr | None = None
     model: str = Field(default='gpt-6-luna', min_length=1)
     reasoning_effort: Literal['low', 'medium', 'high'] = 'low'

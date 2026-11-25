@@ -34,7 +34,7 @@ def applied_view(state,query):
         return AppliedView(page=page,collection_id=cid).model_dump(mode='json')
 
 
-def execute_action(api,raw,index):
+def execute_action(api,raw,index,keep_chat=False):
     try:
         action=UIAction.model_validate(raw)
         api=replace(api,timeout_seconds=min(api.timeout_seconds,15))
@@ -111,5 +111,5 @@ def execute_action(api,raw,index):
         # pin that would override the next dataset the user opens in the UI.
         state.pop('ai_chat_selected',None)
         state.pop('ai_chat_selected_name',None)
-    state['ai_chat_open']=False
+    state['ai_chat_open']=keep_chat
     st.rerun(scope='app')

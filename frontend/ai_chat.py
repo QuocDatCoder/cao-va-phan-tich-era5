@@ -14,7 +14,7 @@ from frontend.chat_history import sync_history
 from frontend.chat_actions import applied_view,execute_action
 from backend.app.domain.ui_actions import UIAction,VIEW_LABELS
 from frontend.components.charts import variable_label
-from frontend.components.weather_pet import PET_CSS, PET_THEMES, pet_mode, pet_art
+from frontend.components.weather_pet import PET_CSS, themed_pet_art
 
 SUGGESTIONS = ['Kho đang có những bộ dữ liệu nào?', 'Làm sao vẽ biểu đồ?', 'Ứng dụng hỗ trợ hỏi những gì?']
 CSS_PATH = Path(__file__).with_name('components').joinpath('ai_chat.css')
@@ -34,6 +34,11 @@ def _toggle():
     st.session_state['ai_chat_open'] = not st.session_state.get('ai_chat_open', False)
     if st.session_state['ai_chat_open']:
         st.session_state['ai_chat_unread'] = False
+
+
+def _close():
+    # Closing is idempotent, including when a preceding widget rerun is pending.
+    st.session_state['ai_chat_open']=False
 
 
 def _select(cid,name='Bộ đang xem'):
@@ -72,6 +77,9 @@ def _clear():
     st.session_state.pop('ai_chat_history_blocked',None)
     st.session_state.pop('ai_chat_history_error',None)
     st.session_state.pop('ai_chat_action_error',None)
+    for key in list(st.session_state):
+        if key.startswith('are_collect_'):
+            del st.session_state[key]
     _unselect()
 
 
@@ -151,6 +159,10 @@ def _evidence(api,result, index):
         if p.get('start'):
             st.caption(f"{_date_label(p['start'])} → {_date_label(p['end'])}")
     data = last.get('data')
+    if evidence[-1]['tool']=='prepare_collection' and last['status']=='ok':
+        from frontend.are_collection import render_collection_draft
+        render_collection_draft(api,data,index)
+        return
     if evidence[-1]['tool']=='prepare_view' and last['status']=='needs_clarification' and isinstance(data,dict) and data.get('choices'):
         _view_form(api,data,index)
     if evidence[-1]['tool']=='answer_question' and isinstance(data,dict):
@@ -218,11 +230,15 @@ def _actions(api,result,index):
             p=action.parameters
             st.caption(f"{variable_label(p.variable)} · {VIEW_LABELS[action.view_kind]} · "+
                        {'hourly':'Giờ','daily':'Ngày','monthly':'Tháng','yearly':'Năm'}[p.frequency])
-        st.button(label,key=f'ai_action_{index}_{n}',on_click=execute_action,args=(api,action.model_dump(mode='json'),index),
+        evidence=(result.get('evidence') or [{}])[-1]
+        pattern=((evidence.get('result') or {}).get('data') or {}).get('daily_pattern') if evidence.get('tool')=='analyze_chart' else None
+        segment=bool(n==0 and pattern and abs(pattern['notable_delta'])>1e-9 and action.type=='open_chart')
+        if segment:
+            label='Xem đoạn biểu đồ · '+pattern['notable_day']
+        st.button(label,key=f'ai_action_{index}_{n}',on_click=execute_action,args=(api,action.model_dump(mode='json'),index,segment),
                   disabled=bool(st.session_state.get('ai_chat_pending')),type='primary' if n==0 else 'secondary')
     error=st.session_state.get('ai_chat_action_error')
     if error and error[0]==index:
-        st.error(error[1])
         notify_error(f"Lỗi AI: {error[1]}")
 
 
@@ -272,43 +288,33 @@ def render_ai_chat(api):
     sync_history(api)
     pending = st.session_state.get('ai_chat_pending')
     messages = st.session_state['ai_chat_messages']
-    last_result=next((m.get('result') for m in reversed(messages) if m.get('result')),None)
-    mode=pet_mode(st.session_state.get('ai_pet_theme','auto'),pending=bool(pending),last_result=last_result)
     st.html(_styles(CSS_PATH.stat().st_mtime_ns))
     with st.container(key='ai_chat_launcher'):
-        st.html('<div class="pet-launch-art">'+pet_art(mode,unread=st.session_state.get('ai_chat_unread',False))+
-                '<span class="pet-launch-caption">ARE</span></div>')
+        st.html('<div class="pet-launch-art">'+themed_pet_art(unread=st.session_state.get('ai_chat_unread',False))+
+                '<span class="pet-launch-caption">ARE</span></div>'
+                '<div class="pet-launch-lines" aria-hidden="true">'
+                '<span>Xin chào!</span>'
+                '<span>Tôi là trợ lý ARE!</span>'
+                '<span>Bạn cần giúp đỡ gì không?</span>'
+                '<span>Cần tìm dữ liệu ERA5?</span>'
+                '<span>Mình giúp bạn đọc biểu đồ.</span>'
+                '<span>Cần kiểm tra dữ liệu thiếu?</span>'
+                '<span>Muốn xem lại dữ liệu đã lưu?</span>'
+                '<span>Có câu hỏi về ERA5 không?</span>'
+                '</div>')
         st.button('AI chat',key='ai_chat_toggle',type='tertiary',
                   on_click=_toggle,help='ARE có câu trả lời mới' if st.session_state.get('ai_chat_unread') else 'Trò chuyện với ARE')
     if not st.session_state['ai_chat_open']:
         return
     with st.container(key='ai_chat_shell'):
         with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_header'):
-            st.html('<div class="pet-heading"><div class="pet-heading-art">'+pet_art(mode,small=True)+
+            st.html('<div class="pet-heading"><div class="pet-heading-art">'+themed_pet_art(small=True)+
                     '</div><div><strong>ARE</strong></div></div>')
-            with st.popover('Tùy chọn',icon=':material/more_horiz:',type='tertiary',key='ai_chat_preferences',help='Đổi diện mạo và trò chuyện mới'):
-                with st.container(width=260):
-                    st.caption('Diện mạo')
-                    st.pills('Diện mạo',list(PET_THEMES),format_func=PET_THEMES.get,default=None if 'ai_pet_theme' in st.session_state else 'auto',
-                             required=True,key='ai_pet_theme',label_visibility='collapsed',persist_state='session')
-                    st.button('Làm mới',key='ai_chat_clear',on_click=_clear,disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),icon=':material/refresh:',width='stretch',help='Xóa lịch sử và bắt đầu cuộc trò chuyện mới')
-            st.button('Thu gọn',icon=':material/close:',key='ai_chat_close',on_click=_toggle,type='tertiary',help='Thu gọn, giữ cuộc trò chuyện')
-        selected = st.session_state.get('ai_chat_selected')
-        if selected:
-            with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_context'):
-                name=escape(st.session_state.get('ai_chat_selected_name','Bộ đã chọn'))
-                st.html(f'<div class="chat-context-label" title="{name}">Đang hỏi · {name}</div>')
-                st.button('Bỏ chọn',key='ai_chat_unselect',icon=':material/close:',type='tertiary',disabled=bool(pending),on_click=_unselect,help='Bỏ chọn bộ dữ liệu')
-        else:
-            context=applied_view(st.session_state,st.query_params)
-            if context:
-                params=context['parameters']
-                text='Đang xem · '+(variable_label(params['variable']) if params else 'Thông tin bộ dữ liệu')
-                with st.container(key='ai_chat_context'):
-                    st.html('<div class="chat-context-label">'+escape(text)+'</div>')
+            st.button('Làm mới',key='ai_chat_clear',on_click=_clear,disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),icon=':material/refresh:',type='tertiary',help='Xóa lịch sử và bắt đầu cuộc trò chuyện mới')
+            st.button('Đóng chat',icon=':material/close:',key='ai_chat_close',on_click=_close,type='tertiary',help='Đóng khung chat và giữ cuộc trò chuyện')
         with st.container(height=320,key='ai_chat_messages',autoscroll=True,border=False):
             if not messages:
-                st.html('<div class="pet-welcome"><div class="pet-welcome-art">'+pet_art('cloud',small=True)+
+                st.html('<div class="pet-welcome"><div class="pet-welcome-art">'+themed_pet_art(small=True)+
                         '</div><strong>Chào bạn, mình là ARE!</strong></div>')
                 labels=['Tìm dữ liệu đã lưu','Hướng dẫn vẽ biểu đồ','ARE có thể giúp gì?']
                 for n, suggestion in enumerate(SUGGESTIONS):
@@ -335,6 +341,28 @@ def render_ai_chat(api):
                             _evidence(api,message['result'],i)
             if pending:
                 st.html(f'<div class="chat-wait" role="status"><span class="chat-wait-dots"><i></i><i></i><i></i></span>Đang kiểm tra dữ liệu… {int(monotonic()-pending[1])}s</div>')
+        selected = st.session_state.get('ai_chat_selected')
+        if selected:
+            with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_context'):
+                name=escape(st.session_state.get('ai_chat_selected_name','Bộ đã chọn'))
+                st.html(f'<div class="chat-context-label" title="{name}">Đang hỏi · {name}</div>')
+                st.button('Bỏ chọn',key='ai_chat_unselect',icon=':material/close:',type='tertiary',disabled=bool(pending),on_click=_unselect,help='Bỏ chọn bộ dữ liệu')
+        else:
+            context=applied_view(st.session_state,st.query_params)
+            if context:
+                params=context['parameters']
+                page=context['page']
+                saved=st.session_state.get(page+'_result')
+                title=(saved[2].get('place_name') if saved and saved[0]==context['collection_id'] else None) or 'Bộ đang mở'
+                text='Đang xem · '+title
+                if params:
+                    text+=f" · {variable_label(params['variable'])} · {_date_label(params['start'])} → {_date_label(params['end'])}"
+                with st.container(key='ai_chat_context'):
+                    st.html('<div class="chat-context-label">'+escape(text)+'</div>')
+        context=applied_view(st.session_state,st.query_params)
+        if context and context.get('parameters'):
+            st.button('Phân tích bộ đang xem', key='are_analyze_current',disabled=bool(pending),
+                      on_click=_submit,args=(api,'Phân tích chuyên gia biểu đồ đang xem. Tìm đặc điểm nổi bật và kiểm tra độ phủ.'))
         st.chat_input('Hỏi ARE…',key='ai_chat_input',max_chars=2000,
                       disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),submit_mode='disable',on_submit=_submit_input,args=(api,))
         if not st.session_state.get('ai_chat_history_loaded'):

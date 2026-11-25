@@ -14,6 +14,7 @@ from frontend.appearance import apply_appearance
 from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info
 from frontend.auth import render_login_gate
+from frontend.workspace_sidebar import render_sidebar
 
 SOURCES = {
     "land": "ERA5-Land · Đất liền",
@@ -31,47 +32,29 @@ def client(source):
 
 def render_dashboard():
     st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
+    apply_appearance()
     if not render_login_gate(client(None)):
         return
-    apply_appearance()
-    st.html("""
-        <style>
-        .era5-brand {position:fixed;top:1rem;left:1.25rem;z-index:999999;
-            margin:0;font-size:1.75rem;font-weight:700;line-height:1.5;
-            max-width:calc(100vw - 220px);white-space:nowrap;overflow:hidden;
-            text-overflow:ellipsis;pointer-events:none;}
-        @media(max-width:640px) {
-            .era5-brand {font-size:1.5rem;max-width:calc(100vw - 155px);}
-        }
-        </style>
-        <div class="era5-brand" role="heading" aria-level="1">ERA5 · Dữ liệu khí hậu</div>
-    """)
+    if st.session_state.pop('are_open_collection_jobs', False):
+        st.session_state['workflow_section'] = 'Thu thập'
+        st.session_state['apply_shared'] = True
+        st.session_state['ai_chat_open'] = False
+    render_sidebar(client(None))
     from frontend.ai_chat import render_ai_chat
-    render_ai_chat(client(None))
-    render_workspace()
+    with st.container(key='era5_floating_chat'):
+        render_ai_chat(client(None))
+    with st.container(key='are_workspace'):
+        render_workspace()
 
 
 @st.fragment
 def render_workspace():
-    navigation = {
-        'Thu thập': ':material/cloud_download: Thu thập',
-        'Dữ liệu đã lưu': ':material/folder_open: Kho dữ liệu',
-        'Biểu đồ': ':material/monitoring: Biểu đồ',
-    }
-    if 'workflow_section' not in st.session_state:
-        requested_view = st.query_params.get('view')
-        if requested_view in navigation:
-            st.session_state['workflow_section'] = requested_view
-    section = st.pills(
-        'Chức năng', list(navigation), format_func=navigation.get,
-        default=None if 'workflow_section' in st.session_state else 'Thu thập', required=True, width='content', wrap=False,
-        key='workflow_section', label_visibility='collapsed',
-    )
+    section = st.session_state.get('workflow_section', 'Thu thập')
     st.query_params['view'] = section
     # One persistent header row for all sections, outside the loading/content area.
     with st.container(key='workflow_section_header', horizontal=True,
                       vertical_alignment='center', gap='small', wrap=False,
-                      height=56, border=False):
+                      height=44, border=False):
         st.header(section, anchor=False)
         if section in {'Dữ liệu đã lưu','Biểu đồ'}:
             prefix = 'chart' if section == 'Biểu đồ' else 'stored'
@@ -140,7 +123,6 @@ def render_section(section):
         else:
             render_charts()
     except DashboardApiError as exc:
-        st.error(str(exc))
         notify_error(f"Lỗi API: {str(exc)}")
 
 
@@ -217,17 +199,14 @@ def location_search(prefix):
     if submitted:
         if len(query.strip()) < 2:
             msg = "Nhập ít nhất 2 ký tự để tìm địa điểm."
-            st.info(msg)
             notify_warning(msg, icon="ℹ️")
         else:
             places = search_places(query.strip())
             if places is None:
                 msg = "Chưa kết nối được dịch vụ tìm địa điểm. Bạn vẫn có thể nhập tọa độ."
-                st.warning(msg)
                 notify_warning(msg, icon="⚠️")
             elif not places:
                 msg = f"Không tìm thấy địa điểm '{query.strip()}'. Thử tên khác hoặc nhập tọa độ trực tiếp."
-                st.info(msg)
                 notify_warning(msg, icon="📍")
             else:
                 st.session_state[prefix+"_places"] = places
@@ -240,6 +219,25 @@ def location_search(prefix):
                      on_change=apply_place, args=(prefix,))
 
 
+def submit_collection_job(api, payload, params):
+    from frontend.library import invalidate_reads, invalidate_job_list
+
+    response = api.create_download(payload)
+    source = payload['source']
+    job_id = response['job_id']
+    remember(source, params)
+    invalidate_reads()
+    invalidate_job_list()
+    st.session_state.setdefault('job_filters', {})[job_id] = dict(source=source, **params)
+    st.session_state.setdefault('collection_jobs', {})[f'{api.base_url}|{source}'] = job_id
+    st.session_state['workflow_selected_job'] = job_id
+    st.session_state.pop('workflow_job_detail', None)
+    st.session_state.setdefault('workflow_jobs_to_notify', set()).add(job_id)
+    st.session_state['latest_collection_id'] = response.get('collection_id')
+    st.session_state.pop('saved_library', None)
+    return response
+
+
 def render_collection():
     restore_filter('collect')
     col_src, col_loc = st.columns([1, 2], vertical_alignment="top")
@@ -248,10 +246,14 @@ def render_collection():
     with col_loc:
         location_search("collect")
     with st.form("collection_form"):
-        c_var, c_start, c_end = st.columns([1.4, 1, 1])
-        with c_var:
-            variable = VARIABLES[st.selectbox("Biến khí hậu", list(VARIABLES), key="collect_variable",
-                help="Land thu thập cả sáu biến gốc trong một lần. ERA5 thu thập biến đang chọn.")]
+        if source in {"land", "era5"}:
+            variable = "temperature"  # Primary variable required by the existing download API.
+            st.caption("Một lần thu thập lấy đủ 6 biến khí hậu.")
+            c_start, c_end = st.columns(2)
+        else:
+            c_var, c_start, c_end = st.columns([1.4, 1, 1])
+            with c_var:
+                variable = VARIABLES[st.selectbox("Biến khí hậu", list(VARIABLES), key="collect_variable")]
         with c_start:
             start = st.date_input("Ngày bắt đầu (UTC+7)", value=None if 'collect_start' in st.session_state else date(2025, 1, 1), key="collect_start")
         with c_end:
@@ -269,17 +271,14 @@ def render_collection():
     if submitted:
         if start > end:
             msg = "Khoảng ngày không hợp lệ: Ngày bắt đầu phải trước hoặc bằng ngày kết thúc!"
-            st.error(msg)
             notify_error(msg)
         elif source == "era5" and (north < south or west > east):
             msg = "Tọa độ vùng không hợp lệ: Vĩ độ Bắc phải lớn hơn Nam, và Kinh độ Tây phải nhỏ hơn Đông!"
-            st.error(msg)
             notify_error(msg)
         else:
             a,b = local_date_range(start,end)
             centre = point if source != 'era5' else dict(latitude=(north+south)/2,longitude=(west+east)/2)
             params = dict(variable=variable, **centre, start=a, end=b, frequency='hourly',aggregation='auto')
-            remember(source, params)
             utc = timezone.utc
             payload = dict(source=source, variable=variable,
                 start_date=datetime.fromisoformat(a).astimezone(utc).date().isoformat(),
@@ -287,23 +286,15 @@ def render_collection():
             selected_place = next((p for p in st.session_state.get('collect_places', [])
                 if p['label'] == st.session_state.get('collect_place')), None)
             payload.update(requested_start=a, requested_end=b, request_timezone='UTC+7')
+            if source == "era5":
+                payload['all_variables'] = True
             if source != 'era5' and selected_place:
                 payload.update(place_name=selected_place['label'], selected_place={
                     k:selected_place[k] for k in ['latitude','longitude']})
             payload.update({"area": dict(north=north, south=south, west=west, east=east)}
                            if source == "era5" else {"location": point})
             api = client(source)
-            response = api.create_download(payload)
-            from frontend.library import invalidate_reads, invalidate_job_list
-            invalidate_reads()
-            st.session_state.setdefault('job_filters', {})[response['job_id']] = dict(source=source, **params)
-            st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}),
-                                                    f"{api.base_url}|{source}": response["job_id"]}
-            st.session_state["workflow_selected_job"] = response["job_id"]
-            st.session_state['latest_collection_id'] = response.get('collection_id')
-            invalidate_job_list()
-            st.session_state.pop('saved_library', None)
-            st.success("Đã tiếp nhận tác vụ.")
+            submit_collection_job(api, payload, params)
             notify_success("Đã tiếp nhận tác vụ thu thập ERA5 thành công!")
     render_collection_jobs(source)
     _render_page_footer()
@@ -497,8 +488,20 @@ def _update_job_list(api):
         st.session_state['workflow_jobs_due'] = monotonic() + 15
         try:
             checked_at = datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M:%S')
-            st.session_state['workflow_job_list'] = [dict(job, _status_checked_at=checked_at)
-                                                     for job in pending[1].result()]
+            jobs = [dict(job, _status_checked_at=checked_at) for job in pending[1].result()]
+            tracked = st.session_state.setdefault('workflow_jobs_to_notify', set())
+            for job in jobs:
+                jid, status = job['job_id'], job['status']
+                if status in {'queued','running','cancelling'}:
+                    tracked.add(jid)
+                elif jid in tracked:
+                    tracked.discard(jid)
+                    if status == 'completed':
+                        if st.session_state.get('workflow_job_detail') == jid:
+                            st.session_state.pop('workflow_job_detail', None)
+                        name = job.get('collection_name')
+                        notify_success(f'Đã hoàn tất thu thập: {name}' if name else 'Đã hoàn tất thu thập dữ liệu.')
+            st.session_state['workflow_job_list'] = jobs
             st.session_state.pop('workflow_jobs_error', None)
         except DashboardApiError as exc:
             st.session_state['workflow_jobs_error'] = str(exc)
@@ -521,7 +524,6 @@ def render_collection_jobs(source):
     try:
         _render_collection_jobs(client(source))
     except DashboardApiError as exc:
-        st.error(str(exc))
         notify_error(f"Lỗi API: {str(exc)}")
 
 
@@ -536,7 +538,6 @@ def _render_collection_jobs(api):
     _update_job_list(api)
     error = st.session_state.get('workflow_jobs_error')
     if error:
-        st.error(error)
         notify_error(f"Lỗi tải danh sách tác vụ: {error}")
     if 'workflow_jobs_pending' in st.session_state:
         st.info('Đang tải tác vụ thu thập… Bạn vẫn có thể tìm địa điểm và điền form phía trên.', icon=':material/sync:')
@@ -567,13 +568,27 @@ def _render_collection_jobs(api):
     ) for j in jobs}
     # Streamlit can retain the displayed formatted label for an unchanged ID.
     # Remount only when labels change; preserve the selected job independently.
-    choice_key = 'workflow_job_choice_' + str(hash(tuple(labels.items())))
+    automatic = st.session_state['workflow_selected_job']
+    show_default = (next(j['status'] for j in jobs if j['job_id']==automatic) != 'completed'
+                    or st.session_state.get('workflow_job_detail') == automatic)
+    choice_key = 'workflow_job_choice_' + str(hash((tuple(labels.items()), automatic, show_default)))
     selected = st.selectbox("Xem chi tiết tác vụ", ids, format_func=labels.get,
-                            index=ids.index(st.session_state['workflow_selected_job']), key=choice_key)
+                            index=ids.index(automatic) if show_default else None,
+                            placeholder='Chọn tác vụ để xem trạng thái', key=choice_key,
+                            on_change=_choose_job_detail,args=(choice_key,))
+    if selected is None:
+        return
     st.session_state['workflow_selected_job'] = selected
     context = "workflow_selected"
     st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}), context: selected}
     _render_job_status(api, context, job=next(job for job in jobs if job['job_id'] == selected), show_quality=False)
+
+
+def _choose_job_detail(key):
+    selected = st.session_state.get(key)
+    if selected:
+        st.session_state['workflow_selected_job'] = selected
+        st.session_state['workflow_job_detail'] = selected
 
 
 def query_form(prefix, charts=False):

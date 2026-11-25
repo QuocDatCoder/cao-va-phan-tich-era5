@@ -98,7 +98,7 @@ def actions_from_evidence(evidence):
     if not cid:
         return []
     actions=[UIAction(type='open_data',collection_id=cid).model_dump(mode='json')]
-    if last['tool']=='analyze_collection' and r['status'] in {'ok','partial'}:
+    if last['tool'] in {'analyze_collection','analyze_chart'} and r['status'] in {'ok','partial'}:
         m=r['metadata']
         args=last['arguments']
         params=ViewParameters(variable=m['variable'],**m['grid_location'],start=p['start'],end=p['end'],
@@ -106,6 +106,11 @@ def actions_from_evidence(evidence):
         kind='statistics' if args.get('operation')=='statistics' else 'timeseries'
         actions=[UIAction(type='open_chart',collection_id=cid,parameters=params,view_kind=kind).model_dump(mode='json'),
                  UIAction(type='open_data',collection_id=cid,parameters=params.model_copy(update={'frequency':'hourly'})).model_dump(mode='json')]
+        pattern=data.get('daily_pattern')
+        if pattern and abs(pattern['notable_delta'])>1e-9:
+            day=pattern['notable_day']
+            segment=params.model_copy(update={'start':day+'T00:00:00+07:00','end':day+'T23:00:00+07:00','frequency':'hourly'})
+            actions.insert(0,UIAction(type='open_chart',collection_id=cid,parameters=segment).model_dump(mode='json'))
     elif r['status']=='ok':
         actions.append(UIAction(type='open_chart',collection_id=cid).model_dump(mode='json'))
     return actions

@@ -47,13 +47,16 @@ def test_registration_login_and_protected_api(api_client):
 
     assert client.get("/health").status_code == 200
     assert client.get("/api/v1/synchronization/config").status_code == 401
-    assert client.get("/api/v1/auth/me", headers=headers).json() == {
-        "id": 1,
-        "username": "alice_1",
-    }
+    me = client.get("/api/v1/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["username"] == "alice_1"
+    assert me.json()["is_admin"] is False
     assert client.get("/api/v1/synchronization/config", headers=headers).status_code == 200
 
     with sqlite3.connect(database_path) as connection:
+        user_id = connection.execute(
+            "SELECT id FROM users WHERE username = ?", ("alice_1",)
+        ).fetchone()[0]
         password_hash = connection.execute(
             "SELECT password_hash FROM users WHERE username = ?",
             ("alice_1",),
@@ -61,6 +64,7 @@ def test_registration_login_and_protected_api(api_client):
         stored_token_hash = connection.execute(
             "SELECT token_hash FROM auth_sessions"
         ).fetchone()[0]
+    assert me.json()["id"] == user_id
     assert password_hash != "correct horse battery"
     assert password_hash.startswith("$argon2id$")
     assert stored_token_hash != token

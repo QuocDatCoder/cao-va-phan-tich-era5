@@ -34,7 +34,7 @@ def agent_status():
         return dict(configured=configured, model=settings.model, base_url=settings.base_url,
                     key_source='environment' if os.environ.get('AI_API_KEY') is not None else 'env_file',
                     reasoning_effort=settings.reasoning_effort,
-                    query_mode='db_only',capabilities=['basic_social','related_meteorology','project_knowledge','stored_climate_data'])
+                    query_mode='db_only',capabilities=['general_conversation','project_knowledge','stored_climate_data'])
     except ValidationError:
         return dict(configured=False, model=None, query_mode='db_only')
 

@@ -2,10 +2,30 @@
 from datetime import datetime,timedelta,timezone
 from statistics import fmean,pstdev,median
 from math import isfinite
+from collections import defaultdict
 from backend.app.domain.wind import circular_statistics
 
 LOCAL=timezone(timedelta(hours=7))
 FREQUENCIES={'hourly':'giờ','daily':'ngày','monthly':'tháng','yearly':'năm'}
+
+
+def daily_pattern(rows):
+    """Compare only complete local days, using the same 24 hours for each day."""
+    days=defaultdict(dict)
+    for row in rows:
+        stamp=datetime.fromisoformat(row['time']).astimezone(LOCAL)
+        days[stamp.date()][stamp.hour]=row['value']
+    complete=[(day, values) for day,values in sorted(days.items()) if len(values)==24]
+    if len(complete)<3:
+        return None
+    hourly=[fmean(values[hour] for _,values in complete) for hour in range(24)]
+    daily=[(day,fmean(values.values())) for day,values in complete]
+    center=median(value for _,value in daily)
+    notable, value=max(daily,key=lambda item:abs(item[1]-center))
+    return dict(days=len(complete),excluded_days=len(days)-len(complete),
+                peak_hour=hourly.index(max(hourly)),low_hour=hourly.index(min(hourly)),
+                hourly_range=max(hourly)-min(hourly),notable_day=notable.isoformat(),
+                notable_delta=value-center)
 
 
 def label(stamp):
@@ -29,6 +49,8 @@ def summarize_plot(payload,frequency):
     if circular:
         # 359°→1° is not a large negative change; avoid all linear diagnostics.
         return result
+    if frequency=='hourly' and payload['unit'] in {'°C','m/s'}:
+        result['daily_pattern']=daily_pattern(rows)
     low,high=min(rows,key=lambda p:p['value']),max(rows,key=lambda p:p['value'])
     result.update(min=dict(time=low['time'],value=low['value']),max=dict(time=high['time'],value=high['value']),
                   amplitude=high['value']-low['value'],net_change=values[-1]-values[0])
@@ -64,6 +86,14 @@ def render_chart_analysis(result):
         f"Nguồn: {p['dataset']} · {p['place_name']} · lưới {p['grid_location']['latitude']}, {p['grid_location']['longitude']}.",
         f"Khoảng áp dụng: {label(p['start'])} → {label(p['end'])}.",
         f"Độ phủ giờ nguồn: {m['available_count']}/{m['expected_count']}; có {d['point_count']} điểm biểu diễn hợp lệ."]
+    pattern=d.get('daily_pattern')
+    if pattern and d.get('focus','overview')=='overview':
+        if pattern['hourly_range']>1e-9:
+            lines.append(f"Nhịp trong ngày: qua {pattern['days']} ngày đủ giờ, mức trung bình cao nhất lúc {pattern['peak_hour']:02d}:00 và thấp nhất lúc {pattern['low_hour']:02d}:00. Chênh lệch {f(pattern['hourly_range'])} {unit} giữa hai khung giờ.")
+        if abs(pattern['notable_delta'])>1e-9:
+            lines.append(f"Ngày đáng chú ý: {pattern['notable_day']} lệch {f(pattern['notable_delta'])} {unit} so với trung vị các trung bình ngày. Mọi ngày đối chiếu đều có cùng 24 khung giờ. Đây là độ lệch trong bộ đang xem.")
+        if pattern['excluded_days']:
+            lines.append(f"Đã loại {pattern['excluded_days']} ngày không đủ giờ khỏi đối chiếu ngày–đêm.")
     if not d['point_count']:
         return '\n'.join(lines+['Không có giá trị xác định để phân tích; không thay dữ liệu thiếu bằng 0.'])
     if not d['complete']:

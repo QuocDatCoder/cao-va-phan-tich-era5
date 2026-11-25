@@ -62,7 +62,7 @@ class DownloadJobService:
                 raise UnsupportedVariableError(f"Unsupported variable '{request.variable}'.")
             variable = ERA5_VARIABLES[request.variable].cds_name
             variables = (sorted({spec.cds_name for name, spec in ERA5_VARIABLES.items()
-                                 if name not in DERIVED_WIND_UNITS}) if source == "land" else
+                                 if name not in DERIVED_WIND_UNITS}) if source == "land" or (source == "era5" and request.all_variables) else
                          list(WIND_COMPONENTS) if variable in DERIVED_WIND_UNITS else [variable])
             job = self._repository.create(
                 job_id=str(uuid4()), request=request, dataset=source_dataset(source, self._settings),
@@ -176,14 +176,26 @@ class DownloadJobService:
                          if hasattr(self._repository, "save_quality") else None)
             token = current_quality.set(collector)
             try:
-                artifact = download(variable=job.variable, **spatial, start_date=job.start_date,
-                                    end_date=job.end_date, frequency=job.frequency)
-                check_cancelled()
+                bundle = job.source == 'era5' and len(job.retrieval_variables) > len(WIND_COMPONENTS)
+                variables = job.retrieval_variables if bundle else [job.variable]
+                artifact = None
+                for variable in variables:
+                    check_cancelled()
+                    downloaded = download(variable=variable, **spatial, start_date=job.start_date,
+                                          end_date=job.end_date, frequency=job.frequency)
+                    check_cancelled()
+                    if job.source is not None and downloaded.dataset != job.dataset:
+                        raise ValueError("Provider returned a different dataset than the recorded collection source.")
+                    if artifact is None or variable == job.variable:
+                        artifact = downloaded
+                    if job.collection_id:
+                        self.collections.artifact(job_id, downloaded.file_path)
                 if collector is not None and (collector.report.rows_read or collector.report.issue_count) and not collector.report.imported_values:
                     raise ValueError("No valid observations were imported; original files were preserved.")
                 if job.collection_id:
-                    self.collections.artifact(job_id, artifact.file_path)
                     summary = self._finish_collection(job_id, collector)
+                    if bundle and any(not summary['counts_by_variable'].get(v) for v in variables):
+                        raise ValueError('ERA5 collection is missing one or more requested variables.')
                     if summary['available_count'] == 0:
                         raise ValueError('No valid observations for the requested variable and interval; additional variables do not count as success.')
                     if summary['missing_count']:

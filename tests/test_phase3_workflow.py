@@ -107,7 +107,8 @@ def test_old_background_history_cannot_replace_refreshed_list(ui,monkeypatch):
 
 def open_latest_collection(app):
     cid = app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     app.button(key='stored_view_'+cid).click().run()
 
 
@@ -116,7 +117,7 @@ def test_editing_collection_form_does_not_create_job_or_query(ui):
     before = len(bridge.calls)
     app.selectbox(key='collect_source').set_value('era5').run()
     app.number_input(key='collect_north').set_value(12.).run()
-    app.selectbox(key='collect_variable').select_index(2).run()
+    assert not any(widget.key == 'collect_variable' for widget in app.selectbox)
     assert len(bridge.calls) == before
     assert not any(call[0] == 'POST' for call in bridge.calls)
     assert not app.exception
@@ -129,7 +130,7 @@ def test_mock_collection_only_on_submit_and_no_hidden_query_panels(ui):
     assert not app.exception and not app.error
     assert len([c for c in bridge.calls if c[0] == 'POST']) == 1
     assert all('/climate/' not in c[1] for c in bridge.calls)
-    assert 'Chatbot' not in app.pills(key='workflow_section').options
+    assert app.session_state['workflow_section'] in {'Thu thập','Dữ liệu đã lưu','Biểu đồ'}
 
 
 
@@ -205,7 +206,7 @@ def test_geocoding_failure_keeps_manual_coordinates_usable(ui, monkeypatch):
     monkeypatch.setattr(workflow, 'search_places', lambda query: None)
     app.text_input(key='collect_place_query').set_value('Hà Nội')
     app.button(key='collect_find_place').click().run()
-    assert len(app.warning) == 1 and not app.exception
+    assert len(app.get("toast")) == 1 and not app.exception and not app.warning
     assert not any(c[0] == 'POST' for c in bridge.calls)
     app.selectbox(key='collect_source').set_value('mock').run()
     app.number_input(key='collect_latitude').set_value(21.)
@@ -218,7 +219,7 @@ def test_native_theme_is_not_overridden_or_duplicated(ui):
     app, bridge, _ = ui
     before = len(bridge.calls)
     assert not app.sidebar.radio
-    assert app.pills(key='workflow_section').value is not None
+    assert app.session_state['workflow_section'] is not None
     assert not any(r.key == 'appearance_mode' for r in app.radio)
     styles = '\n'.join(item.value for item in app.markdown)
     assert 'color-scheme:' not in styles and '--primary-color:' not in styles
@@ -249,7 +250,8 @@ def test_saved_library_selects_actual_database_data_and_never_collects(ui,sectio
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     before=len([c for c in bridge.calls if c[0]=='POST'])
-    app.pills(key='workflow_section').set_value(section).run()
+    app.session_state['workflow_section'] = section
+    app.run()
     assert not any(s.key==prefix+'_source' for s in app.selectbox)
     cid=app.session_state['latest_collection_id']
     app.button(key=prefix+('_draw_' if prefix=='chart' else '_view_')+cid).click().run()
@@ -276,7 +278,8 @@ def test_saved_library_selects_actual_database_data_and_never_collects(ui,sectio
 
 def test_empty_database_has_no_fictitious_chart_choices(ui):
     app,bridge,_=ui
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     assert not app.exception
     assert not any(b.key=='chart_selected_submit' for b in app.button)
     assert not any(c[0]=='POST' for c in bridge.calls)
@@ -288,7 +291,8 @@ def test_search_and_clear_reopen_collapsed_library(ui,section,prefix):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value(section).run()
+    app.session_state['workflow_section'] = section
+    app.run()
     app.button(key=prefix+('_draw_' if prefix=='chart' else '_view_')+cid).click().run()
     assert app.session_state[prefix+'_library_cards'] is False
     app.text_input(key=prefix+'_library_text').set_value('mock')
@@ -309,7 +313,8 @@ def test_card_draw_opens_result_with_library_and_filters_collapsed(ui,section,pr
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value(section).run()
+    app.session_state['workflow_section'] = section
+    app.run()
     app.button(key=prefix+'_draw_'+cid).click().run()
     assert not app.exception and not app.error
     assert app.session_state['workflow_section']=='Biểu đồ'
@@ -324,9 +329,11 @@ def test_chart_opens_list_and_reload_restores_only_explicit_chart(ui):
     app.button(key='collect_now').click().run()
     open_latest_collection(app)
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     assert not any(b.key=='chart_selected_submit' for b in app.button)
     assert app.session_state['chart_library_cards'] is True
+    assert not any(b.key == 'chart_delete_confirm_'+cid for b in app.button)
     app.button(key='chart_draw_'+cid).click().run()
     result=app.session_state['chart_result']
     refreshed=AppTest.from_file(str(Path('app.py').resolve()))
@@ -345,7 +352,8 @@ def test_chart_failed_filter_keeps_applied_result_and_url(ui, monkeypatch):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='chart_draw_'+cid).click().run()
     old=app.session_state['chart_result']
     url=app.query_params['chart_applied']
@@ -358,7 +366,7 @@ def test_chart_failed_filter_keeps_applied_result_and_url(ui, monkeypatch):
     monkeypatch.setattr(DashboardApiClient,'query_collection',fail)
     app.button(key='chart_selected_submit').click().run()
     assert not app.exception
-    assert app.error
+    assert app.get("toast") and not app.error
     assert app.session_state['chart_result']==old
     assert app.query_params['chart_applied']==url
     assert app.get('plotly_chart')
@@ -371,7 +379,8 @@ def test_invalid_chart_dates_keep_old_plot_and_do_not_query(ui):
     app.date_input(key='collect_end').set_value(date(2025,1,2))
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='chart_draw_'+cid).click().run()
     old=app.session_state['chart_result']
     app.session_state['chart_filters_'+cid]=True
@@ -380,7 +389,7 @@ def test_invalid_chart_dates_keep_old_plot_and_do_not_query(ui):
     app.date_input(key='chart_range_start_'+cid).set_value(date(2025,1,2))
     app.date_input(key='chart_range_end_'+cid).set_value(date(2025,1,1))
     app.button(key='chart_selected_submit').click().run()
-    assert not app.exception and app.error
+    assert not app.exception and app.get("toast") and not app.error
     assert app.session_state['chart_result']==old
     assert app.session_state['chart_filters_'+cid] is True
     assert app.get('plotly_chart')
@@ -398,7 +407,7 @@ def test_invalid_saved_chart_url_falls_back_without_querying(ui,raw):
     fresh.run(timeout=15)
     assert not fresh.exception and not fresh.error
     assert fresh.session_state['chart_details_visible'] is False
-    assert fresh.warning
+    assert fresh.get("toast") and not fresh.warning
     assert not any('/timeseries' in c[1] for c in bridge.calls[before:])
 
 
@@ -413,7 +422,7 @@ def test_deleted_in_another_session_returns_to_library_on_refresh(ui):
     assert not app.exception and not app.error
     assert app.session_state['stored_details_visible'] is False
     assert not any(b.key=='stored_selected_submit' for b in app.button)
-    assert app.warning
+    assert app.get("toast") and not app.warning
 
 
 def test_tabs_keep_independent_results_and_applied_chart_controls(ui):
@@ -424,19 +433,23 @@ def test_tabs_keep_independent_results_and_applied_chart_controls(ui):
         cid=service.create_job(DownloadRequest(source='mock',variable=variable,location=POINT,**DATES)).job_id
         service.run_job(cid)
         ids.append(cid)
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     app.button(key='stored_view_'+ids[0]).click().run()
     stored=app.session_state['stored_result']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='chart_draw_'+ids[1]).click().run()
     app.selectbox(key='saved_chart_frequency').set_value('daily')
     app.button(key='chart_selected_submit').click().run()
     chart=app.session_state['chart_result']
     before=len(bridge.calls)
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     assert app.session_state['stored_result']==stored
     assert app.session_state['stored_collection']==ids[0]
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     assert not app.exception and not app.error
     assert app.session_state['chart_result']==chart
     assert app.session_state['chart_collection']==ids[1]
@@ -492,7 +505,8 @@ def test_saved_views_do_not_offer_legacy_library(ui,section,prefix,with_collecti
         app.selectbox(key='collect_source').set_value('mock').run()
         app.button(key='collect_now').click().run()
         cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value(section).run()
+    app.session_state['workflow_section'] = section
+    app.run()
     if with_collection:
         app.button(key=prefix+('_draw_' if prefix=='chart' else '_view_')+cid).click().run()
         app.button(key=prefix+'_selected_submit').click().run()
@@ -561,7 +575,7 @@ def test_reload_restores_explicit_detail_view_without_api_reload(ui):
     refreshed.query_params.update(dict(app.query_params))
     refreshed.run(timeout=15)
     assert not refreshed.exception and not refreshed.error
-    assert refreshed.pills(key='workflow_section').value == app.pills(key='workflow_section').value, dict(app.query_params)
+    assert refreshed.session_state['workflow_section'] == app.session_state['workflow_section'], dict(app.query_params)
     assert refreshed.button(key='stored_selected_submit')
     assert refreshed.session_state['stored_library_cards'] is False
     assert refreshed.session_state['stored_result'] == result
@@ -599,13 +613,17 @@ def test_returning_to_stored_keeps_view_until_back_to_list_is_clicked(ui):
     open_latest_collection(app)
     cid=app.session_state['latest_collection_id']
     assert app.session_state['stored_library_cards'] is False
-    app.pills(key='workflow_section').set_value('Thu thập').run()
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Thu thập'
+    app.run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     assert app.button(key='stored_selected_submit')
     assert any(d.key=='download_timeseries_csv' for d in app.get('download_button'))
     app.button(key='stored_back_to_list').click().run()
-    app.pills(key='workflow_section').set_value('Thu thập').run()
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Thu thập'
+    app.run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     assert app.session_state['stored_library_cards'] is True
     assert not any(b.key=='stored_selected_submit' for b in app.button)
     assert not any(d.key=='download_timeseries_csv' for d in app.get('download_button'))
@@ -646,7 +664,7 @@ def test_delete_api_error_keeps_collection_and_applied_result(ui, monkeypatch):
     monkeypatch.setattr(DashboardApiClient, 'delete_collection', fail)
     app.button(key='stored_delete_confirm_'+cid).click().run()
     assert not app.exception
-    assert any('Delete fixture failure' in e.value for e in app.error)
+    assert any('Delete fixture failure' in e.value for e in app.get('toast'))
     assert collection[3].collections.get(cid) is not None
     assert app.session_state['stored_result'] == original
     assert 'stored_applied' in app.query_params
@@ -662,6 +680,7 @@ def test_quality_details_load_only_when_open_and_terminal_job_is_cached(ui):
     before = len(bridge.calls)
     app.run()
     assert len(bridge.calls) == before
+    next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).select(jid).run()
     app.session_state['job_quality_'+jid] = True
     app.run()
     assert any(c[1].endswith('/quality') for c in bridge.calls)
@@ -684,12 +703,16 @@ def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
     assert_single_status('Đang chờ')
     service.run_job(jid)
     app.button(key='refresh_jobs').click().run()
-    assert_single_status('Hoàn tất')
+    assert not any('class="job-state job-state-' in m.value for m in app.html)
+    assert any('Đã hoàn tất thu thập' in toast.value for toast in app.get('toast'))
     assert 'completed' in next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options[0]
     before = len(bridge.calls)
     app.run()
-    assert_single_status('Hoàn tất')
+    assert not any('class="job-state job-state-' in m.value for m in app.html)
+    assert not any('Đã hoàn tất thu thập' in toast.value for toast in app.get('toast'))
     assert len(bridge.calls) == before
+    next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).select(jid).run()
+    assert_single_status('Hoàn tất')
     assert not any(call[0] == 'POST' for call in bridge.calls)
 
 
@@ -714,7 +737,8 @@ def test_library_survives_cache_expiry_and_deletion_without_reloading_list(ui):
         jid=service.create_job(DownloadRequest(source='mock',variable=variable,location=POINT,**DATES)).job_id
         service.run_job(jid)
         ids.append(jid)
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     app.button(key='stored_view_'+ids[1]).click().run()
     list_reads=lambda:sum(c[0]=='GET' and c[1]=='/api/v1/collections' for c in bridge.calls)
     before=list_reads()
@@ -726,8 +750,10 @@ def test_library_survives_cache_expiry_and_deletion_without_reloading_list(ui):
     assert list_reads()==before
     assert not any(b.key=='stored_view_'+ids[0] for b in app.button)
     assert app.session_state['stored_result'][0]==ids[1]
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
-    app.pills(key='workflow_section').set_value('Dữ liệu đã lưu').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
+    app.session_state['workflow_section'] = 'Dữ liệu đã lưu'
+    app.run()
     assert not app.exception and not app.error
     assert list_reads()==before
     app.button(key='stored_refresh_library').click().run()

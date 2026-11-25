@@ -266,7 +266,6 @@ def render_saved(client, charts=False):
             back_to_library(prefix)
             show_details = False
             msg = 'Cấu hình trên đường dẫn không còn hợp lệ. Hãy chọn lại bộ dữ liệu.'
-            st.warning(msg)
             notify_warning(msg)
         except DashboardApiError as exc:
             if exc.status_code == 404:
@@ -274,11 +273,9 @@ def render_saved(client, charts=False):
                 st.session_state.pop('collection_deleted_notice', None)
                 show_details = False
                 msg = 'Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.'
-                st.warning(msg)
                 notify_warning(msg)
             else:
                 msg = 'Chưa khôi phục được kết quả: '+str(exc)
-                st.error(msg)
                 notify_error(msg)
     list_slot = st.container(key=prefix+'_collection_list')
     detail_slot = st.empty()
@@ -345,7 +342,6 @@ def render_saved(client, charts=False):
             if s.get('grid_coordinates_verified') is False:
                 st.warning('File nguồn thiếu tọa độ lưới. Điểm lưu là điểm thay thế do parser ghi nhận, chưa xác minh là điểm lưới thực.')
             if entry.get('error'):
-                st.error(entry['error'])
                 notify_error(f"Lỗi bộ dữ liệu: {entry['error']}")
             with st.expander('Thông tin lần thu thập, file nguồn và các biến bổ sung'):
                 st.write('Mã bộ dữ liệu: '+entry['id'])
@@ -364,7 +360,6 @@ def render_saved(client, charts=False):
                 with st.expander('Chi tiết cảnh báo'): st.dataframe(q[1]['issues'][:100],hide_index=True)
         if not entry['grids']:
             msg = 'Bộ dữ liệu chưa có điểm lưới hợp lệ để xem hoặc vẽ.'
-            st.info(msg)
             notify_warning(msg, icon='📍')
             if action_scroll: _scroll_to(prefix+'_collection_detail')
             return
@@ -499,7 +494,6 @@ def render_saved(client, charts=False):
                         or bool(to_hour and (to_hour.minute or to_hour.second)))
         if invalid_window and querying:
             msg = 'Khoảng thời gian không hợp lệ: Chọn ngày/giờ bắt đầu trước hoặc bằng ngày/giờ kết thúc và phải là giờ tròn (00 phút)!'
-            st.error(msg)
             notify_error(msg)
         elif querying:
             a=max(lo,datetime.combine(first,from_hour,local))
@@ -541,7 +535,6 @@ def render_saved(client, charts=False):
                         payload['multi_payloads'] = multi_payloads
                 except DashboardApiError as exc:
                     msg = 'Chưa áp dụng bộ lọc mới: ' + str(exc)
-                    st.error(msg)
                     notify_error(msg)
                 else:
                     st.session_state.pop(prefix+'_defer_query',None)
@@ -686,15 +679,12 @@ def set_library_page(prefix, page):
 def render_library_list(api, prefix, detail_slot):
     if st.session_state.pop('missing_collection_notice', False):
         msg = 'Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.'
-        st.warning(msg)
         notify_warning(msg)
     if st.session_state.pop('collection_deleted_notice', False):
         msg = 'Đã xóa bộ dữ liệu và lịch sử tác vụ.'
-        st.success(msg)
         notify_success(msg)
     error = st.session_state.pop(prefix+'_delete_error', None)
     if error:
-        st.error(error)
         notify_error(f"Lỗi khi xóa: {error}")
     page=st.session_state.get(prefix+'_page',0)
     search_query = st.session_state.get(prefix+'_search','').strip()
@@ -709,7 +699,6 @@ def render_library_list(api, prefix, detail_slot):
     if not entries:
         if search_query:
             msg = f"Không tìm thấy bộ dữ liệu nào khớp với '{search_query}'."
-            st.info(msg)
             notify_warning(msg, icon="🔍")
         else:
             notify_warning("Chưa có dữ liệu: Bạn chưa tải bộ dữ liệu nào. Vui lòng vào mục Thu thập để tải dữ liệu ERA5 trước!", icon="⚠️")
@@ -742,12 +731,13 @@ def render_library_list(api, prefix, detail_slot):
                     st.rerun()
                 if st.button('Vẽ biểu đồ',icon=':material/bar_chart:',key=prefix+'_draw_'+item['id'],on_click=open_chart,args=(item['id'],),disabled=not item['grids'],help='Bộ dữ liệu chưa có điểm lưới để vẽ.' if not item['grids'] else None):
                     st.rerun()
-                with st.popover('Xóa', key=prefix+'_delete_popover_'+item['id'], icon=':material/delete:', on_change='rerun', disabled=item['status'] in {'queued', 'running', 'cancelling'}):
-                    st.write('Xóa bộ dữ liệu này và lịch sử tác vụ. Thao tác không thể hoàn tác.')
-                    st.caption(label(item))
-                    st.caption('File nguồn và cache dùng chung được giữ lại.')
-                    st.button('Xác nhận xóa', key=prefix+'_delete_confirm_'+item['id'], type='primary',
-                              on_click=delete_confirmed, args=(api, item['id'], prefix, detail_slot))
+                if prefix == 'stored':
+                    with st.popover('Xóa', key=prefix+'_delete_popover_'+item['id'], icon=':material/delete:', on_change='rerun', disabled=item['status'] in {'queued', 'running', 'cancelling'}):
+                        st.write('Xóa bộ dữ liệu này và lịch sử tác vụ. Thao tác không thể hoàn tác.')
+                        st.caption(label(item))
+                        st.caption('File nguồn và cache dùng chung được giữ lại.')
+                        st.button('Xác nhận xóa', key=prefix+'_delete_confirm_'+item['id'], type='primary',
+                                  on_click=delete_confirmed, args=(api, item['id'], prefix, detail_slot))
     if page > 0 or has_next:
         with cards:
             with st.container(horizontal=True, vertical_alignment='center', gap='small'):

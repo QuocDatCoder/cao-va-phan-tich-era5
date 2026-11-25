@@ -4,6 +4,11 @@ import streamlit as st
 
 def apply_appearance():
     st.markdown("""<style>
+    /* Keep the native theme menu mounted for the sidebar's appearance toggle. */
+    [data-testid="stHeader"], [data-testid="stDecoration"] {
+        visibility: hidden;
+        pointer-events: none;
+    }
     .block-container {
         max-width: 96% !important;
         width: 96% !important;
@@ -32,13 +37,13 @@ def apply_appearance():
         display: none !important;
     }
 
-    /* Move Streamlit toast notifications from bottom-right to top-right/top */
+    /* Move Streamlit toast notifications from bottom-right to top-left */
     [data-testid="stToastContainer"] {
         position: fixed !important;
-        top: 1.25rem !important;
+        top: 4rem !important;
         bottom: auto !important;
-        right: 1.5rem !important;
-        left: auto !important;
+        right: auto !important;
+        left: 1rem !important;
         z-index: 99999999 !important;
         display: flex !important;
         flex-direction: column !important;
@@ -75,11 +80,19 @@ def apply_appearance():
         background-color: rgba(0, 0, 0, 0.08) !important;
     }
 
-    /* Hide inline error alert boxes so error messages only show in the top popup */
-    div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]),
-    div.stAlert:has([data-testid="stAlertContentError"]),
-    div[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
-        display: none !important;
+    .st-key-era5_auth_bridge {display:none;}
+    body:has(.era5-shell[data-theme="dark"]) {
+        --background-color:#18181b;
+        --secondary-background-color:#242428;
+        --text-color:#ececf1;
+        --border-color:#3a3a41;
+        --primary-color:#82aaff;
+    }
+    .st-key-era5_login_card {max-width:30rem;margin:clamp(1rem,8vh,5rem) auto 0;}
+    @media (orientation:portrait) {
+        .st-key-era5_login_card {margin-top:0;}
+        [data-testid="stToastContainer"] {max-width:calc(100vw - 1rem);}
+        body:has(.st-key-ai_chat_shell) [data-testid="stToastContainer"] {top:8rem !important;}
     }
 
     @keyframes toast-slide-down {
@@ -95,7 +108,7 @@ def apply_appearance():
 
     @media (max-width: 640px) {
         [data-testid="stToastContainer"] {
-            top: 0.5rem !important;
+            top: 3.75rem !important;
             right: 0.5rem !important;
             left: 0.5rem !important;
             min-width: auto !important;

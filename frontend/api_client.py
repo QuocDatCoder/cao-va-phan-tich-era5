@@ -39,6 +39,9 @@ class DashboardApiClient:
     def logout(self) -> dict[str, Any]:
         return self._post("/api/v1/auth/logout", {})
 
+    def current_user(self) -> dict[str, Any]:
+        return self._get("/api/v1/auth/me")
+
     def health(self) -> dict[str, Any]:
         return self._get("/health")
 

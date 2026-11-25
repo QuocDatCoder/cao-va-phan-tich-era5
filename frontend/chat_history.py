@@ -27,8 +27,8 @@ class SavedChat(BaseModel):
     reset_token: str=Field(default='',max_length=64)
 
 
-def storage_key(base_url):
-    return 'era5.are.chat.v1.'+sha256(base_url.rstrip('/').encode()).hexdigest()[:20]
+def storage_key(base_url, username=None):
+    return 'era5.are.chat.v1.'+sha256((base_url.rstrip('/')+('\0'+username if username else '')).encode()).hexdigest()[:20]
 
 
 def snapshot(state):
@@ -38,7 +38,7 @@ def snapshot(state):
         result=message.get('result')
         if result:
             # Keep visible evidence/actions, not request arguments, usage or code excerpts.
-            saved['result']={key:result[key] for key in ['answer_kind','completed','verified','actions'] if key in result}
+            saved['result']={key:result[key] for key in ['answer_kind','completed','verified','actions','collection_job'] if key in result}
             saved['result']['evidence']=[dict(tool=e['tool'],result=e['result'])
                 for e in result.get('evidence',[]) if e.get('tool')!='project_knowledge']
         messages.append(saved)
@@ -131,7 +131,7 @@ def _saved_callback():
 def sync_history(api):
     state=st.session_state
     ready=state.get('ai_chat_history_loaded',False)
-    data=dict(action='load',storage_key=storage_key(api.base_url),pending=bool(state.get('ai_chat_pending')))
+    data=dict(action='load',storage_key=storage_key(api.base_url,state.get('auth_username')),pending=bool(state.get('ai_chat_pending')))
     if ready:
         payload=snapshot(state)
         encoded=json.dumps(payload,ensure_ascii=False,sort_keys=True,allow_nan=False)

@@ -28,7 +28,8 @@ def test_chat_is_lazy_and_keeps_history_when_closed_and_switching_tabs(ui,monkey
     app.session_state['ai_chat_messages']=[dict(role='user',content='Câu đang xem')]
     app.session_state['ai_chat_selected']='fixture-selection'
     app.button(key='ai_chat_close').click().run()
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='ai_chat_toggle').click().run()
     assert app.session_state['ai_chat_selected']=='fixture-selection'
     assert any(x.value=='Câu đang xem' for x in app.text)
@@ -66,26 +67,24 @@ render_ai_chat(DashboardApiClient())
     assert not app.exception
 
 
-def test_pet_theme_persists_without_model_calls(ui):
+def test_chat_header_actions_without_model_calls(ui):
     app,bridge,_=ui
     app.button(key='ai_chat_toggle').click().run()
-    app.pills(key='ai_pet_theme').set_value('rain').run()
     app.button(key='ai_chat_close').click().run()
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='ai_chat_toggle').click().run()
-    assert app.pills(key='ai_pet_theme').value=='rain'
+    assert app.button(key='ai_chat_clear').label=='Làm mới'
+    assert app.button(key='ai_chat_close').label=='Đóng chat'
+    assert not any(p.key=='ai_pet_theme' for p in app.pills)
     assert not any('/agent/' in call[1] for call in bridge.calls)
     assert not app.exception
 
 
-def test_pet_automatic_states_and_untrusted_theme():
-    from frontend.components.weather_pet import pet_mode,pet_svg
-    assert pet_mode('auto')=='cloud'
-    assert pet_mode('auto',pending=True)=='rain'
-    assert pet_mode('auto',last_result={'verified':True})=='sun'
-    assert pet_mode('auto',last_result={'verified':False})=='rain'
-    assert pet_mode('auto',last_result={'verified':False,'completed':True})=='sun'
-    assert pet_mode('sun',pending=True)=='sun'
+def test_pet_art_includes_day_and_night_variants():
+    from frontend.components.weather_pet import pet_svg,themed_pet_art
+    assert 'data-mode="sun"' in themed_pet_art()
+    assert 'data-mode="moon"' in themed_pet_art()
     assert '<script>' not in pet_svg('<script>')
 
 

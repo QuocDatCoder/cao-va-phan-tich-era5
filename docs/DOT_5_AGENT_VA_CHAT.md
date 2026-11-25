@@ -18,7 +18,7 @@ Chromium output/are-chart-analysis-browser-verified đạt luồng hỏi phân t
 
 ## Mở rộng hội thoại và kiến thức dự án
 
-ARE giới hạn vào dự án và khí tượng liên quan. Xã giao rõ ràng dùng câu do server quản lý, không hỏi ngược kéo dài. Câu rõ ràng ngoài phạm vi nhận thông báo cố định trước model, không gọi AI hoặc DB. Câu thiếu từ khóa không bị từ chối ngay: nhánh ambiguous chỉ được gọi classify_scope với lịch sử gần nhất và ngữ cảnh đang xem. Schema chỉ có enum domain/social/unsupported; chưa được gọi công cụ DB/dự án. domain mới mở công cụ thường; social/unsupported dùng phản hồi server. Bước này nằm trong giới hạn 4 request hiện có, không tăng reasoning, không tự retry. Nhánh answer_question vẫn có category unsupported, các số liệu phải lấy từ DB và giải thích dự án phải có nguồn. Phân loại bằng model vẫn có thể sai; không coi đây là bằng chứng chống mọi injection. Không tìm web trực tiếp hoặc hứa biết thời tiết hiện tại.
+ARE hỗ trợ hội thoại phổ thông, giải thích dự án có nguồn và phân tích dữ liệu ERA5. Bộ lọc từ chối ngoài chủ đề và bước phân loại riêng đã được gỡ.
 
 Kiểm tra khóa phạm vi: baseline output/are-scope-final-baseline đạt 504 test, 1 test CDS bỏ qua; sau chỉnh cuối và bổ sung kiểm tra ngữ cảnh, output/scope-final-targeted-2 đạt 67 test. Chromium output/are-scope-refusal-browser xác nhận câu “Tôi muốn ăn cơm tấm” bị từ chối trong panel, sau đó vẫn giải thích dự án và mở dữ liệu/biểu đồ bình thường. Không có browser error, không gọi AI trả phí/CDS. Lịch sử cũ được giữ theo yêu cầu, không viết lại hoặc xóa câu trả lời đã lưu.
 

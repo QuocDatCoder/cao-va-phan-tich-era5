@@ -170,7 +170,8 @@ def test_query_failure_after_validation_preserves_existing_chart(ui,monkeypatch)
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='chart_draw_'+cid).click().run()
     old=app.session_state['chart_result']
     saved=app.query_params['chart_applied']
@@ -188,7 +189,8 @@ def test_opening_data_keeps_other_tabs_applied_result(ui):
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
     cid=app.session_state['latest_collection_id']
-    app.pills(key='workflow_section').set_value('Biểu đồ').run()
+    app.session_state['workflow_section'] = 'Biểu đồ'
+    app.run()
     app.button(key='chart_draw_'+cid).click().run()
     old=app.session_state['chart_result']
     saved=app.query_params['chart_applied']

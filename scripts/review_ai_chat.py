@@ -23,10 +23,17 @@ def free_port():
 def child(args):
     from scripts.baseline_offline import isolated_settings
     isolated_settings(args.output_dir/'scratch',True)
+    os.environ['AUTH_ENABLED']='false'
+    os.environ['AUTH_DB_PATH']=str(args.output_dir/'scratch'/'auth.sqlite3')
     if args.child=='frontend':
         os.environ['API_BASE_URL']=f'http://127.0.0.1:{args.api_port}'
+        fixture_app=args.output_dir/'scratch'/'review_app.py'
+        fixture_app.write_text(
+            'import frontend.workflow as workflow\n'
+            'workflow.render_login_gate = lambda api: True\n'
+            'workflow.render_dashboard()\n', encoding='utf-8')
         from streamlit.web import cli
-        sys.argv=['streamlit','run',str(ROOT/'app.py'),'--server.headless=true','--server.address=127.0.0.1',
+        sys.argv=['streamlit','run',str(fixture_app),'--server.headless=true','--server.address=127.0.0.1',
                   f'--server.port={args.port}','--server.enableAgentApi=true','--browser.gatherUsageStats=false']
         cli.main()
         return
@@ -46,9 +53,7 @@ def child(args):
         def create(self,**kwargs):
             time.sleep(3)
             question=json.loads(next(x['content'] for x in reversed(kwargs['input_items']) if x.get('role')=='user'))['question']
-            if [t['name'] for t in kwargs['tools']]==['classify_scope']:
-                name,arguments='classify_scope',dict(scope='domain')
-            elif question=='Bạn là ai?':
+            if question=='Bạn là ai?':
                 name='answer_question'
                 arguments=dict(category='general',answer='Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',source_ids=[])
             elif 'Chào ARE' in question:
@@ -149,43 +154,36 @@ def main():
             shell=page.locator('.st-key-ai_chat_shell')
             expect(shell).to_be_visible()
             expect(shell.get_by_text('Chào bạn, mình là ARE!',exact=True)).to_be_visible()
-            assert page.locator('.st-key-ai_chat_launcher img').evaluate('(el)=>el.complete && el.naturalWidth>0')
+            assert page.locator('.st-key-ai_chat_launcher img[data-mode=sun]').evaluate('(el)=>el.complete && el.naturalWidth>0')
             box=shell.bounding_box()
             assert box['x']>600 and box['y']>=0 and box['y']+box['height']<900
             page.mouse.move(400,100)
             page.screenshot(path=str(out/'welcome.png'))
             page.set_viewport_size(dict(width=1366,height=768))
             box=shell.bounding_box()
-            assert box['width']>=540 and box['y']>=60 and box['y']+box['height']<=768
+            assert 360<=box['width']<=440 and box['y']>=60 and box['y']+box['height']<=768
+            workspace=page.locator('.st-key-are_workspace').bounding_box()
+            assert workspace['x']+workspace['width']<=box['x']
             expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_in_viewport(ratio=1)
-            pet_box=page.locator('.st-key-ai_chat_launcher').bounding_box()
-            assert 1366-pet_box['x']-pet_box['width']>=40 and 768-pet_box['y']-pet_box['height']>=40
             page.screenshot(path=str(out/'laptop.png'))
             page.set_viewport_size(dict(width=1280,height=900))
-            shell.get_by_role('button',name='Tùy chọn',exact=False).click()
-            page.get_by_text('Mưa',exact=True).click()
-            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','rain')
-            page.mouse.move(400,100)
-            page.screenshot(path=str(out/'rain.png'))
-            page.get_by_text('Nắng',exact=True).click()
-            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','sun')
-            page.get_by_text('Tự động',exact=True).click()
-            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','cloud')
-            shell.get_by_role('button',name='Tùy chọn',exact=False).click()
-            shell.get_by_role('button',name='Thu gọn',exact=True).click()
+            expect(shell.locator('.pet-heading img[data-mode="sun"]')).to_be_visible()
+            page.get_by_role('button',name='Bật chế độ tối',exact=True).click()
+            expect(shell.locator('.pet-heading img[data-mode="moon"]')).to_be_visible()
+            page.get_by_role('button',name='Bật chế độ sáng',exact=True).click()
+            expect(shell.locator('.pet-heading img[data-mode="sun"]')).to_be_visible()
+            shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell).to_be_visible()
             shell.get_by_placeholder('Hỏi ARE…').fill('Thống kê nhiệt độ ngày 01/01/2025')
             shell.get_by_placeholder('Hỏi ARE…').press('Enter')
             expect(shell.get_by_text('Đang kiểm tra dữ liệu…',exact=False)).to_be_visible()
-            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','rain')
-            shell.get_by_role('button',name='Thu gọn',exact=True).click()
+            shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
             page.locator('.st-key-workflow_section').get_by_text('Kho dữ liệu',exact=True).click()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Thống kê từ service:',exact=False)).to_be_visible(timeout=20000)
-            expect(page.locator('.st-key-ai_chat_launcher .weather-pet')).to_have_attribute('data-mode','sun')
             page.mouse.move(400,100)
             page.screenshot(path=str(out/'desktop.png'))
             shell.get_by_text('Chi tiết dữ liệu',exact=True).click()
@@ -212,18 +210,14 @@ def main():
                 const result=[];for(let i=0;el && i<5;i++,el=el.parentElement){
                 const r=el.getBoundingClientRect(),c=getComputedStyle(el);result.push({tag:el.tagName,classes:el.className,style:el.getAttribute('style'),height:r.height,y:r.y,min:c.minHeight,max:c.maxHeight,cssHeight:c.height,flex:c.flex});}
                 return result;}'''),indent=2),encoding='utf-8')
-            assert box['y']>=64 and box['y']+box['height']<=500
+            assert box['y']>=60 and box['y']+box['height']<=500
             expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_in_viewport(ratio=1)
             page.screenshot(path=str(out/'short-screen.png'))
             page.set_viewport_size(dict(width=1280,height=900))
             chat_input=shell.get_by_placeholder('Hỏi ARE…')
             chat_input.fill('Chào ARE')
             chat_input.press('Enter')
-            expect(shell.get_by_text('Chào bạn! ARE sẵn sàng hỗ trợ dữ liệu ERA5 và cách sử dụng ứng dụng.',exact=True)).to_be_visible(timeout=15000)
-            chat_input.fill('Tôi muốn ăn cơm tấm')
-            chat_input.press('Enter')
-            expect(shell.get_by_text('ARE không hỗ trợ nội dung ngoài phạm vi dự án. Bạn có thể hỏi về dữ liệu ERA5, phân tích khí tượng hoặc cách sử dụng ứng dụng.',exact=True)).to_be_visible(timeout=15000)
-            page.screenshot(path=str(out/'scope-refusal.png'))
+            expect(shell.get_by_text('Chào bạn! ARE có thể trò chuyện cùng bạn.',exact=True)).to_be_visible(timeout=15000)
             chat_input.fill('Bạn là ai?')
             chat_input.press('Enter')
             expect(shell.get_by_text('Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',exact=True)).to_be_visible(timeout=20000)
@@ -289,12 +283,11 @@ def main():
             expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_enabled()
             assert (out/'backend.log').read_text(encoding='utf-8').count('POST /api/v1/agent/chat')==previous_posts
             page.screenshot(path=str(out/'history-after-f5.png'))
-            shell.get_by_role('button',name='Thu gọn',exact=True).click()
+            shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
             page.locator('.st-key-chart_refresh_library button').click()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).to_be_visible()
-            shell.get_by_role('button',name='Tùy chọn',exact=False).click()
             page.locator('.st-key-ai_chat_clear button:visible').click()
             page.wait_for_function("""()=>Object.keys(localStorage).some(key=>key.startsWith('era5.are.chat.v1.') &&
                 JSON.parse(localStorage.getItem(key)).messages.length===0)""")

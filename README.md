@@ -126,9 +126,7 @@ ký hoặc chỉ cho phép người dùng được mời.
 
 Trợ lý AI mở bằng pet đám mây **ARE** ở góc phải dưới; menu ba chấm cho đổi diện mạo mây/nắng/mưa và tạo trò chuyện mới. Backend đọc `AI_API_KEY` từ `.env` cục bộ; cấu hình mẫu ở `.env.example`, mặc định `gpt-6-luna`/`low`. Chỉ gửi câu hỏi hoặc bấm gợi ý mới gọi API AI (có thể tính phí); Agent chỉ truy vấn dữ liệu đã lưu, không tự tải CDS. Xem [phạm vi, kiểm thử và so sánh model](docs/DOT_5_AGENT_VA_CHAT.md).
 
-ARE hỗ trợ xã giao ngắn, kiến thức khí tượng liên quan và giải thích code/thiết kế dự án từ chỉ mục nguồn cục bộ, kèm vị trí tham chiếu. Câu ngoài phạm vi nhận thông báo từ chối cố định; không tư vấn ăn uống, giải trí, học ngoại ngữ hoặc chủ đề không liên quan. Số liệu khí tượng thực tế vẫn lấy qua service DB-only.
-
-Câu rõ ràng ngoài phạm vi và xã giao được xử lý nhanh ở server. Câu chưa rõ được phân loại bằng model dựa trên lịch sử gần nhất trước khi mở các công cụ thường, tránh từ chối chỉ vì thiếu từ khóa. Bước phân loại có thể tốn thêm một lượt gọi AI nhưng vẫn nằm trong giới hạn 4 request/lượt chat; không tăng reasoning hoặc tự retry. Lỗi xác thực upstream HTTP 401 được báo riêng.
+ARE hỗ trợ hội thoại phổ thông và giải thích dự án. Số liệu khí tượng lấy qua service DB-only.
 
 Khi đang xem biểu đồ, có thể hỏi “Phân tích chuyên sâu biểu đồ đang xem”, “Đỉnh này ở thời điểm nào?” hoặc “Biến động và xu hướng thế nào?”. ARE đọc lại đúng chuỗi DB theo bộ lọc đã áp dụng, tính thống kê, cực trị kèm thời điểm, chênh lệch và hồi quy mô tả. Phân tích theo ngày/tháng dùng giá trị từng kỳ đang vẽ; không nhầm với cực trị từng giờ. Không hồi quy qua dữ liệu thiếu/kỳ chưa trọn, không hồi quy tuyến tính hướng gió, không suy diễn nguyên nhân/dự báo từ một chuỗi. Hiện hỗ trợ chuỗi thời gian, chuỗi tháng sau heatmap và thống kê tại một điểm; chưa phân tích phân bố bản đồ hoặc ảnh tải lên.
 

@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from frontend.api_client import DEFAULT_TIMEOUT_SECONDS, DashboardApiClient, DashboardApiError
+from frontend.notifications import notify_error, notify_warning, notify_success
 from frontend.live_updates import (
     completion_events, follow_window, latest_synced_date, matching_states, revision_key,
 )
@@ -27,6 +28,7 @@ def build_client() -> DashboardApiClient:
         timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
         source=st.session_state.get("stored_source", "land"),
         stored_only=True,
+        access_token=st.session_state.get("auth_access_token"),
     )
 
 
@@ -37,9 +39,11 @@ def main() -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_get(base_url: str, timeout_seconds: float, endpoint: str, params_key: tuple, revision: str = "",
-                source: str | None = None, stored_only: bool = False) -> dict[str, Any]:
+                source: str | None = None, stored_only: bool = False,
+                access_token: str | None = None) -> dict[str, Any]:
     client = DashboardApiClient(base_url=base_url, timeout_seconds=timeout_seconds,
-                                source=source, stored_only=stored_only)
+                                source=source, stored_only=stored_only,
+                                access_token=access_token)
     params = dict(params_key)
     if endpoint == "timeseries":
         if params.get("frequency", "hourly") != "hourly":
@@ -69,6 +73,7 @@ def _load_cached(client: DashboardApiClient, endpoint: str, params: dict[str, An
         revision=st.session_state.get("live_revision", ""),
         source=client.source,
         stored_only=client.stored_only,
+        access_token=client.access_token,
     )
 
 
@@ -103,8 +108,10 @@ def _render_collection(client, params):
             response = client.create_download(payload)
             st.session_state["collection_jobs"] = {**jobs, context: response["job_id"]}
             st.success("Đã tiếp nhận tác vụ. Theo dõi trạng thái bên dưới.")
+            notify_success("Đã tiếp nhận tác vụ thu thập dữ liệu!")
         except DashboardApiError as exc:
             st.error(str(exc))
+            notify_error(f"Lỗi khởi tạo tác vụ: {str(exc)}")
     _poll_collection(client, context)
 
 
@@ -126,7 +133,7 @@ def _show_job_status(job):
     descriptions = {
         'queued': 'Yêu cầu đã được tiếp nhận, đang chờ đến lượt xử lý.',
         'running': 'Hệ thống đang xử lý yêu cầu thu thập. CDS có thể cần thời gian xếp hàng và tải dữ liệu.',
-        'completed': 'Tác vụ đã kết thúc. Bạn có thể xem dữ liệu đã lưu và báo cáo chất lượng.',
+        'completed': 'Tác vụ đã kết thúc. Bạn có thể xem dữ liệu đã lưu trong Kho dữ liệu.',
         'failed': 'Tác vụ đã dừng do lỗi. Xem thông báo bên dưới để biết nguyên nhân.',
         'cancelling': 'Đã nhận yêu cầu hủy. Đang chờ thao tác mạng hoặc nhập dữ liệu hiện tại dừng an toàn, rồi nhường lượt cho tác vụ tiếp theo.',
         'cancelled': 'Đã dừng thu thập trên ứng dụng. Phần dữ liệu đã lưu được giữ lại; bạn có thể tạo yêu cầu khác. Không bảo đảm yêu cầu trên CDS đã bị xóa.',
@@ -181,7 +188,7 @@ def _cancel_selected_job(client, job_id):
         st.session_state['cancel_job_error'] = (job_id, str(exc))
 
 
-def _render_job_status(client, context, job=None):
+def _render_job_status(client, context, job=None, show_quality: bool = True):
     """Render inside the caller's fragment, without registering another timer."""
     job_id = st.session_state.get("collection_jobs", {}).get(context)
     if not job_id:
@@ -207,12 +214,14 @@ def _render_job_status(client, context, job=None):
         cancel_error = st.session_state.get('cancel_job_error')
         if cancel_error and cancel_error[0] == job_id:
             st.error(cancel_error[1])
-        with st.expander("Chi tiết nguồn và biến"):
-            st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
-            if job.get("retrieval_variables"):
-                st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
+            notify_error(f"Lỗi khi hủy tác vụ: {cancel_error[1]}")
+        with st.container(key="hide_source_details_expander"):
+            with st.expander("Chi tiết nguồn và biến"):
+                st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
+                if job.get("retrieval_variables"):
+                    st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
         quality = job.get("quality")
-        if quality:
+        if quality and (show_quality or st.session_state.get('job_quality_'+job_id)):
             st.caption(f"Chất lượng: {quality['status']} · Đã lưu: {quality['imported_values']} giá trị · Cảnh báo: {quality['issue_count']}")
             if not quality["complete"]:
                 st.warning("Dữ liệu tải chưa đầy đủ hoặc có lỗi chất lượng; mốc đồng bộ không được nâng.")
@@ -239,6 +248,7 @@ def _render_job_status(client, context, job=None):
                             mime="application/json", key="download_quality_"+job_id, on_click="ignore")
         if job.get("error"):
             st.error(job["error"])
+            notify_error(f"Lỗi tác vụ thu thập: {job['error']}")
         if job["status"] in {'completed', 'failed', 'cancelled'} and previous_status in {'queued', 'running', 'cancelling'}:
             from frontend.library import invalidate_reads
             invalidate_reads()
@@ -247,6 +257,7 @@ def _render_job_status(client, context, job=None):
             _cached_get.clear()
     except DashboardApiError as exc:
         st.error(str(exc))
+        notify_error(f"Lỗi API: {str(exc)}")
 
 
 @st.fragment(run_every=15)
@@ -285,7 +296,9 @@ def _render_live_updates(client, params, follow, days, auto_sync):
         if job:
             st.caption(f"Tác vụ tải: {_translate_status(job['status'])}")
             if job["status"] == "failed":
-                st.error(job.get("error") or "Tác vụ tải thất bại.")
+                err_msg = job.get("error") or "Tác vụ tải thất bại."
+                st.error(err_msg)
+                notify_error(f"Lỗi tải dữ liệu: {err_msg}")
         events = completion_events(st.session_state.get("live_events", {}), states, job)
         old_revision = st.session_state.get("live_revision")
         revision = revision_key(config["provider"], events)
@@ -300,6 +313,7 @@ def _render_live_updates(client, params, follow, days, auto_sync):
             st.write("Trạng thái: " + _translate_status(current["status"]))
             if current.get("error"):
                 st.error(current["error"])
+                notify_error(f"Lỗi đồng bộ: {current['error']}")
             synced = latest_synced_date(states)
             if synced:
                 st.caption(f"Đã đồng bộ đến ngày {synced} UTC; theo dõi hiển thị các ngày Việt Nam trọn vẹn.")
@@ -316,6 +330,7 @@ def _render_live_updates(client, params, follow, days, auto_sync):
             st.rerun(scope="app")
     except DashboardApiError as exc:
         st.error("Không đọc được trạng thái đồng bộ: " + str(exc))
+        notify_error("Không đọc được trạng thái đồng bộ: " + str(exc))
 
 
 def _render_overview(client: DashboardApiClient, params: dict[str, Any]) -> None:
@@ -354,7 +369,11 @@ def _render_timeseries(
         st.rerun()
 
 
-def _show_timeseries(payload: dict[str, Any], show_chart: bool = True) -> None:
+def _show_timeseries(
+    payload: dict[str, Any],
+    show_chart: bool = True,
+    chart_key: str | None = None,
+) -> None:
     if not payload.get("data"):
         st.info("Không có quan sát nào cho bộ lọc đã chọn.")
         return
@@ -370,14 +389,15 @@ def _show_timeseries(payload: dict[str, Any], show_chart: bool = True) -> None:
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
     if show_chart:
-        st.plotly_chart(timeseries_figure(payload), width="stretch")
+        st.plotly_chart(timeseries_figure(payload), width="stretch", key=chart_key)
     _show_extremes(payload)
-    _timeseries_table(payload)
+    _timeseries_table(payload, key_suffix=chart_key)
 
 
 @st.fragment
-def _timeseries_table(payload):
-    panel = st.expander('Bảng dữ liệu và tải CSV', expanded=False, key='timeseries_table_panel', on_change='rerun')
+def _timeseries_table(payload, key_suffix=None):
+    suffix = f'_{key_suffix}' if key_suffix else ''
+    panel = st.expander('Bảng dữ liệu và tải CSV', expanded=False, key=f'timeseries_table_panel{suffix}', on_change='rerun')
     if not panel.open:
         return
     with panel:
@@ -405,7 +425,7 @@ def _timeseries_table(payload):
             data=table.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"{payload.get('source', 'era5')}_{payload.get('variable', 'data')}.csv",
             mime="text/csv",
-            key="download_timeseries_csv",
+            key=f"download_timeseries_csv{suffix}",
             on_click="ignore",
         )
 
@@ -506,13 +526,13 @@ def _render_heatmap(client: DashboardApiClient, params: dict[str, Any]) -> None:
         st.rerun()
 
 
-def _show_heatmap(payload: dict[str, Any]) -> None:
+def _show_heatmap(payload: dict[str, Any], chart_key: str | None = None) -> None:
     if not payload.get("data"):
         st.info("Không có ô dữ liệu nào cho bản đồ nhiệt.")
         return
     st.caption("Phép tổng hợp: " + payload.get("aggregation", "mean")
                + ". Mỗi ô chỉ bao phủ khoảng ngày đã chọn, có thể chưa trọn tháng.")
-    st.plotly_chart(heatmap_figure(payload), use_container_width=True)
+    st.plotly_chart(heatmap_figure(payload), use_container_width=True, key=chart_key)
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
@@ -531,11 +551,11 @@ def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
         st.rerun()
 
 
-def _show_map(payload: dict[str, Any]) -> None:
+def _show_map(payload: dict[str, Any], chart_key: str | None = None) -> None:
     if not payload.get("data"):
         st.info("Không có điểm bản đồ nào được trả về.")
         return
-    st.plotly_chart(map_figure(payload), use_container_width=True)
+    st.plotly_chart(map_figure(payload), use_container_width=True, key=chart_key)
     st.dataframe(
         pd.DataFrame(payload["data"]).rename(
             columns={"latitude": "Vĩ độ", "longitude": "Kinh độ", "value": "Giá trị"}
@@ -578,6 +598,7 @@ def _run_request(
             payload = request()
     except DashboardApiError as exc:
         st.error(str(exc))
+        notify_error(f"Lỗi tải dữ liệu: {str(exc)}")
         return
     if payload.get("query_mode") == "db_only":
         st.caption(f"Nguồn: {payload['source']} · Dataset: {payload['dataset']} · Chỉ đọc SQLite")

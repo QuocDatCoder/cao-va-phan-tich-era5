@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 from frontend.components.charts import variable_label
 from frontend.api_client import DashboardApiError
+from frontend.notifications import notify_error, notify_warning, notify_success, notify_info, render_empty_data_notice
 from backend.app.domain.public_variables import public_variables
 
 STATUS = dict(queued='Đang chờ', running='Đang thu thập', complete='Đủ dữ liệu',
@@ -15,24 +16,25 @@ STATUS = dict(queued='Đang chờ', running='Đang thu thập', complete='Đủ 
 
 
 @st.cache_data(ttl=60, max_entries=128, show_spinner=False)
-def _shared_read(base_url, source, stored_only, method, args_json, _api):
-    """Cache local API reads across browser reloads, independently of sessions."""
+def _shared_read(base_url, source, stored_only, access_token, method, args_json, _api):
+    """Cache local API reads across reloads without sharing results across accounts."""
     return getattr(_api, method)(*json.loads(args_json))
 
 
 def cached_read(api, method, *args):
+    access_token = getattr(api, 'access_token', None)
     if method == 'list_collections':
-        key = json.dumps([api.base_url, api.source, api.stored_only, args], sort_keys=True)
+        key = json.dumps([api.base_url, api.source, api.stored_only, access_token, args], sort_keys=True)
         pages = st.session_state.setdefault('library_pages', {})
         if key not in pages:
             with st.spinner('Đang đọc thư viện dữ liệu…'):
-                payload = _shared_read(api.base_url, api.source, api.stored_only, method,
+                payload = _shared_read(api.base_url, api.source, api.stored_only, access_token, method,
                                        json.dumps(args, sort_keys=True), _api=api)
             if len(pages) >= 128:
                 pages.pop(next(iter(pages)))
             pages[key] = payload
         return deepcopy(pages[key])
-    return _shared_read(api.base_url, api.source, api.stored_only, method,
+    return _shared_read(api.base_url, api.source, api.stored_only, access_token, method,
                         json.dumps(args, sort_keys=True), _api=api)
 
 
@@ -81,11 +83,11 @@ def decode_saved_view(raw):
     return cid,kind,params,operation
 
 
-def open_chart(collection_id, variable=None, grid=None, interval=None):
+def open_chart(collection_id, variable=None, grid=None, interval=None, variables=None,
+               available_variables=None, handoff_payloads_ready=False):
     st.session_state['chart_filters_'+collection_id] = False
-    if st.session_state.get('chart_collection') != collection_id:
-        st.session_state['saved_chart_frequency'] = 'hourly'
-        st.session_state['saved_chart_kind'] = 'Chuỗi thời gian'
+    st.session_state['saved_chart_frequency'] = 'hourly'
+    st.session_state['saved_chart_kind'] = 'Chuỗi thời gian'
     st.session_state['chart_collection'] = collection_id
     st.session_state['chart_details_visible'] = True
     st.query_params['chart_mode'] = 'details'
@@ -97,6 +99,15 @@ def open_chart(collection_id, variable=None, grid=None, interval=None):
     st.session_state['chart_open_requested']=collection_id
     if variable:
         st.session_state['chart_variable_'+collection_id]=variable
+    selected_variables = list(dict.fromkeys(variables or ([variable] if variable else [])))
+    for name in available_variables or selected_variables:
+        st.session_state[f'stored_var_{name}_{collection_id}'] = name in selected_variables
+    if available_variables:
+        st.session_state[f'stored_var_all_{collection_id}'] = (
+            bool(available_variables) and set(available_variables) == set(selected_variables)
+        )
+    if not handoff_payloads_ready:
+        st.session_state.pop('chart_handoff_payloads_'+collection_id, None)
     if grid is not None:
         st.session_state['chart_grid_'+collection_id]=grid
     if interval:
@@ -175,7 +186,7 @@ def forget_deleted(collection_id, job_id):
     pages = st.session_state.get('library_pages', {})
     for key in list(pages):
         entries = pages[key]['collections']
-        _, _, _, args = json.loads(key)
+        args = json.loads(key)[-1]
         if args[2] > 0:
             del pages[key]
             continue
@@ -254,15 +265,21 @@ def render_saved(client, charts=False):
             del st.query_params[prefix+'_applied']
             back_to_library(prefix)
             show_details = False
-            st.warning('Cấu hình trên đường dẫn không còn hợp lệ. Hãy chọn lại bộ dữ liệu.')
+            msg = 'Cấu hình trên đường dẫn không còn hợp lệ. Hãy chọn lại bộ dữ liệu.'
+            st.warning(msg)
+            notify_warning(msg)
         except DashboardApiError as exc:
             if exc.status_code == 404:
                 forget_deleted(cid, cid)
                 st.session_state.pop('collection_deleted_notice', None)
                 show_details = False
-                st.warning('Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.')
+                msg = 'Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.'
+                st.warning(msg)
+                notify_warning(msg)
             else:
-                st.error('Chưa khôi phục được kết quả: '+str(exc))
+                msg = 'Chưa khôi phục được kết quả: '+str(exc)
+                st.error(msg)
+                notify_error(msg)
     list_slot = st.container(key=prefix+'_collection_list')
     detail_slot = st.empty()
     with list_slot:
@@ -327,7 +344,9 @@ def render_saved(client, charts=False):
             if entry['status']=='partial': st.warning('Bộ dữ liệu chưa đủ. Giá trị thiếu không được thay bằng 0.')
             if s.get('grid_coordinates_verified') is False:
                 st.warning('File nguồn thiếu tọa độ lưới. Điểm lưu là điểm thay thế do parser ghi nhận, chưa xác minh là điểm lưới thực.')
-            if entry.get('error'): st.error(entry['error'])
+            if entry.get('error'):
+                st.error(entry['error'])
+                notify_error(f"Lỗi bộ dữ liệu: {entry['error']}")
             with st.expander('Thông tin lần thu thập, file nguồn và các biến bổ sung'):
                 st.write('Mã bộ dữ liệu: '+entry['id'])
                 st.write('Tạo lúc: '+entry['created_at'])
@@ -344,7 +363,9 @@ def render_saved(client, charts=False):
                                    file_name=f'quality_{selected}.json',mime='application/json',on_click='ignore')
                 with st.expander('Chi tiết cảnh báo'): st.dataframe(q[1]['issues'][:100],hide_index=True)
         if not entry['grids']:
-            st.info('Bộ dữ liệu chưa có điểm lưới hợp lệ để xem hoặc vẽ.')
+            msg = 'Bộ dữ liệu chưa có điểm lưới hợp lệ để xem hoặc vẽ.'
+            st.info(msg)
+            notify_warning(msg, icon='📍')
             if action_scroll: _scroll_to(prefix+'_collection_detail')
             return
         filter_key = 'chart_filters_'+selected
@@ -364,11 +385,27 @@ def render_saved(client, charts=False):
             variable_key=prefix+'_variable_'+selected
             if st.session_state.get(variable_key) not in variables:
                 st.session_state[variable_key]=variables[0]
+            variable = st.session_state[variable_key]
             st.caption('Chọn biến, điểm lưới và khoảng ngày, rồi bấm nút bên dưới để cập nhật kết quả. Thay đổi trong form chưa được áp dụng.')
             if charts:
                 kind = st.selectbox('Loại biểu đồ',['Chuỗi thời gian','Bản đồ nhiệt','Không gian (điểm)','Thống kê và xu hướng'],key='saved_chart_kind')
+                st.caption('Các lựa chọn biến được đồng bộ với Kho dữ liệu.')
             with st.form(prefix+'_selected_form'):
-                variable=st.selectbox('Biến trong bộ dữ liệu',variables,format_func=variable_label,key=prefix+'_variable_'+selected)
+                if not charts:
+                    with st.container(key='hide_stored_variable_selectbox'):
+                        variable = st.selectbox('Biến trong bộ dữ liệu', variables, format_func=variable_label, key=prefix+'_variable_'+selected)
+                st.write('**Chọn biến trong bộ dữ liệu:**')
+                all_var_key = 'stored_var_all_' + selected
+                all_checked = st.checkbox('Tất cả các biến (lấy full dữ liệu)', key=all_var_key)
+                var_cols = st.columns(min(len(variables), 3))
+                for vi, v in enumerate(variables):
+                    cb_key = f'stored_var_{v}_{selected}'
+                    var_cols[vi % len(var_cols)].checkbox(
+                        variable_label(v),
+                        value=True if all_checked else st.session_state.get(cb_key, v == variable),
+                        disabled=all_checked,
+                        key=cb_key,
+                    )
                 grids=entry['grids']
                 idx=st.selectbox('Điểm lưới thực',range(len(grids)),format_func=lambda i:f"{grids[i]['latitude']}, {grids[i]['longitude']}",key=prefix+'_grid_'+selected)
                 local=timezone(timedelta(hours=7))
@@ -394,8 +431,63 @@ def render_saved(client, charts=False):
                     elif kind == 'Bản đồ nhiệt':
                         frequency='monthly'
                         st.caption('Bản đồ nhiệt tổng hợp theo tháng.')
-                submit=st.form_submit_button('Vẽ dữ liệu đã chọn' if charts else 'Áp dụng bộ lọc',key=prefix+'_selected_submit',type='primary')
+                col_sub, col_rst = st.columns(2)
+                submit = col_sub.form_submit_button('Vẽ dữ liệu đã chọn' if charts else 'Áp dụng bộ lọc', key=prefix+'_selected_submit', type='primary')
+                reset_filters = col_rst.form_submit_button('Làm mới bộ lọc', key=prefix+'_reset_filters', icon=':material/refresh:')
+        if reset_filters:
+            for k in [
+                prefix + '_range_start_' + selected,
+                prefix + '_range_end_' + selected,
+                prefix + '_hour_start_' + selected,
+                prefix + '_hour_end_' + selected,
+                prefix + '_grid_' + selected,
+                prefix + '_variable_' + selected,
+                'stored_var_all_' + selected,
+            ]:
+                st.session_state.pop(k, None)
+            for v in variables:
+                st.session_state.pop(f'stored_var_{v}_{selected}', None)
+            if charts:
+                st.session_state.pop('saved_chart_kind', None)
+                st.session_state.pop('saved_chart_frequency', None)
+            st.session_state.pop(prefix + '_result', None)
+            notify_info('Đã làm mới bộ lọc về mặc định.')
+            st.rerun()
+        if all_checked:
+            selected_vars = list(variables)
+        else:
+            checked_vars = [v for v in variables if st.session_state.get(f'stored_var_{v}_{selected}')]
+            selected_vars = checked_vars
+        if not selected_vars:
+            if submit:
+                st.session_state.pop(prefix+'_result', None)
+                st.warning('Chọn ít nhất một biến bằng checkbox để vẽ biểu đồ.')
+            if action_scroll:
+                _scroll_to(prefix+'_collection_detail')
+            return
+        variable = selected_vars[0]
         opening=st.session_state.pop(prefix+'_open_requested',None)==selected
+        handoff_payloads = (
+            st.session_state.pop('chart_handoff_payloads_'+selected, None)
+            if charts and opening else None
+        )
+        if handoff_payloads:
+            kind = 'Chuỗi thời gian'
+            first_payload = deepcopy(handoff_payloads[0])
+            first_payload['chart_payloads'] = deepcopy(handoff_payloads)
+            first_payload['chart_payload_errors'] = []
+            st.session_state['chart_result'] = (selected, kind, first_payload)
+            grid_location = first_payload['grid_location']
+            chart_params = dict(
+                variable=first_payload['variable'],
+                latitude=grid_location['latitude'], longitude=grid_location['longitude'],
+                frequency='hourly', aggregation='auto',
+                start=first_payload['requested_start'], end=first_payload['requested_end'],
+            )
+            st.query_params['chart_applied'] = json.dumps(
+                [selected, kind, chart_params, 'timeseries'], ensure_ascii=False
+            )
+            opening = False
         previous=st.session_state.get(prefix+'_result')
         applied = False
         force_refresh = st.session_state.pop('chart_force_refresh', False) if charts else False
@@ -406,7 +498,9 @@ def render_saved(client, charts=False):
                         or bool(from_hour and (from_hour.minute or from_hour.second))
                         or bool(to_hour and (to_hour.minute or to_hour.second)))
         if invalid_window and querying:
-            st.error('Chọn khoảng ngày/giờ hợp lệ, tròn giờ và bắt đầu không sau kết thúc. Kết quả trước đó được giữ nguyên.')
+            msg = 'Khoảng thời gian không hợp lệ: Chọn ngày/giờ bắt đầu trước hoặc bằng ngày/giờ kết thúc và phải là giờ tròn (00 phút)!'
+            st.error(msg)
+            notify_error(msg)
         elif querying:
             a=max(lo,datetime.combine(first,from_hour,local))
             b=min(hi,datetime.combine(last,to_hour,local))
@@ -419,8 +513,36 @@ def render_saved(client, charts=False):
                     payload=cached_read(api, 'query_collection', selected,operation,params)
                     if kind=='Thống kê và xu hướng' and variable!='wind_direction':
                         payload['trend_result']=cached_read(api, 'query_collection', selected,'trend',params)
+                    if charts and len(selected_vars) > 1:
+                        chart_payloads = [payload]
+                        chart_payload_errors = []
+                        for other_var in selected_vars:
+                            if other_var == variable:
+                                continue
+                            try:
+                                other_p = cached_read(api, 'query_collection', selected, operation, dict(params, variable=other_var))
+                                if kind == 'Thống kê và xu hướng' and other_var != 'wind_direction':
+                                    other_p['trend_result'] = cached_read(api, 'query_collection', selected, 'trend', dict(params, variable=other_var))
+                                chart_payloads.append(other_p)
+                            except DashboardApiError as exc:
+                                chart_payload_errors.append((other_var, str(exc)))
+                        payload['chart_payloads'] = chart_payloads
+                        payload['chart_payload_errors'] = chart_payload_errors
+                    if not charts and len(selected_vars) > 1:
+                        multi_payloads = [payload]
+                        for other_var in selected_vars:
+                            if other_var == variable:
+                                continue
+                            try:
+                                other_payload = cached_read(api, 'query_collection', selected, operation, dict(params, variable=other_var))
+                                multi_payloads.append(other_payload)
+                            except DashboardApiError:
+                                pass
+                        payload['multi_payloads'] = multi_payloads
                 except DashboardApiError as exc:
-                    st.error('Chưa áp dụng bộ lọc mới. Kết quả trước đó được giữ nguyên. '+str(exc))
+                    msg = 'Chưa áp dụng bộ lọc mới: ' + str(exc)
+                    st.error(msg)
+                    notify_error(msg)
                 else:
                     st.session_state.pop(prefix+'_defer_query',None)
                     st.session_state[prefix+'_result']=(selected,kind,payload)
@@ -437,32 +559,103 @@ def render_saved(client, charts=False):
         _,kind,payload=result
         with st.container(key='chart_result' if charts else 'stored_data_result'):
             grid=payload['grid_location']
-            st.caption(f"Kết quả đã áp dụng: {variable_label(payload['variable'])} · {payload['unit']} · UTC+7 · điểm {grid['latitude']:.4f}, {grid['longitude']:.4f}")
+            multi = payload.get('multi_payloads') if not charts else None
+            if multi and len(multi) > 1:
+                var_names = ", ".join(variable_label(p['variable']) for p in multi)
+                st.caption(f"Kết quả đã áp dụng: {var_names} ({len(multi)} biến) · UTC+7 · điểm {grid['latitude']:.4f}, {grid['longitude']:.4f}")
+            else:
+                st.caption(f"Kết quả đã áp dụng: {variable_label(payload['variable'])} · {payload['unit']} · UTC+7 · điểm {grid['latitude']:.4f}, {grid['longitude']:.4f}")
             st.caption(payload['requested_start']+' → '+payload['requested_end']+' (UTC+7)')
             if charts:
-                st.caption('Biểu đồ đang hiển thị: '+kind+' · Chu kỳ: '+str(payload.get('frequency','hourly'))+'. Bộ lọc phía trên chỉ áp dụng khi bấm Vẽ.')
+                c_list = payload.get('chart_payloads')
+                plotted = c_list if c_list else [payload]
+                var_names = ", ".join(variable_label(p['variable']) for p in plotted)
+                st.caption(
+                    f"Đang hiển thị {len(plotted)}/{len(selected_vars)} biểu đồ "
+                    f"({var_names}) · Chu kỳ: {payload.get('frequency', 'hourly')}"
+                )
+                for failed_var, error in payload.get('chart_payload_errors', []):
+                    st.warning(f"Không thể vẽ {variable_label(failed_var)}: {error}")
             if not payload['complete']:
+                if payload['available_count'] == 0:
+                    notify_warning(f"Chưa có dữ liệu cho khoảng thời gian này (0/{payload['expected_count']} giờ).", icon="⚠️")
                 st.warning(f"Có {payload['available_count']}/{payload['expected_count']} giờ. Khoảng thiếu được giữ trống.")
                 with st.expander('Khoảng giờ thiếu'): st.json(payload['missing_ranges'])
             if not charts:
-                frame=pd.DataFrame([{'Thời gian (UTC+7)':datetime.fromisoformat(p['time']).strftime('%d/%m/%Y %H:%M'),f"{variable_label(payload['variable'])} ({payload['unit']})":p['value']} for p in payload['data']])
-                export=pd.DataFrame(payload['data'])
-                for k in ['collection_id','place_name','source','dataset','variable','unit']: export[k]=payload[k]
-                for k,v in payload['grid_location'].items(): export['grid_'+k]=v
+                if multi and len(multi) > 1:
+                    time_map = {}
+                    for p in multi:
+                        col_label = f"{variable_label(p['variable'])} ({p['unit']})"
+                        for pt in p.get('data', []):
+                            t = pt['time']
+                            if t not in time_map:
+                                time_map[t] = {
+                                    'Thời gian (UTC+7)': datetime.fromisoformat(t).strftime('%d/%m/%Y %H:%M'),
+                                    'time': t,
+                                }
+                            time_map[t][col_label] = pt['value']
+                            time_map[t][p['variable']] = pt['value']
+                    sorted_rows = sorted(time_map.values(), key=lambda r: r['time'])
+                    display_cols = ['Thời gian (UTC+7)'] + [f"{variable_label(p['variable'])} ({p['unit']})" for p in multi]
+                    frame = pd.DataFrame([{c: r.get(c, None) for c in display_cols} for r in sorted_rows])
+                    export_rows = []
+                    for r in sorted_rows:
+                        row_data = {
+                            'time': r['time'],
+                            'collection_id': payload.get('collection_id', selected),
+                            'place_name': payload.get('place_name', ''),
+                            'source': payload.get('source', ''),
+                            'dataset': payload.get('dataset', ''),
+                            'grid_latitude': payload.get('grid_location', {}).get('latitude'),
+                            'grid_longitude': payload.get('grid_location', {}).get('longitude'),
+                        }
+                        for p in multi:
+                            v_name = p['variable']
+                            row_data[f"{v_name} ({p['unit']})"] = r.get(v_name, None)
+                        export_rows.append(row_data)
+                    export = pd.DataFrame(export_rows)
+                else:
+                    frame=pd.DataFrame([{'Thời gian (UTC+7)':datetime.fromisoformat(p['time']).strftime('%d/%m/%Y %H:%M'),f"{variable_label(payload['variable'])} ({payload['unit']})":p['value']} for p in payload['data']])
+                    export=pd.DataFrame(payload['data'])
+                    for k in ['collection_id','place_name','source','dataset','variable','unit']: export[k]=payload[k]
+                    for k,v in payload['grid_location'].items(): export['grid_'+k]=v
                 selected_grid=entry['grids'].index(payload['grid_location'])
+                handoff_payloads = multi if multi else [payload]
+                multi_vars = [p['variable'] for p in handoff_payloads]
+                st.session_state['chart_handoff_payloads_'+selected] = deepcopy(handoff_payloads)
                 with st.container(horizontal=True):
                     st.button('Vẽ biểu đồ từ dữ liệu này',type='primary',icon=':material/bar_chart:',on_click=open_chart,args=(selected,payload['variable'],selected_grid,
-                              (payload['requested_start'],payload['requested_end'])))
+                              (payload['requested_start'],payload['requested_end']), multi_vars, variables, True))
                     st.download_button('Tải CSV',export.to_csv(index=False).encode('utf-8-sig'),file_name=f'collection_{selected}.csv',mime='text/csv',key='download_timeseries_csv',on_click='ignore',icon=':material/download:')
                 st.dataframe(frame,hide_index=True,width='stretch')
-            elif kind=='Thống kê và xu hướng':
-                _show_statistics(payload)
-                trend=payload.get('trend_result')
-                if trend:
-                    if trend.get('message'): st.info(trend['message'])
-                    else: _show_trend(trend)
             else:
-                {'Chuỗi thời gian':_show_timeseries,'Bản đồ nhiệt':_show_heatmap,'Không gian (điểm)':_show_map}[kind](payload)
+                charts_list = payload.get('chart_payloads') if charts else None
+                if charts_list and len(charts_list) > 1:
+                    render_func = {'Chuỗi thời gian': _show_timeseries,
+                                   'Bản đồ nhiệt': _show_heatmap,
+                                   'Không gian (điểm)': _show_map,
+                                   'Thống kê và xu hướng': _show_statistics}[kind]
+                    for p_idx, p_item in enumerate(charts_list):
+                        chart_key = f"saved_{selected}_{kind}_{p_item['variable']}"
+                        st.markdown(f"#### {variable_label(p_item['variable'])} ({p_item['unit']})")
+                        if kind == 'Thống kê và xu hướng':
+                            _show_statistics(p_item)
+                            trend = p_item.get('trend_result')
+                            if trend:
+                                if trend.get('message'): st.info(trend['message'])
+                                else: _show_trend(trend)
+                        else:
+                            render_func(p_item, chart_key=chart_key)
+                        if p_idx < len(charts_list) - 1:
+                            st.divider()
+                elif kind == 'Thống kê và xu hướng':
+                    _show_statistics(payload)
+                    trend = payload.get('trend_result')
+                    if trend:
+                        if trend.get('message'): st.info(trend['message'])
+                        else: _show_trend(trend)
+                else:
+                    {'Chuỗi thời gian': _show_timeseries, 'Bản đồ nhiệt': _show_heatmap, 'Không gian (điểm)': _show_map}[kind](payload)
 
         scroll_result = charts and st.session_state.pop('chart_scroll_result', None) == selected
         if action_scroll:
@@ -492,14 +685,20 @@ def set_library_page(prefix, page):
 @st.fragment
 def render_library_list(api, prefix, detail_slot):
     if st.session_state.pop('missing_collection_notice', False):
-        st.warning('Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.')
+        msg = 'Bộ dữ liệu đang xem không còn tồn tại. Đã trở về danh sách.'
+        st.warning(msg)
+        notify_warning(msg)
     if st.session_state.pop('collection_deleted_notice', False):
-        st.success('Đã xóa bộ dữ liệu và lịch sử tác vụ.')
+        msg = 'Đã xóa bộ dữ liệu và lịch sử tác vụ.'
+        st.success(msg)
+        notify_success(msg)
     error = st.session_state.pop(prefix+'_delete_error', None)
     if error:
         st.error(error)
+        notify_error(f"Lỗi khi xóa: {error}")
     page=st.session_state.get(prefix+'_page',0)
-    entries=cached_read(api, 'list_collections', st.session_state.get(prefix+'_search',''),51,page*50)['collections']
+    search_query = st.session_state.get(prefix+'_search','').strip()
+    entries=cached_read(api, 'list_collections', search_query,51,page*50)['collections']
     has_next = len(entries) > 50
     entries = entries[:50]
     preferred=st.session_state.pop(prefix+'_preferred_collection_id',None)
@@ -508,10 +707,16 @@ def render_library_list(api, prefix, detail_slot):
         if not any(e['id']==preferred for e in entries): entries.insert(0,target)
         st.session_state[prefix+'_collection']=preferred
     if not entries:
-        st.info('Chưa có bộ dữ liệu phù hợp. Bộ dữ liệu mới sẽ xuất hiện ở đây sau khi bạn bấm Bắt đầu thu thập.')
+        if search_query:
+            msg = f"Không tìm thấy bộ dữ liệu nào khớp với '{search_query}'."
+            st.info(msg)
+            notify_warning(msg, icon="🔍")
+        else:
+            notify_warning("Chưa có dữ liệu: Bạn chưa tải bộ dữ liệu nào. Vui lòng vào mục Thu thập để tải dữ liệu ERA5 trước!", icon="⚠️")
+            render_empty_data_notice("dữ liệu" if prefix == "stored" else "biểu đồ")
         if page:
             st.button('Về trang đầu', on_click=set_library_page, args=(prefix, 0))
-        return
+        return False
     selected_now=st.session_state.get(prefix+'_collection')
     if not st.session_state.get(prefix+'_details_visible', False):
         selected_now = None

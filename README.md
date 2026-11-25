@@ -52,9 +52,9 @@ frontend/                 Dashboard, API client và biểu đồ
 docs/                     Tài liệu provider và bàn giao API cho AI
 tests/                    Bộ kiểm thử backend/frontend
 data/
-  raw/era5/               NetCDF; manifest cho tác vụ dài
-  cache/climate.sqlite3   Dữ liệu khí tượng đã nhập
-  cache/jobs.sqlite3      Metadata tác vụ và đồng bộ
+  cache/auth.sqlite3      Tài khoản và phiên đăng nhập
+  users/<id>/raw/era5/    NetCDF riêng của từng tài khoản
+  users/<id>/cache/       SQLite khí hậu và tác vụ riêng của từng tài khoản
 app.py                    Điểm chạy dashboard Streamlit
 requirements.txt          Thư viện Python
 .env.example              Mẫu cấu hình, không chứa key thật
@@ -89,6 +89,40 @@ Terminal 2 — frontend, cũng mở tại thư mục gốc repository:
 $env:API_BASE_URL="http://127.0.0.1:8000"
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
+
+### Đăng ký/đăng nhập bằng username và mật khẩu
+
+Tài khoản được lưu trong SQLite riêng tại `data/cache/auth.sqlite3`; mật khẩu
+được băm Argon2id, không lưu dạng rõ. Phiên đăng nhập dùng bearer token ngẫu
+nhiên, chỉ lưu bản băm trong DB và hết hạn sau 12 giờ. Các API dữ liệu yêu cầu
+token hợp lệ. Đăng ký đang mở cho mọi người dùng. Mỗi tài khoản có thư mục dữ
+liệu riêng tại `data/users/<id>/`, gồm cache khí hậu, metadata tác vụ và tệp
+NetCDF; API, AI truy vấn dữ liệu, tải nền và đồng bộ đều sử dụng vùng này.
+
+Các DB dùng chung cũ `data/cache/climate.sqlite3` và `data/cache/jobs.sqlite3`
+được giữ nguyên làm lưu trữ, không tự xóa, chuyển đổi hay hiển thị cho tài khoản
+nào. Tài khoản mới bắt đầu với vùng dữ liệu trống. Việc khôi phục dữ liệu cũ vào
+một tài khoản chưa được thực hiện tự động.
+
+1. Cài dependencies nếu chưa làm sau khi cập nhật `requirements.txt`:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   ```
+2. Tạo `.env` từ `.env.example` nếu chưa có; bật `AUTH_ENABLED=true`.
+3. Chạy backend và frontend như hướng dẫn ở trên, mở dashboard, tạo username
+   (3–32 ký tự chữ/số/`_`/`.`/`-`) và mật khẩu (8–128 ký tự), rồi đăng ký.
+   Đăng ký thành công sẽ tự đăng nhập. Đăng xuất rồi thử đăng nhập lại để kiểm
+   tra.
+
+Test tự động cho API và giao diện đăng nhập:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_auth_api.py tests/test_frontend_auth.py -q
+```
+
+Khi triển khai công khai, cần HTTPS và cân nhắc giới hạn tốc độ đăng nhập/đăng
+ký hoặc chỉ cho phép người dùng được mời.
 
 Trợ lý AI mở bằng pet đám mây **ARE** ở góc phải dưới; menu ba chấm cho đổi diện mạo mây/nắng/mưa và tạo trò chuyện mới. Backend đọc `AI_API_KEY` từ `.env` cục bộ; cấu hình mẫu ở `.env.example`, mặc định `gpt-6-luna`/`low`. Chỉ gửi câu hỏi hoặc bấm gợi ý mới gọi API AI (có thể tính phí); Agent chỉ truy vấn dữ liệu đã lưu, không tự tải CDS. Xem [phạm vi, kiểm thử và so sánh model](docs/DOT_5_AGENT_VA_CHAT.md).
 

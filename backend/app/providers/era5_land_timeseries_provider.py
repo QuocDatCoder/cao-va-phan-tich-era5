@@ -54,6 +54,11 @@ LON_COLUMNS = ("longitude", "lon")
 TEMPERATURE_VARIABLES = ("2m_temperature", "2m_dewpoint_temperature")
 # Existing unit-mismatch heuristic, not a meteorological validity bound.
 TEMPERATURE_UNIT_SUSPECT_BELOW_K = 100
+# Mưa và bức xạ là đại lượng tích lũy nên không thể âm. Khi ECMWF tách tích lũy về từng giờ,
+# sai số làm tròn số thực đôi khi cho giá trị âm rất nhỏ (cỡ -0,000006 mm): coi là nhiễu, đưa về 0.
+# Giá trị âm lớn hơn ngưỡng này được giữ nguyên và ghi cảnh báo để người dùng kiểm tra nguồn.
+NON_NEGATIVE_VARIABLES = ("total_precipitation", "surface_solar_radiation_downwards")
+NEGATIVE_NOISE_TOLERANCE = 0.001  # mm hoặc MJ/m² (đơn vị sau khi quy đổi)
 ALL_VARIABLES_NAME = "all_variables"
 
 
@@ -346,7 +351,18 @@ class ERA5LandTimeseriesProvider(ERA5ClimateProvider):
                 if not isfinite(converted):
                     if quality is not None: quality.issue("nonfinite_value", "Unit conversion produced a nonfinite value; skipped.", **details)
                     continue
-                point = ClimatePoint(time=stamp, value=round(converted, 6))
+                value = round(converted, 6)
+                if cds_name in NON_NEGATIVE_VARIABLES and value < 0:
+                    if value >= -NEGATIVE_NOISE_TOLERANCE:
+                        value = 0.0
+                    elif quality is not None:
+                        quality.issue(
+                            "suspicious_value",
+                            f"negative_accumulation: converted value {value:g} is below zero and beyond "
+                            "rounding noise; original value retained, verify the source data.",
+                            **details,
+                        )
+                point = ClimatePoint(time=stamp, value=value)
                 points = series.setdefault(cds_name, {})
                 if stamp in points:
                     if quality is not None:

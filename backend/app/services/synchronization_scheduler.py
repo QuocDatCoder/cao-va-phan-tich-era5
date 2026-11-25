@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -10,9 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class SynchronizationScheduler:
-    def __init__(self, settings: Settings, service: SynchronizationService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        service: SynchronizationService | None,
+        account_runner: Callable[[Settings], None] | None = None,
+    ) -> None:
+        if service is None and account_runner is None:
+            raise ValueError("A synchronization service or account runner is required.")
         self._settings = settings
         self._service = service
+        self._account_runner = account_runner
         self._scheduler = BackgroundScheduler(timezone="UTC")
 
     def start(self) -> None:
@@ -41,6 +50,11 @@ class SynchronizationScheduler:
 
     def run_once(self) -> None:
         try:
+            if self._account_runner is not None:
+                self._account_runner(self._settings)
+                return
+            if self._service is None:
+                raise RuntimeError("The synchronization service is not configured.")
             state = self._service.synchronize_configured(self._settings)
             if state.status == SynchronizationStatus.QUEUED:
                 self._service.run_synchronization(state.sync_id)

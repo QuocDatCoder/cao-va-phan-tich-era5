@@ -20,6 +20,24 @@ class DashboardApiClient:
     session: requests.Session | None = None
     source: str | None = None
     stored_only: bool = False
+    access_token: str | None = None
+
+    def register(self, username: str, password: str) -> dict[str, Any]:
+        return self._post(
+            "/api/v1/auth/register",
+            {"username": username, "password": password},
+            authenticated=False,
+        )
+
+    def login(self, username: str, password: str) -> dict[str, Any]:
+        return self._post(
+            "/api/v1/auth/login",
+            {"username": username, "password": password},
+            authenticated=False,
+        )
+
+    def logout(self) -> dict[str, Any]:
+        return self._post("/api/v1/auth/logout", {})
 
     def health(self) -> dict[str, Any]:
         return self._get("/health")
@@ -95,8 +113,12 @@ class DashboardApiClient:
 
     def delete_collection(self, collection_id):
         try:
+            headers = self._auth_headers()
+            request_options = {"timeout": self.timeout_seconds}
+            if headers is not None:
+                request_options["headers"] = headers
             response = self._session().delete(
-                self._url(f'/api/v1/collections/{collection_id}'), timeout=self.timeout_seconds)
+                self._url(f'/api/v1/collections/{collection_id}'), **request_options)
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
@@ -132,28 +154,34 @@ class DashboardApiClient:
             path = path.replace("/api/v1/climate/", "/api/v1/stored/climate/", 1)
             params = {**(params or {}), "source": self.source}
         try:
-            response = self._session().get(
-                self._url(path),
-                params=params,
-                timeout=self.timeout_seconds,
-            )
+            request_options = {"params": params, "timeout": self.timeout_seconds}
+            headers = self._auth_headers()
+            if headers is not None:
+                request_options["headers"] = headers
+            response = self._session().get(self._url(path), **request_options)
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
             raise DashboardApiError("Không kết nối được tới máy chủ API.") from exc
         return self._decode_response(response)
 
-    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        authenticated: bool = True,
+    ) -> dict[str, Any]:
         if self.stored_only and path == "/api/v1/downloads":
             if self.source not in {"land", "era5", "mock"}:
                 raise DashboardApiError("Hãy chọn nguồn dữ liệu trước khi thu thập.")
             payload = {**payload, "source": self.source}
         try:
-            response = self._session().post(
-                self._url(path),
-                json=payload,
-                timeout=self.timeout_seconds,
-            )
+            request_options = {"json": payload, "timeout": self.timeout_seconds}
+            headers = self._auth_headers() if authenticated else None
+            if headers is not None:
+                request_options["headers"] = headers
+            response = self._session().post(self._url(path), **request_options)
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
@@ -169,7 +197,7 @@ class DashboardApiClient:
         if not response.ok:
             detail = payload.get("detail") if isinstance(payload, dict) else None
             if isinstance(detail, list):
-                detail = "Yêu cầu không hợp lệ. Vui lòng kiểm tra bộ lọc đã chọn."
+                detail = "Yêu cầu không hợp lệ. Vui lòng kiểm tra thông tin đã nhập."
             if not isinstance(detail, str) or not detail:
                 detail = f"Yêu cầu tới máy chủ API thất bại với mã {response.status_code}."
             raise DashboardApiError(detail, status_code=response.status_code)
@@ -183,6 +211,11 @@ class DashboardApiClient:
 
     def _session(self) -> requests.Session:
         return self.session or requests.Session()
+
+    def _auth_headers(self) -> dict[str, str] | None:
+        if not self.access_token:
+            return None
+        return {"Authorization": f"Bearer {self.access_token}"}
 
     def _timeout_message(self) -> str:
         return (

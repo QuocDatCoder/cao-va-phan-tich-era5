@@ -13,6 +13,7 @@ from frontend.components.controls import VARIABLES, local_date_range, search_pla
 from frontend.appearance import apply_appearance
 from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info
+from frontend.auth import render_login_gate
 
 SOURCES = {
     "land": "ERA5-Land · Đất liền",
@@ -24,11 +25,14 @@ FREQUENCIES = {"Giờ": "hourly", "Ngày": "daily", "Tháng": "monthly", "Năm":
 def client(source):
     return DashboardApiClient(base_url=os.getenv("API_BASE_URL", "http://localhost:8000"),
         timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
-        source=source, stored_only=True)
+        source=source, stored_only=True,
+        access_token=st.session_state.get("auth_access_token"))
 
 
 def render_dashboard():
     st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
+    if not render_login_gate(client(None)):
+        return
     apply_appearance()
     st.html("""
         <style>

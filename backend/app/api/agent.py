@@ -6,7 +6,8 @@ from backend.app.ai.agent import AgentRequest, ClimateAgent
 from backend.app.ai.config import AISettings
 from backend.app.ai.db_tools import build_database_tools
 from backend.app.ai.responses_client import ResponsesClient
-from backend.app.core.config import get_settings
+from backend.app.core.user_context import current_user_id
+from backend.app.core.user_settings import get_settings_for_user
 from backend.app.domain.ui_actions import UIAction
 from backend.app.ai.view_service import resolve_action
 from backend.app.services.dependencies import get_stored_climate_service
@@ -18,7 +19,8 @@ router = APIRouter(prefix='/api/v1/agent', tags=['agent'])
 
 def get_agent():
     try:
-        return ClimateAgent(ResponsesClient(AISettings()), build_database_tools(get_settings()))
+        settings = get_settings_for_user(current_user_id.get())
+        return ClimateAgent(ResponsesClient(AISettings()), build_database_tools(settings))
     except ValidationError:
         raise HTTPException(503,'Cấu hình AI chưa hợp lệ. Kiểm tra AI_* ở backend.') from None
 

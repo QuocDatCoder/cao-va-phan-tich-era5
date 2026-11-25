@@ -7,12 +7,35 @@ from contextlib import nullcontext
 import pandas as pd
 import streamlit as st
 from frontend.components.charts import variable_label
+from frontend.components.climate_views import (
+    ANOMALY, CLIMATOLOGY, DERIVED_OPERATIONS, REGIONAL_MAP, WIND_ROSE, build_derived_chart,
+)
 from frontend.api_client import DashboardApiError
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info, render_empty_data_notice
 from backend.app.domain.public_variables import public_variables
 
 STATUS = dict(queued='Đang chờ', running='Đang thu thập', complete='Đủ dữ liệu',
               partial='Thiếu một phần', failed='Thất bại', interrupted='Bị gián đoạn', cancelling='Đang hủy', cancelled='Đã hủy')
+
+CHART_TYPES = ['Chuỗi thời gian', WIND_ROSE, ANOMALY, CLIMATOLOGY, REGIONAL_MAP, 'Thống kê và xu hướng']
+LEGACY_CHART_TYPES = {'Bản đồ nhiệt': 'heatmap', 'Không gian (điểm)': 'map'}
+
+
+def read_derived_chart(api, collection_id, kind, params, entry):
+    if kind == ANOMALY:
+        start, end, baseline_start, baseline_end = (datetime.fromisoformat(params[key])
+            for key in ('start', 'end', 'baseline_start', 'baseline_end'))
+        if baseline_start > baseline_end or not (baseline_end < start or baseline_start > end):
+            raise ValueError('Chọn đủ hai ngày cho giai đoạn nền. Giai đoạn nền và khoảng xem không được trùng nhau.')
+    payload = build_derived_chart(
+        kind, lambda operation, args: cached_read(api, 'query_collection', collection_id, operation, args),
+        params, entry,
+    )
+    payload['derived_figure'].update_layout(
+        margin=dict(l=12, r=16, t=24, b=16),
+        legend=dict(orientation='h', yanchor='top', y=-0.15),
+    )
+    return payload
 
 
 @st.cache_data(ttl=60, max_entries=128, show_spinner=False)
@@ -65,6 +88,7 @@ def decode_saved_view(raw):
         raise ValueError('Invalid saved collection')
     operations = {'Chuỗi thời gian': {'timeseries','aggregate'}, 'Bản đồ nhiệt': {'heatmap'},
                   'Không gian (điểm)': {'map'}, 'Thống kê và xu hướng': {'statistics'}}
+    operations.update({name: {op} for name, op in DERIVED_OPERATIONS.items()})
     if not isinstance(kind,str) or kind not in operations or not isinstance(operation,str) or operation not in operations[kind]:
         raise ValueError('Invalid saved chart operation')
     if not isinstance(params.get('variable'),str) or not params['variable']:
@@ -80,6 +104,13 @@ def decode_saved_view(raw):
     start,end = (datetime.fromisoformat(params[edge]) for edge in ['start','end'])
     if start.utcoffset() is None or end.utcoffset() is None or start>end:
         raise ValueError('Invalid saved interval')
+    if kind == ANOMALY:
+        baseline_start, baseline_end = (datetime.fromisoformat(params[edge])
+                                        for edge in ('baseline_start', 'baseline_end'))
+        if (baseline_start.utcoffset() is None or baseline_end.utcoffset() is None
+                or baseline_start > baseline_end
+                or not (baseline_end < start or baseline_start > end)):
+            raise ValueError('Giai đoạn nền phải tách biệt với khoảng xem.')
     return cid,kind,params,operation
 
 
@@ -242,14 +273,16 @@ def render_saved(client, charts=False):
             if not isinstance(cid, str) or not isinstance(saved_params, dict):
                 raise ValueError('Invalid saved view')
             st.session_state[prefix+'_collection'] = cid
-            payload = cached_read(api, 'query_collection', cid, operation, saved_params)
+            entry = cached_read(api, 'get_collection', cid)
+            payload = (read_derived_chart(api, cid, saved_kind, saved_params, entry)
+                       if saved_kind in DERIVED_OPERATIONS
+                       else cached_read(api, 'query_collection', cid, operation, saved_params))
             if operation == 'statistics' and saved_params.get('variable') != 'wind_direction':
                 payload['trend_result'] = cached_read(api, 'query_collection', cid, 'trend', saved_params)
             st.session_state[prefix+'_result'] = (cid, saved_kind, payload)
             st.session_state['selected_collection_id'] = cid
             st.session_state[prefix+'_collection'] = cid
             st.session_state[prefix+'_variable_'+cid] = saved_params['variable']
-            entry = cached_read(api, 'get_collection', cid)
             grid = dict(latitude=saved_params['latitude'], longitude=saved_params['longitude'])
             st.session_state[prefix+'_grid_'+cid] = entry['grids'].index(grid)
             for edge in ['start', 'end']:
@@ -379,28 +412,51 @@ def render_saved(client, charts=False):
             if st.session_state.get(variable_key) not in variables:
                 st.session_state[variable_key]=variables[0]
             variable = st.session_state[variable_key]
-            st.caption('Chọn biến, điểm lưới và khoảng ngày, rồi bấm nút bên dưới để cập nhật kết quả. Thay đổi trong form chưa được áp dụng.')
+            kind = 'Chuỗi thời gian'
             if charts:
-                kind = st.selectbox('Loại biểu đồ',['Chuỗi thời gian','Bản đồ nhiệt','Không gian (điểm)','Thống kê và xu hướng'],key='saved_chart_kind')
-                st.caption('Các lựa chọn biến được đồng bộ với Kho dữ liệu.')
+                existing_kind = st.session_state.get('saved_chart_kind')
+                choices = CHART_TYPES + ([existing_kind] if existing_kind in LEGACY_CHART_TYPES else [])
+                kind = st.selectbox('Loại biểu đồ', choices, key='saved_chart_kind')
+            fixed_variables = {
+                WIND_ROSE: 'Dùng hướng gió và tốc độ gió cùng giờ.',
+                ANOMALY: 'Dùng nhiệt độ trung bình tháng.',
+                CLIMATOLOGY: 'Dùng nhiệt độ trung bình và tổng lượng mưa theo tháng.',
+            }
+            monthly_chart = kind in {ANOMALY, CLIMATOLOGY}
             with st.form(prefix+'_selected_form'):
                 if not charts:
                     with st.container(key='hide_stored_variable_selectbox'):
                         variable = st.selectbox('Biến trong bộ dữ liệu', variables, format_func=variable_label, key=prefix+'_variable_'+selected)
-                st.write('**Chọn biến trong bộ dữ liệu:**')
-                all_var_key = 'stored_var_all_' + selected
-                all_checked = st.checkbox('Tất cả các biến (lấy full dữ liệu)', key=all_var_key)
-                var_cols = st.columns(min(len(variables), 3))
-                for vi, v in enumerate(variables):
-                    cb_key = f'stored_var_{v}_{selected}'
-                    var_cols[vi % len(var_cols)].checkbox(
-                        variable_label(v),
-                        value=True if all_checked else st.session_state.get(cb_key, v == variable),
-                        disabled=all_checked,
-                        key=cb_key,
+                map_variable = None
+                all_checked = False
+                if charts and kind == REGIONAL_MAP:
+                    map_variables = [v for v in variables if v != 'wind_direction']
+                    map_variable = st.selectbox(
+                        'Biến hiển thị trên bản đồ', map_variables,
+                        index=map_variables.index(variable) if variable in map_variables else 0,
+                        format_func=variable_label, key='map_variable_'+selected,
                     )
+                elif kind in fixed_variables:
+                    st.caption(fixed_variables[kind])
+                else:
+                    st.write('**Chọn biến trong bộ dữ liệu:**')
+                    all_var_key = 'stored_var_all_' + selected
+                    all_checked = st.checkbox('Tất cả các biến (lấy full dữ liệu)', key=all_var_key)
+                    var_cols = st.columns(min(len(variables), 3))
+                    for vi, v in enumerate(variables):
+                        cb_key = f'stored_var_{v}_{selected}'
+                        var_cols[vi % len(var_cols)].checkbox(
+                            variable_label(v),
+                            value=True if all_checked else st.session_state.get(cb_key, v == variable),
+                            disabled=all_checked,
+                            key=cb_key,
+                        )
                 grids=entry['grids']
-                idx=st.selectbox('Điểm lưới thực',range(len(grids)),format_func=lambda i:f"{grids[i]['latitude']}, {grids[i]['longitude']}",key=prefix+'_grid_'+selected)
+                if kind == REGIONAL_MAP:
+                    idx = 0
+                    st.caption(f'Phạm vi bản đồ · {len(grids)} điểm lưới trong bộ dữ liệu.')
+                else:
+                    idx=st.selectbox('Điểm lưới thực',range(len(grids)),format_func=lambda i:f"{grids[i]['latitude']}, {grids[i]['longitude']}",key=prefix+'_grid_'+selected)
                 local=timezone(timedelta(hours=7))
                 lo,hi=(datetime.fromisoformat(m[k]).astimezone(local) for k in ['requested_start','requested_end'])
                 st.caption('Chỉ chọn các ngày thuộc bộ này. Với bộ dài, mặc định xem 30 ngày đầu để giữ truy vấn gọn.')
@@ -412,8 +468,13 @@ def render_saved(client, charts=False):
                 last=two.date_input('Đến ngày (UTC+7)',value=None if end_key in st.session_state else default_end,min_value=lo.date(),max_value=hi.date(),key=end_key)
                 from_hour_key=prefix+'_hour_start_'+selected
                 to_hour_key=prefix+'_hour_end_'+selected
-                from_hour=one.time_input('Từ giờ (UTC+7)',value=None if from_hour_key in st.session_state else lo.time().replace(tzinfo=None),key=from_hour_key,step=3600)
-                to_hour=two.time_input('Đến giờ (UTC+7)',value=None if to_hour_key in st.session_state else hi.time().replace(tzinfo=None),key=to_hour_key,step=3600)
+                if monthly_chart:
+                    from_hour = datetime.min.time()
+                    to_hour = from_hour.replace(hour=23)
+                    st.caption('Khoảng ngày tính từ 00:00 ngày đầu đến 23:00 ngày cuối. Biểu đồ chỉ dùng tháng đủ dữ liệu.')
+                else:
+                    from_hour=one.time_input('Từ giờ (UTC+7)',value=None if from_hour_key in st.session_state else lo.time().replace(tzinfo=None),key=from_hour_key,step=3600)
+                    to_hour=two.time_input('Đến giờ (UTC+7)',value=None if to_hour_key in st.session_state else hi.time().replace(tzinfo=None),key=to_hour_key,step=3600)
                 frequency='hourly'
                 if not charts:
                     kind='Chuỗi thời gian'
@@ -423,6 +484,19 @@ def render_saved(client, charts=False):
                     elif kind == 'Bản đồ nhiệt':
                         frequency='monthly'
                         st.caption('Bản đồ nhiệt tổng hợp theo tháng.')
+                    elif kind in {ANOMALY, CLIMATOLOGY}:
+                        frequency = 'monthly'
+                    if kind == ANOMALY:
+                        st.info('Heatmap so sánh cùng tháng ở hai năm khác nhau. Ví dụ, xem tháng 1/2026 và dùng tháng 1/2025 làm nền. Cả hai tháng phải có đủ dữ liệu từ đầu đến cuối tháng.')
+                        if hi.year - lo.year <= 1 and hi.date() <= (pd.Timestamp(lo.date()) + pd.DateOffset(years=1)).date():
+                            st.caption('Bộ này dài khoảng một năm hoặc ngắn hơn. Nếu chưa có cùng tháng ở hai năm, chọn Chuỗi thời gian theo tháng để xem nhiệt độ đã thu thập.')
+                        saved = decode_saved_view(st.query_params['chart_applied'])[2] if st.query_params.get('chart_applied') else {}
+                        baseline = st.date_input(
+                            'Giai đoạn nền (UTC+7)',
+                            value=tuple(datetime.fromisoformat(saved[k]).date() for k in ('baseline_start', 'baseline_end'))
+                            if 'baseline_start' in saved else (),
+                            min_value=lo.date(), max_value=hi.date(), key='chart_baseline_'+selected,
+                        )
                 col_sub, col_rst = st.columns(2)
                 submit = col_sub.form_submit_button('Vẽ dữ liệu đã chọn' if charts else 'Áp dụng bộ lọc', key=prefix+'_selected_submit', type='primary')
                 reset_filters = col_rst.form_submit_button('Làm mới bộ lọc', key=prefix+'_reset_filters', icon=':material/refresh:')
@@ -434,6 +508,8 @@ def render_saved(client, charts=False):
                 prefix + '_hour_end_' + selected,
                 prefix + '_grid_' + selected,
                 prefix + '_variable_' + selected,
+                'chart_baseline_' + selected,
+                'map_variable_' + selected,
                 'stored_var_all_' + selected,
             ]:
                 st.session_state.pop(k, None)
@@ -445,15 +521,18 @@ def render_saved(client, charts=False):
             st.session_state.pop(prefix + '_result', None)
             notify_info('Đã làm mới bộ lọc về mặc định.')
             st.rerun()
-        if all_checked:
+        if charts and kind == REGIONAL_MAP:
+            selected_vars = [map_variable] if map_variable else []
+        elif kind in fixed_variables:
+            selected_vars = [variable]
+        elif all_checked:
             selected_vars = list(variables)
         else:
             checked_vars = [v for v in variables if st.session_state.get(f'stored_var_{v}_{selected}')]
             selected_vars = checked_vars
         if not selected_vars:
             if submit:
-                st.session_state.pop(prefix+'_result', None)
-                st.warning('Chọn ít nhất một biến bằng checkbox để vẽ biểu đồ.')
+                st.warning('Chọn ít nhất một biến phù hợp để áp dụng bộ lọc.')
             if action_scroll:
                 _scroll_to(prefix+'_collection_detail')
             return
@@ -496,15 +575,26 @@ def render_saved(client, charts=False):
             a=max(lo,datetime.combine(first,from_hour,local))
             b=min(hi,datetime.combine(last,to_hour,local))
             params=dict(variable=variable,**grids[idx],frequency=frequency,aggregation='auto',start=a.isoformat(),end=b.isoformat())
-            operation=('timeseries' if frequency=='hourly' else 'aggregate') if kind=='Chuỗi thời gian' else {'Bản đồ nhiệt':'heatmap','Không gian (điểm)':'map','Thống kê và xu hướng':'statistics'}[kind]
+            operation = (('timeseries' if frequency == 'hourly' else 'aggregate')
+                         if kind == 'Chuỗi thời gian' else
+                         {**LEGACY_CHART_TYPES, **DERIVED_OPERATIONS, 'Thống kê và xu hướng': 'statistics'}[kind])
+            if kind == ANOMALY and not (force_refresh and not submit and not opening):
+                if len(baseline or ()) != 2:
+                    params.update(baseline_start=b.isoformat(), baseline_end=a.isoformat())
+                else:
+                    ref_a = max(lo, datetime.combine(baseline[0], datetime.min.time(), local))
+                    ref_b = min(hi, datetime.combine(baseline[1], datetime.min.time(), local) + timedelta(hours=23))
+                    params.update(baseline_start=ref_a.isoformat(), baseline_end=ref_b.isoformat())
             if force_refresh and not submit and not opening and st.query_params.get('chart_applied'):
                 _,kind,params,operation = decode_saved_view(st.query_params['chart_applied'])
             with st.spinner('Đang cập nhật kết quả…'):
                 try:
-                    payload=cached_read(api, 'query_collection', selected,operation,params)
+                    payload = (read_derived_chart(api, selected, kind, params, entry)
+                               if kind in DERIVED_OPERATIONS
+                               else cached_read(api, 'query_collection', selected, operation, params))
                     if kind=='Thống kê và xu hướng' and variable!='wind_direction':
                         payload['trend_result']=cached_read(api, 'query_collection', selected,'trend',params)
-                    if charts and len(selected_vars) > 1:
+                    if charts and kind not in DERIVED_OPERATIONS and len(selected_vars) > 1:
                         chart_payloads = [payload]
                         chart_payload_errors = []
                         for other_var in selected_vars:
@@ -530,9 +620,12 @@ def render_saved(client, charts=False):
                             except DashboardApiError:
                                 pass
                         payload['multi_payloads'] = multi_payloads
-                except DashboardApiError as exc:
+                except (DashboardApiError, ValueError) as exc:
                     msg = 'Chưa áp dụng bộ lọc mới: ' + str(exc)
-                    notify_error(msg)
+                    if kind in DERIVED_OPERATIONS:
+                        st.warning(msg)
+                    else:
+                        notify_error(msg)
                 else:
                     st.session_state.pop(prefix+'_defer_query',None)
                     st.session_state[prefix+'_result']=(selected,kind,payload)
@@ -549,6 +642,14 @@ def render_saved(client, charts=False):
             return
         _,kind,payload=result
         with st.container(key='chart_result' if charts else 'stored_data_result'):
+            if kind in DERIVED_OPERATIONS:
+                st.subheader(kind, anchor=False)
+                st.caption(payload['derived_caption'])
+                st.caption(payload['requested_start']+' → '+payload['requested_end']+' (UTC+7)')
+                st.plotly_chart(payload['derived_figure'], width='stretch', key='derived_'+selected+'_'+kind)
+                if action_scroll or st.session_state.pop('chart_scroll_result', None) == selected:
+                    _scroll_to('chart_result')
+                return
             grid=payload['grid_location']
             multi = payload.get('multi_payloads') if not charts else None
             if multi and len(multi) > 1:

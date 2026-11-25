@@ -11,6 +11,7 @@ import streamlit as st
 from frontend.api_client import DashboardApiClient, DashboardApiError, DEFAULT_TIMEOUT_SECONDS
 from frontend.components.controls import VARIABLES, local_date_range, search_places
 from frontend.appearance import apply_appearance
+from frontend.dashboard import _translate_status
 from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info
 from frontend.auth import render_login_gate
@@ -561,24 +562,43 @@ def _render_collection_jobs(api):
         st.info("Chưa có tác vụ thu thập. Bạn có thể gửi yêu cầu bằng form ở trên.")
         return
     rows = []
+    local = timezone(timedelta(hours=7))
+    source_names = {'land': 'ERA5-Land', 'era5': 'ERA5', 'mock': 'Giả lập'}
     for job in jobs:
-        created = datetime.fromisoformat(job['created_at'].replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=7)))
-        rows.append({"Bộ dữ liệu": job.get('collection_name') or 'Tác vụ cũ — thiếu thông tin yêu cầu',
-            "Mã tác vụ": job['job_id'],
-            "Tạo lúc UTC+7": created.strftime('%d/%m/%Y %H:%M'), "Trạng thái": job['status']})
+        created = datetime.fromisoformat(job['created_at']).astimezone(local)
+        place = job.get('place_name')
+        if point := job.get('location'):
+            coordinates = f"{point['latitude']:.4f}, {point['longitude']:.4f}"
+            place = coordinates if place in (None, 'Tọa độ nhập tay') else f"{place} · {coordinates}"
+        elif area := job.get('area'):
+            place = f"{area['south']:g}–{area['north']:g}° vĩ, {area['west']:g}–{area['east']:g}° kinh"
+        if job.get('requested_start') and job.get('requested_end'):
+            start, end = (datetime.fromisoformat(job[k]).astimezone(local)
+                          for k in ('requested_start', 'requested_end'))
+            period = f'{start:%d/%m/%Y}' if start.date() == end.date() else f'{start:%d/%m/%Y} – {end:%d/%m/%Y}'
+            period += ' (UTC+7)'
+        else:
+            period = f"{job['start_date']} – {job['end_date']} (UTC)"
+        rows.append({
+            'Địa điểm / vùng': place or 'Chưa ghi nhận',
+            'Nguồn': source_names.get(job.get('source'), 'Chưa ghi nhận'),
+            'Khoảng ngày dữ liệu': period,
+            'Tạo lúc (UTC+7)': created.strftime('%d/%m/%Y %H:%M:%S'),
+            'Trạng thái': _translate_status(job['status']),
+        })
     with st.expander("Lịch sử thu thập · "+str(len(rows))+" tác vụ", expanded=False):
         st.caption("100 tác vụ gần nhất. Tự cập nhật mỗi 15 giây khi có tác vụ đang chờ/chạy; bấm Làm mới để kiểm tra ngay.")
         st.dataframe(rows, hide_index=True, width='stretch')
     ids = [j['job_id'] for j in jobs]
     if st.session_state.get("workflow_selected_job") not in ids:
         st.session_state["workflow_selected_job"] = ids[0]
-    _VAR_VI = {v: k for k, v in VARIABLES.items()}
-    labels = {j['job_id']: (
-        f"{j.get('collection_name') or (j['start_date']+' đến '+j['end_date'])}"
-        f" · {j.get('source') or 'cũ'}"
-        f" · {_VAR_VI.get(j.get('variable',''), j.get('variable',''))}"
-        f" · {j['status']}"
-    ) for j in jobs}
+    labels = {
+        job['job_id']: (
+            f"{row['Địa điểm / vùng']} · {row['Khoảng ngày dữ liệu']}"
+            f" · {row['Nguồn']} · {row['Trạng thái']}"
+        )
+        for job, row in zip(jobs, rows)
+    }
     # Streamlit can retain the displayed formatted label for an unchanged ID.
     # Remount only when labels change; preserve the selected job independently.
     automatic = st.session_state['workflow_selected_job']
@@ -592,6 +612,7 @@ def _render_collection_jobs(api):
     if selected is None:
         return
     st.session_state['workflow_selected_job'] = selected
+    st.caption(f'Mã tác vụ: {selected}')
     context = "workflow_selected"
     st.session_state["collection_jobs"] = {**st.session_state.get("collection_jobs", {}), context: selected}
     _render_job_status(api, context, job=next(job for job in jobs if job['job_id'] == selected), show_quality=False)

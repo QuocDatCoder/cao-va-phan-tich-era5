@@ -84,7 +84,14 @@ class DownloadJobService:
         entry = self.collections.get(job_id) if self.collections else None
         if entry:
             job.collection_id = job_id
-            job.collection_name = entry['metadata'].get('name')
+            metadata = entry['metadata']
+            job = DownloadJob.model_validate({
+                **job.model_dump(),
+                'collection_name': metadata.get('name'),
+                'place_name': metadata.get('place_name'),
+                'requested_start': metadata.get('requested_start'),
+                'requested_end': metadata.get('requested_end'),
+            })
         return job
 
     def get_quality(self, job_id: str, offset: int = 0, limit: int = 100):

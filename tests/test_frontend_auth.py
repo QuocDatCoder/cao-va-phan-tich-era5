@@ -1,8 +1,18 @@
 import time
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from frontend.api_client import DashboardApiClient
+
+
+@pytest.fixture(autouse=True)
+def mock_current_user(monkeypatch):
+    def current_user(api):
+        assert api.access_token == "fixture-token"
+        return {"username": "test_user", "is_admin": False}
+
+    monkeypatch.setattr(DashboardApiClient, "current_user", current_user)
 
 
 _APP = """

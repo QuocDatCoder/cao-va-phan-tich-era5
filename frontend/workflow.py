@@ -305,11 +305,21 @@ def _render_page_footer():
     st.html("""
 <style>
 .era5-footer {
+    --footer-heading: #1a202c;
+    --footer-text: #4a5568;
+    --footer-link: #0f766e;
+    --footer-border: #cbd5e0;
     margin-top: 3rem;
-    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    border-top: 1px solid var(--footer-border);
     padding-top: 2rem;
     font-size: 0.82rem;
-    color: var(--text-color, #4a5568);
+    color: var(--footer-text);
+}
+body:has(.era5-shell[data-theme="dark"]) .era5-footer {
+    --footer-heading: #f3f3f3;
+    --footer-text: #cbd5e1;
+    --footer-link: #a7cbfc;
+    --footer-border: #505050;
 }
 .era5-footer-top {
     display: grid;
@@ -323,7 +333,7 @@ def _render_page_footer():
     letter-spacing: .08em;
     text-transform: uppercase;
     margin: 0 0 .75rem;
-    color: var(--text-color, #1a202c);
+    color: var(--footer-heading);
 }
 .era5-footer-col ul {
     list-style: none;
@@ -335,14 +345,14 @@ def _render_page_footer():
     line-height: 1.4;
 }
 .era5-footer-col ul li a {
-    color: var(--primary-color, #0f766e);
+    color: var(--footer-link);
     text-decoration: none;
 }
 .era5-footer-col ul li a:hover {
     text-decoration: underline;
 }
 .era5-footer-bottom {
-    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    border-top: 1px solid var(--footer-border);
     padding-top: 1.25rem;
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -354,30 +364,29 @@ def _render_page_footer():
     letter-spacing: .06em;
     text-transform: uppercase;
     margin: 0 0 .5rem;
-    color: var(--text-color, #1a202c);
+    color: var(--footer-heading);
 }
 .era5-footer-org p {
     margin: 0;
     line-height: 1.6;
-    color: var(--text-color, #4a5568);
+    color: var(--footer-text);
 }
 .era5-footer-badges {
     margin-top: 1.25rem;
     padding-top: 1rem;
-    border-top: 1px solid var(--secondary-background-color, #e2e8f0);
+    border-top: 1px solid var(--footer-border);
     display: flex;
     align-items: center;
     gap: .75rem;
     flex-wrap: wrap;
     font-size: 0.75rem;
-    color: var(--text-color, #718096);
 }
 .era5-footer-badge {
     display: inline-flex;
     align-items: center;
     gap: .3rem;
     padding: .2rem .55rem;
-    border: 1px solid var(--secondary-background-color, #cbd5e0);
+    border: 1px solid var(--footer-border);
     border-radius: 4px;
     font-size: 0.72rem;
     font-weight: 600;

@@ -303,7 +303,7 @@ def render_ai_chat(api):
                 '<span>Có câu hỏi về ERA5 không?</span>'
                 '</div>')
         st.button('AI chat',key='ai_chat_toggle',type='tertiary',
-                  on_click=_toggle,help='ARE có câu trả lời mới' if st.session_state.get('ai_chat_unread') else 'Trò chuyện với ARE')
+                  on_click=_toggle)
     if not st.session_state['ai_chat_open']:
         return
     with st.container(key='ai_chat_shell'):

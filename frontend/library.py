@@ -137,8 +137,8 @@ def back_to_library(prefix='stored'):
 
 
 def _scroll_to(target):
+    margin = '73px' if target.endswith(('_collection_detail', '_result')) else '5rem'
     st.html(f"""
-        <style>.st-key-{target} {{scroll-margin-top:5rem;}}</style>
         <script data-scroll="{uuid4().hex}">
         (() => {{
             let frame;
@@ -149,10 +149,8 @@ def _scroll_to(target):
                 const roots = document.querySelectorAll('.st-key-{target}');
                 const root = roots[roots.length-1];
                 if (root) {{
-                    const target = root.matches('.st-key-chart_result')
-                        && root.querySelector('.js-plotly-plot') || root;
-                    target.style.scrollMarginTop = '5rem';
-                    target.scrollIntoView({{behavior: 'instant', block: 'start'}});
+                    root.style.scrollMarginTop = '{margin}';
+                    root.scrollIntoView({{behavior: 'instant', block: 'start'}});
                 }}
                 frame = requestAnimationFrame(scroll);
             }};
@@ -321,7 +319,6 @@ def render_saved(client, charts=False):
                     pass
         st.session_state['selected_collection_id']=selected
         m,s=entry['metadata'],entry['summary']
-        st.divider()
         st.button('Quay lại danh sách', key=prefix+'_back_to_list',
                   icon=':material/arrow_back:', on_click=back_to_library, args=(prefix,))
         st.subheader(f"{variable_label(m['primary_variable'])} · {m['place_name']}", anchor=False)
@@ -363,13 +360,14 @@ def render_saved(client, charts=False):
             notify_warning(msg, icon='📍')
             if action_scroll: _scroll_to(prefix+'_collection_detail')
             return
-        filter_key = 'chart_filters_'+selected
-        if charts and filter_key not in st.session_state:
-            saved = st.session_state.get('chart_result')
-            st.session_state[filter_key] = not bool(saved and saved[0] == selected)
-        if charts and st.session_state.pop('chart_collapse_filters', None) == selected:
+        filter_key = prefix+'_filters_'+selected
+        if filter_key not in st.session_state:
+            saved = st.session_state.get(prefix+'_result')
+            st.session_state[filter_key] = charts and not bool(saved and saved[0] == selected)
+        if st.session_state.pop(prefix+'_collapse_filters', None) == selected:
             st.session_state[filter_key] = False
-        with st.expander('Bộ lọc biểu đồ', expanded=True, key=filter_key, on_change='rerun') if charts else nullcontext():
+        filter_label = 'Bộ lọc biểu đồ' if charts else 'Bộ lọc dữ liệu'
+        with st.expander(filter_label, expanded=True, key=filter_key, on_change='rerun'):
             variables=public_variables([m['primary_variable']]+[v['variable'] for v in entry['variables']])
             if not variables:
                 st.info('Bộ dữ liệu chưa có biến chính được hỗ trợ để xem hoặc vẽ.')
@@ -405,18 +403,17 @@ def render_saved(client, charts=False):
                 idx=st.selectbox('Điểm lưới thực',range(len(grids)),format_func=lambda i:f"{grids[i]['latitude']}, {grids[i]['longitude']}",key=prefix+'_grid_'+selected)
                 local=timezone(timedelta(hours=7))
                 lo,hi=(datetime.fromisoformat(m[k]).astimezone(local) for k in ['requested_start','requested_end'])
-                with nullcontext() if charts else st.expander('Khoảng xem trong bộ dữ liệu'):
-                    st.caption('Chỉ chọn các ngày thuộc bộ này. Với bộ dài, mặc định xem 30 ngày đầu để giữ truy vấn gọn.')
-                    one,two=st.columns(2)
-                    start_key=prefix+'_range_start_'+selected
-                    first=one.date_input('Từ ngày (UTC+7)',value=None if start_key in st.session_state else lo.date(),min_value=lo.date(),max_value=hi.date(),key=start_key)
-                    default_end=min(hi.date(),(lo+timedelta(days=29)).date())
-                    end_key=prefix+'_range_end_'+selected
-                    last=two.date_input('Đến ngày (UTC+7)',value=None if end_key in st.session_state else default_end,min_value=lo.date(),max_value=hi.date(),key=end_key)
-                    from_hour_key=prefix+'_hour_start_'+selected
-                    to_hour_key=prefix+'_hour_end_'+selected
-                    from_hour=one.time_input('Từ giờ (UTC+7)',value=None if from_hour_key in st.session_state else lo.time().replace(tzinfo=None),key=from_hour_key,step=3600)
-                    to_hour=two.time_input('Đến giờ (UTC+7)',value=None if to_hour_key in st.session_state else hi.time().replace(tzinfo=None),key=to_hour_key,step=3600)
+                st.caption('Chỉ chọn các ngày thuộc bộ này. Với bộ dài, mặc định xem 30 ngày đầu để giữ truy vấn gọn.')
+                one,two=st.columns(2)
+                start_key=prefix+'_range_start_'+selected
+                first=one.date_input('Từ ngày (UTC+7)',value=None if start_key in st.session_state else lo.date(),min_value=lo.date(),max_value=hi.date(),key=start_key)
+                default_end=min(hi.date(),(lo+timedelta(days=29)).date())
+                end_key=prefix+'_range_end_'+selected
+                last=two.date_input('Đến ngày (UTC+7)',value=None if end_key in st.session_state else default_end,min_value=lo.date(),max_value=hi.date(),key=end_key)
+                from_hour_key=prefix+'_hour_start_'+selected
+                to_hour_key=prefix+'_hour_end_'+selected
+                from_hour=one.time_input('Từ giờ (UTC+7)',value=None if from_hour_key in st.session_state else lo.time().replace(tzinfo=None),key=from_hour_key,step=3600)
+                to_hour=two.time_input('Đến giờ (UTC+7)',value=None if to_hour_key in st.session_state else hi.time().replace(tzinfo=None),key=to_hour_key,step=3600)
                 frequency='hourly'
                 if not charts:
                     kind='Chuỗi thời gian'
@@ -541,9 +538,10 @@ def render_saved(client, charts=False):
                     st.session_state[prefix+'_result']=(selected,kind,payload)
                     st.query_params[prefix+'_applied'] = json.dumps([selected, kind, params, operation], ensure_ascii=False)
                     applied = True
-                    if charts and submit:
-                        st.session_state['chart_collapse_filters'] = selected
-                        st.session_state['chart_scroll_result'] = selected
+                    if submit:
+                        st.session_state[prefix+'_collapse_filters'] = selected
+                        if charts:
+                            st.session_state['chart_scroll_result'] = selected
                         st.rerun()
         result=st.session_state.get(prefix+'_result')
         if not result or result[0]!=selected:
@@ -651,11 +649,10 @@ def render_saved(client, charts=False):
                     {'Chuỗi thời gian': _show_timeseries, 'Bản đồ nhiệt': _show_heatmap, 'Không gian (điểm)': _show_map}[kind](payload)
 
         scroll_result = charts and st.session_state.pop('chart_scroll_result', None) == selected
-        if action_scroll:
+        if action_scroll or scroll_result or (charts and (opening or handoff_payloads)):
             _scroll_to('chart_result' if charts else 'stored_data_result')
-        elif scroll_result or (charts and opening) or (not charts and opening):
-            scroll_target = 'chart_collection_detail' if charts else 'stored_collection_detail'
-            _scroll_to(scroll_target)
+        elif opening:
+            _scroll_to('stored_collection_detail')
 
 
 def delete_confirmed(api, collection_id, prefix, detail_slot):

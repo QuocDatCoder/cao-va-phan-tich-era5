@@ -1,5 +1,7 @@
 """Notification and alert utilities for intuitive, top-positioned visual feedback."""
 import re
+from html import escape
+from uuid import uuid4
 import streamlit as st
 
 
@@ -146,6 +148,40 @@ def _clear_toast(message: str) -> None:
     st.session_state.pop(_toast_key(message), None)
 
 
+def _show_notice(message: str, icon: str, kind: str, duration: int = 0) -> None:
+    # Mount outside Streamlit's fragment tree so a polling rerun cannot dismiss it.
+    notice_id = f"are-notice-{uuid4().hex}"
+    st.html(f"""
+        <template id="{notice_id}">
+            <div class="are-notice are-notice-{kind}" role="{'alert' if kind == 'error' else 'status'}">
+                <span aria-hidden="true">{escape(icon)}</span>
+                <span class="are-notice-text">{escape(message.replace('**', ''))}</span>
+                <button type="button" aria-label="Đóng thông báo">×</button>
+            </div>
+        </template>
+        <script>
+        (() => {{
+            const template = document.getElementById('{notice_id}');
+            if (!template) return;
+            document.querySelector('.are-notice')?.querySelector('button').click();
+            const notice = template.content.firstElementChild.cloneNode(true);
+            const dismiss = () => {{
+                clearTimeout(timer);
+                notice.remove();
+            }};
+            const timer = {duration} ? setTimeout(dismiss, {duration}) : null;
+            notice.querySelector('button').addEventListener('click', dismiss);
+            document.body.append(notice);
+            // The header and chat can create their own layers during a rerun.
+            if (typeof notice.showPopover === 'function') {{
+                notice.popover = 'manual';
+                notice.showPopover();
+            }}
+        }})();
+        </script>
+    """, unsafe_allow_javascript=True)
+
+
 # ---------------------------------------------------------------------------
 # Public notification functions
 # ---------------------------------------------------------------------------
@@ -161,28 +197,28 @@ def notify_error(message: str, icon: str = "❌"):
     if st.session_state.get(key):
         return
     translated = _translate_error(message)
-    st.toast(translated, icon=icon, duration="infinite")
+    _show_notice(translated, icon, "error")
     st.session_state[key] = True
 
 
 def notify_warning(message: str, icon: str = "⚠️"):
-    """Show a persistent warning toast at the top (de-duplicated)."""
+    """Show a warning once per session until its deduplication key is cleared."""
     key = _toast_key(message)
     if st.session_state.get(key):
         return
     translated = _translate_error(message)
-    st.toast(translated, icon=icon, duration="infinite")
+    _show_notice(translated, icon, "warning", 8000)
     st.session_state[key] = True
 
 
 def notify_success(message: str, icon: str = "✅"):
     """Show a brief success toast (auto-dismisses, not de-duplicated)."""
-    st.toast(message, icon=icon)
+    _show_notice(message, icon, "success", 4000)
 
 
 def notify_info(message: str, icon: str = "ℹ️"):
     """Show a brief info toast (auto-dismisses, not de-duplicated)."""
-    st.toast(message, icon=icon)
+    _show_notice(message, icon, "info", 4000)
 
 
 def render_empty_data_notice(section_name: str = "dữ liệu"):

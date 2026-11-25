@@ -69,6 +69,9 @@ async def synchronization_not_found_handler(_, exc: SynchronizationNotFoundError
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     scheduler = None
     settings = get_settings()
+    if settings.auth_enabled and settings.admin_password:
+        from backend.app.services.dependencies import get_auth_service
+        get_auth_service().set_admin_password(settings.admin_username, settings.admin_password)
     from backend.app.storage.collection_repository import CollectionRepository, recover_abandoned
     from backend.app.storage.job_repository import JobRepository
     if settings.auth_enabled:

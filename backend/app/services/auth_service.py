@@ -23,6 +23,35 @@ class AuthService:
     def __init__(self, repository: AuthRepository) -> None:
         self._repository = repository
 
+    def provision_admin(self, username: str, password: str) -> None:
+        normalized = username.casefold()
+        user = self._repository.get_user_by_username(normalized)
+        if user is None:
+            self._repository.ensure_admin(normalized, _password_hasher.hash(password), int(time.time()))
+        else:
+            self._repository.ensure_admin(normalized, user["password_hash"], int(time.time()))
+
+    def set_admin_password(self, username: str, password: str) -> None:
+        normalized = username.casefold()
+        user = self._repository.get_user_by_username(normalized)
+        password_hash = _password_hasher.hash(password)
+        if user is None:
+            self._repository.ensure_admin(normalized, password_hash, int(time.time()))
+        else:
+            self._repository.update_user_password(normalized, password_hash)
+            self._repository.ensure_admin(normalized, password_hash, int(time.time()))
+
+    def create_admin_handoff(self, user_id: int) -> str:
+        ticket = secrets.token_urlsafe(32)
+        self._repository.create_admin_handoff(self._token_hash(ticket), user_id, int(time.time()) + 300)
+        return ticket
+
+    def redeem_admin_handoff(self, ticket: str) -> dict:
+        user = self._repository.consume_admin_handoff(self._token_hash(ticket), int(time.time()))
+        if user is None:
+            raise InvalidSessionError
+        return self._create_session(int(user["id"]), user["username"], int(time.time()))
+
     def register(self, username: str, password: str) -> dict:
         now = int(time.time())
         normalized_username = username.casefold()
@@ -34,7 +63,7 @@ class AuthService:
 
     def login(self, username: str, password: str) -> dict:
         user = self._repository.get_user_by_username(username.casefold())
-        if user is None or not _password_hasher.verify(password, user["password_hash"]):
+        if user is None or not user["is_active"] or not _password_hasher.verify(password, user["password_hash"]):
             raise InvalidCredentialsError
         return self._create_session(int(user["id"]), user["username"], int(time.time()))
 
@@ -63,6 +92,7 @@ class AuthService:
             "token_type": "bearer",
             "username": username,
             "expires_at": expires_at,
+            "is_admin": bool((self._repository.get_user_by_username(username) or {}).get("is_admin", False)),
         }
 
     @staticmethod

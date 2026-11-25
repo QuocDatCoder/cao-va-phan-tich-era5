@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     auth_enabled: bool = True
     auth_db_path: Path = Path("data/cache/auth.sqlite3")
+    admin_username: str = "admin"
+    admin_password: str | None = Field(default=None, min_length=8, max_length=128)
     job_metadata_db_path: Path = Path("data/cache/jobs.sqlite3")
     climate_data_db_path: Path = Path("data/cache/climate.sqlite3")
 

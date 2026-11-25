@@ -16,3 +16,18 @@ class AuthResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
+    is_admin: bool = False
+
+
+class AdminUserResponse(UserResponse):
+    is_active: bool
+    created_at: int
+
+
+class UserAccessRequest(BaseModel):
+    is_admin: bool | None = None
+    is_active: bool | None = None
+
+
+class AdminHandoffRequest(BaseModel):
+    ticket: str = Field(min_length=32, max_length=128)

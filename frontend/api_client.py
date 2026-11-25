@@ -42,6 +42,28 @@ class DashboardApiClient:
     def current_user(self) -> dict[str, Any]:
         return self._get("/api/v1/auth/me")
 
+    def list_users(self) -> list[dict[str, Any]]:
+        return self._get("/api/v1/auth/users")["users"]
+
+    def update_user(self, user_id: int, **access: bool) -> dict[str, Any]:
+        return self._patch(f"/api/v1/auth/users/{user_id}", access)
+
+    def delete_user(self, user_id: int) -> dict[str, Any]:
+        return self._delete(f"/api/v1/auth/users/{user_id}")
+
+    def admin_overview(self) -> dict[str, Any]:
+        return self._get("/api/v1/auth/admin/overview")
+
+    def admin_collection_history(self, user_id: int | None = None) -> list[dict[str, Any]]:
+        params = {"user_id": user_id} if user_id is not None else None
+        return self._get("/api/v1/auth/admin/collection-history", params=params)["history"]
+
+    def create_admin_handoff(self) -> str:
+        return self._post("/api/v1/auth/admin/handoff", {})["ticket"]
+
+    def redeem_admin_handoff(self, ticket: str) -> dict[str, Any]:
+        return self._post("/api/v1/auth/admin/handoff/redeem", {"ticket": ticket}, authenticated=False)
+
     def health(self) -> dict[str, Any]:
         return self._get("/health")
 
@@ -185,6 +207,24 @@ class DashboardApiClient:
             if headers is not None:
                 request_options["headers"] = headers
             response = self._session().post(self._url(path), **request_options)
+        except requests.Timeout as exc:
+            raise DashboardApiError(self._timeout_message()) from exc
+        except requests.RequestException as exc:
+            raise DashboardApiError("Không kết nối được tới máy chủ API.") from exc
+        return self._decode_response(response)
+
+    def _patch(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = self._session().patch(self._url(path), json=payload, timeout=self.timeout_seconds, headers=self._auth_headers())
+        except requests.Timeout as exc:
+            raise DashboardApiError(self._timeout_message()) from exc
+        except requests.RequestException as exc:
+            raise DashboardApiError("Không kết nối được tới máy chủ API.") from exc
+        return self._decode_response(response)
+
+    def _delete(self, path: str) -> dict[str, Any]:
+        try:
+            response = self._session().delete(self._url(path), timeout=self.timeout_seconds, headers=self._auth_headers())
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:

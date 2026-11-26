@@ -90,8 +90,8 @@ def render_filter_controls(follow_latest: bool = False) -> dict[str, Any]:
         if variable == "wind_direction":
             methods = {"Trung bình vòng tròn": "auto"}
         aggregation = methods[st.selectbox("Phép tổng hợp", list(methods), disabled=frequency == "hourly")]
-        start_date = st.date_input("Ngày bắt đầu", value=default_start, disabled=follow_latest)
-        end_date = st.date_input("Ngày kết thúc", value=default_end, disabled=follow_latest)
+        start_date = st.date_input("Ngày bắt đầu", value=default_start, disabled=follow_latest, format="DD/MM/YYYY")
+        end_date = st.date_input("Ngày kết thúc", value=default_end, disabled=follow_latest, format="DD/MM/YYYY")
         st.session_state.setdefault("latitude_input", DEFAULT_LATITUDE)
         st.session_state.setdefault("longitude_input", DEFAULT_LONGITUDE)
         st.session_state.setdefault("selected_place", DEFAULT_PLACE)

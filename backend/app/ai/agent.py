@@ -50,6 +50,8 @@ biến động, xu hướng hoặc nguyên nhân liên quan biểu đồ đang x
 không trả lời bằng answer_question hay chỉ hướng dẫn vẽ. Dùng view_context đã áp dụng;
 tham số chưa đổi có thể để null để server kế thừa. Không đòi người dùng nhắc lại bộ,
 ngày, biến, lưới hoặc chu kỳ đã có. Chỉ rõ yêu cầu phân tích không phải yêu cầu mở biểu đồ.
+view_kind=monthly_climate là biểu đồ có cả nhiệt độ trung bình và tổng mưa theo tháng.
+Khi nhận xét biểu đồ đó, gọi analyze_chart và để null các tham số đang xem.
 analyze_chart tính trên chuỗi đang biểu diễn; không đọc pixel, không suy ra nguyên nhân,
 dự báo hoặc bất thường khí hậu từ một chuỗi đơn lẻ. Nếu chưa có ngữ cảnh, hỏi tham số.
 Khi người dùng muốn mở dữ liệu/vẽ biểu đồ trên giao diện, dùng prepare_view để chuẩn bị
@@ -179,6 +181,24 @@ def render_answer(evidence):
                 f" cho {result['name']}: {params['start']} → {params['end']}. Bấm nút bên dưới để mở.")
     if name=='analyze_chart' and result.get('data'):
         return render_chart_analysis(result)
+    if name == 'analyze_monthly_climate':
+        if not result.get('data'):
+            return result['message']
+        data, provenance = result['data'], result['provenance']
+        temperature, rainfall = data['temperature'], data['rainfall']
+        t_min, t_max = temperature['min'], temperature['max']
+        r_min, r_max = rainfall['min'], rainfall['max']
+        source = ' · dữ liệu giả lập' if provenance['synthetic'] else ''
+        return (
+            f"**Khí hậu tháng · {provenance['start'][:10]} đến {provenance['end'][:10]} (UTC+7){source}**\n\n"
+            f"- Nhiệt độ trung bình tháng thấp nhất **{t_min['value']:.2f} °C** (tháng {t_min['month']}) "
+            f"và cao nhất **{t_max['value']:.2f} °C** (tháng {t_max['month']}).\n"
+            f"- Tổng lượng mưa thấp nhất **{r_min['value']:.2f} mm** (tháng {r_min['month']}) "
+            f"và cao nhất **{r_max['value']:.2f} mm** (tháng {r_max['month']}).\n"
+            f"- Có **{data['month_count']}/{data['requested_months']} tháng** đủ dữ liệu ở cả hai biến. "
+            f"Độ phủ theo giờ là {data['temperature_coverage']:.1%} cho nhiệt độ "
+            f"và {data['rainfall_coverage']:.1%} cho lượng mưa."
+        )
     if name=='prepare_collection' and status=='ok':
         return 'Kiểm tra địa điểm, biến và khoảng ngày trong thẻ bên dưới. ARE sẽ kiểm tra kho trước khi bạn xác nhận thu thập.'
     if name == 'answer_question' and result.get('data'):
@@ -247,8 +267,26 @@ class ClimateAgent:
         requests = 0
         answer_kind='data'
         project_entries={}
+        context = request.view_context
+        monthly_view = context if context and context.view_kind == 'monthly_climate' and context.parameters else None
+        question = normalize(request.message).strip().rstrip('.!?').strip()
+        if (context and context.page == 'chart' and context.parameters
+                and context.view_kind in {'monthly_climate', 'timeseries'} and re.fullmatch(
+                r'(nhan xet|phan tich|doc|giai thich)( so| nhanh| chuyen gia)?( ve)? bieu do (nay|dang xem)'
+                r'(\. tim dac diem noi bat va kiem tra do phu)?', question)):
+            if monthly_view:
+                name = 'analyze_monthly_climate'
+                arguments = context.model_dump(mode='json')
+                result = self.tools.analyze_monthly_climate(context.collection_id, context.parameters)
+            else:
+                name = 'analyze_chart'
+                arguments = dict(collection_id=context.collection_id,
+                                 **context.parameters.model_dump(exclude={'aggregation'}))
+                result = self.tools.execute(name, arguments)
+            evidence.append(dict(tool=name, arguments=arguments, result=result))
+            stopped = 'tool_result'
         try:
-            for _ in range(MAX_REQUESTS):
+            for _ in range(0 if stopped == 'tool_result' else MAX_REQUESTS):
                 if monotonic()-started > MAX_SECONDS:
                     stopped = 'time_limit'
                     break
@@ -326,7 +364,13 @@ class ClimateAgent:
                             values.update(latitude=params.latitude,longitude=params.longitude)
                         if context and context.collection_id==cid and context.view_kind=='heatmap' and params.frequency is None:
                             values['frequency']='monthly'
-                        if context and context.collection_id==cid and context.view_kind=='map':
+                        if (monthly_view and monthly_view.collection_id == cid
+                                and all(getattr(params, key) in (None, inherited.get(key))
+                                        for key in ['variable', 'latitude', 'longitude', 'start', 'end', 'frequency'])):
+                            name = 'analyze_monthly_climate'
+                            arguments = monthly_view.model_dump(mode='json')
+                            result = self.tools.analyze_monthly_climate(cid, monthly_view.parameters)
+                        elif context and context.collection_id==cid and context.view_kind=='map':
                             result=dict(status='invalid_arguments',data=None,message='Đây là biểu đồ không gian. ARE hiện phân tích chuỗi thời gian tại một điểm; hãy chuyển sang Chuỗi thời gian để đọc xu hướng, không suy ra phân bố không gian từ một điểm.')
                         else:
                             arguments=values
@@ -360,7 +404,7 @@ class ClimateAgent:
                     if name in {'search_collections','describe_collection','read_collection_quality','analyze_collection','usage_guide'}:
                         answer_kind='data'
                 evidence.append(dict(tool=name, arguments=arguments, result=result))
-                if ((result['status'] not in {'ok','route_required'}) or name in {'ask_user','usage_guide','analyze_collection','analyze_chart','read_collection_quality','prepare_collection'}
+                if ((result['status'] not in {'ok','route_required'}) or name in {'ask_user','usage_guide','analyze_collection','analyze_chart','analyze_monthly_climate','read_collection_quality','prepare_collection'}
                         or (name=='prepare_view' and result['status']!='route_required')
                         or (name=='answer_question' and result['status']=='ok')
                         or (name == 'search_collections' and result.get('selection_required'))):

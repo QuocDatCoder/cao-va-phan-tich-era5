@@ -38,6 +38,53 @@ def test_chat_is_lazy_and_keeps_history_when_closed_and_switching_tabs(ui,monkey
     assert app.session_state['ai_chat_messages']==[]
 
 
+def test_chart_from_saved_data_is_ready_for_are_on_the_first_click(ui, monkeypatch):
+    from backend.app.ai.agent import AgentRequest, ClimateAgent
+    from backend.app.ai.db_tools import build_database_tools
+    from test_ai_agent import FakeClient
+    from test_phase3_workflow import open_latest_collection
+    import frontend.ai_chat as chat
+
+    app, bridge, collection = ui
+    app.selectbox(key='collect_source').set_value('mock').run()
+    app.button(key='collect_now').click().run()
+    open_latest_collection(app)
+    app.button(key='stored_selected_submit').click().run()
+    cid, _, saved = app.session_state['stored_result']
+    app.button(key='ai_chat_toggle').click().run()
+    before = len([call for call in bridge.calls if call[1].endswith('/timeseries')])
+    next(button for button in app.button if button.label == 'Vẽ biểu đồ từ dữ liệu này').click().run()
+    assert not app.exception and not app.error
+    assert app.session_state['workflow_section'] == 'Biểu đồ'
+    assert app.session_state['chart_result'][2]['data'] == saved['data']
+    assert app.get('plotly_chart')
+    assert len([call for call in bridge.calls if call[1].endswith('/timeseries')]) == before
+    assert app.button(key='are_analyze_current')
+
+    requests = []
+    agent = ClimateAgent(FakeClient([]), build_database_tools(collection[0]))
+
+    class Workers:
+        def submit(self, fn, payload):
+            requests.append(AgentRequest.model_validate(payload))
+            future = Future()
+            future.set_result(agent.run(requests[-1]))
+            return future
+
+    monkeypatch.setattr(chat, '_workers', lambda: Workers())
+    app.chat_input(key='ai_chat_input').set_value('nhận xét sơ về biểu đồ này').run()
+    result = app.session_state['ai_chat_messages'][-1]['result']
+    context = requests[0].view_context
+    assert context.collection_id == cid and context.view_kind == 'timeseries'
+    assert context.parameters.start == saved['requested_start']
+    assert context.parameters.end == saved['requested_end']
+    assert context.parameters.variable == saved['variable']
+    assert (context.parameters.latitude, context.parameters.longitude) == (
+        saved['grid_location']['latitude'], saved['grid_location']['longitude'])
+    assert result['verified'] and result['request_count'] == 0
+    assert result['evidence'][-1]['result']['data']['point_count'] == len(saved['data'])
+
+
 def test_pending_chat_can_close_and_complete_without_duplicate_requests(monkeypatch):
     import frontend.ai_chat as chat
     future=Future()

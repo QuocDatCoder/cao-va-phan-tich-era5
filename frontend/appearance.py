@@ -23,17 +23,22 @@ def apply_appearance():
     [data-testid="stMetricValue"] {font-size:1.6rem;}
     .st-key-workflow_section {margin-bottom:.4rem;}
     .st-key-workflow_content {min-height:65vh;}
+    .latest-job-pulse {
+        display:flex;align-items:center;gap:.22rem;
+    }
+    .latest-job-pulse i {
+        width:.34rem;height:.34rem;border-radius:50%;background-color:#b66c27;
+        animation:latest-job-pulse 1.35s ease-in-out infinite;
+    }
+    .latest-job-pulse i:nth-child(2) {animation-delay:.17s;}
+    .latest-job-pulse i:nth-child(3) {animation-delay:.34s;}
+    @keyframes latest-job-pulse {0%,70%,100% {opacity:.38;} 35% {opacity:1;}}
+    @media(prefers-reduced-motion:reduce) {.latest-job-pulse i {animation:none;}}
     @media(max-width:640px) {.block-container {padding-left:1rem!important;padding-right:1rem!important;}}
 
     /* Hide source details expander visually */
     .st-key-hide_source_details_expander,
     .st-key-hide_source_details_expander * {
-        display: none !important;
-    }
-
-    /* Hide stored variable selectbox from UI (replaced by checkboxes in Kho dữ liệu) */
-    .st-key-hide_stored_variable_selectbox,
-    .st-key-hide_stored_variable_selectbox * {
         display: none !important;
     }
 

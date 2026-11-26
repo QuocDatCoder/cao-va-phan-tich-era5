@@ -7,23 +7,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from frontend.components.charts import map_figure
+from backend.app.domain.monthly_climate import MONTHLY_CLIMATE_LABEL, complete_months, read_monthly_climate
 
 WIND_ROSE = 'Hoa gió'
 ANOMALY = 'Heatmap dị thường nhiệt độ'
-CLIMATOLOGY = 'Khí hậu tháng'
+CLIMATOLOGY = MONTHLY_CLIMATE_LABEL
 REGIONAL_MAP = 'Bản đồ thời tiết'
 DERIVED_OPERATIONS = {
     WIND_ROSE: 'timeseries', ANOMALY: 'aggregate',
     CLIMATOLOGY: 'aggregate', REGIONAL_MAP: 'map',
 }
-
-
-def complete_months(payload):
-    return {
-        pd.Timestamp(row['time']).to_period('M'): row['value']
-        for row in payload['data']
-        if row.get('complete') and row['value'] is not None
-    }
 
 
 def build_derived_chart(kind, read, params, entry):
@@ -70,10 +63,10 @@ def build_derived_chart(kind, read, params, entry):
         return {**speed, 'derived_figure': fig, 'derived_caption': caption}
 
     if kind in {ANOMALY, CLIMATOLOGY}:
-        variable = find('2m_temperature', 'temperature')
-        temperature = series(variable, 'aggregate', frequency='monthly', aggregation='mean')
-        months = complete_months(temperature)
         if kind == ANOMALY:
+            variable = find('2m_temperature', 'temperature')
+            temperature = series(variable, 'aggregate', frequency='monthly', aggregation='mean')
+            months = complete_months(temperature)
             baseline = series(variable, 'aggregate', frequency='monthly', aggregation='mean',
                               start=params['baseline_start'], end=params['baseline_end'])
             reference = complete_months(baseline)
@@ -97,22 +90,24 @@ def build_derived_chart(kind, read, params, entry):
             caption = (f'Nền {params["baseline_start"][:10]} đến {params["baseline_end"][:10]} · '
                        f'{len(reference)} tháng đủ dữ liệu trong nền · Ô trống thiếu tháng đối chiếu.')
         else:
-            rainfall = complete_months(series(find('total_precipitation', 'precipitation'),
-                                             'aggregate', frequency='monthly', aggregation='sum'))
-            common = sorted(months.keys() & rainfall.keys())
-            if not common:
+            temperature, _, paired = read_monthly_climate(
+                lambda variable, aggregation: series(variable, 'aggregate', frequency='monthly',
+                                                     aggregation=aggregation), variables,
+            )
+            if not paired:
                 raise ValueError('Cần ít nhất một tháng đủ dữ liệu nhiệt độ và lượng mưa.')
-            periods = pd.period_range(common[0], common[-1], freq='M')
+            periods = pd.period_range(paired[0][0], paired[-1][0], freq='M')
             labels = [period.strftime('%m/%Y') for period in periods]
-            valid_months = set(common)
+            months = {period: value for period, value, _ in paired}
+            rainfall = {period: value for period, _, value in paired}
             fig = make_subplots(specs=[[{'secondary_y': True}]])
-            fig.add_trace(go.Bar(x=labels, y=[rainfall[p] if p in valid_months else None for p in periods], name='Tổng mưa',
+            fig.add_trace(go.Bar(x=labels, y=[rainfall.get(p) for p in periods], name='Tổng mưa',
                                  marker_color='#438ac5'), secondary_y=False)
-            fig.add_trace(go.Scatter(x=labels, y=[months[p] if p in valid_months else None for p in periods], name='Nhiệt độ trung bình',
+            fig.add_trace(go.Scatter(x=labels, y=[months.get(p) for p in periods], name='Nhiệt độ trung bình',
                                      mode='lines+markers', line_color='#cf4934'), secondary_y=True)
             fig.update_yaxes(title_text='Tổng mưa (mm)', rangemode='tozero', secondary_y=False)
             fig.update_yaxes(title_text='Nhiệt độ (°C)', secondary_y=True, showgrid=False)
-            caption = f'{len(common)} tháng đủ dữ liệu ở cả hai biến · Tháng thiếu được để trống.'
+            caption = f'{len(paired)} tháng đủ dữ liệu ở cả hai biến · Tháng thiếu được để trống.'
         return {**temperature, 'derived_figure': fig, 'derived_caption': caption}
 
     if params['variable'] == 'wind_direction':

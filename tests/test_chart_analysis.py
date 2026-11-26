@@ -1,4 +1,5 @@
 from datetime import datetime,timedelta
+import json
 import sqlite3
 import pytest
 from backend.app.ai.chart_analysis import summarize_plot,render_chart_analysis
@@ -8,6 +9,48 @@ from test_ai_agent import tools,FakeClient
 
 PARAMS=dict(variable='temperature',latitude=21.,longitude=105.,start='2025-01-01T00:00:00+07:00',
             end='2025-01-01T23:00:00+07:00',frequency='hourly')
+
+
+@pytest.mark.parametrize('message,calls', [
+    ('nhận xét sơ về biểu đồ này', []),
+    ('Phân tích chuyên gia biểu đồ đang xem. Tìm đặc điểm nổi bật và kiểm tra độ phủ.', []),
+    ('Tháng nào có mưa nhiều nhất?', [('analyze_chart', {})]),
+])
+def test_monthly_climate_uses_both_plotted_series(tools, monkeypatch, message, calls):
+    from frontend.chat_actions import applied_view
+    from frontend.components.climate_views import CLIMATOLOGY, build_derived_chart
+
+    cid = 'fixture-hanoi'
+    params = {**PARAMS, 'variable': 'total_precipitation', 'frequency': 'monthly',
+              'end': '2025-03-31T23:00:00+07:00', 'aggregation': 'auto'}
+    variables = ['2m_temperature', 'total_precipitation']
+    entry = tools.collections.get(cid)
+    entry['variables'] = [dict(variable=variable) for variable in variables]
+
+    def query(collection_id, operation, variable, latitude, longitude, start, end, frequency, aggregation):
+        assert (collection_id, operation, latitude, longitude, start, end, frequency) == (
+            cid, 'aggregate', 21., 105., params['start'], params['end'], 'monthly')
+        assert (variable, aggregation) in zip(variables, ['mean', 'sum'])
+        values = [19., 99., 25.] if variable == variables[0] else [90., 999., 150.]
+        return dict(variable=variable, grid_location=dict(latitude=latitude, longitude=longitude),
+                    coverage=0.9, data=[dict(time=f'2025-0{i}-01', value=value,
+                    complete=(i != 2 or variable == variables[0])) for i, value in enumerate(values, 1)])
+
+    monkeypatch.setattr(tools.collections, 'get', lambda _: entry)
+    monkeypatch.setattr(tools.collections, 'query', query)
+    chart = build_derived_chart(CLIMATOLOGY, lambda operation, args: query(cid, operation, **args), params, entry)
+    assert list(chart['derived_figure'].data[0].y) == [90., None, 150.]
+    assert list(chart['derived_figure'].data[1].y) == [19., None, 25.]
+    context = applied_view(
+        dict(workflow_section='Biểu đồ', chart_details_visible=True, chart_collection=cid,
+             chart_result=(cid, CLIMATOLOGY, chart)),
+        dict(chart_applied=json.dumps([cid, CLIMATOLOGY, params, 'aggregate'])),
+    )
+    assert context['view_kind'] == 'monthly_climate'
+    result = ClimateAgent(FakeClient(calls), tools).run(AgentRequest(message=message, view_context=context))
+    assert result['verified'] and result['request_count'] == len(calls)
+    assert '150.00 mm' in result['answer'] and '25.00 °C' in result['answer']
+    assert '2/3 tháng' in result['answer'] and '999' not in result['answer']
 
 
 def series(values,**updates):

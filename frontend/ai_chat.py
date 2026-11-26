@@ -18,11 +18,13 @@ from frontend.components.weather_pet import PET_CSS, themed_pet_art
 
 SUGGESTIONS = ['Kho đang có những bộ dữ liệu nào?', 'Làm sao vẽ biểu đồ?', 'Ứng dụng hỗ trợ hỏi những gì?']
 CSS_PATH = Path(__file__).with_name('components').joinpath('ai_chat.css')
+LINES_PATH = CSS_PATH.with_name('are_launcher_lines.js')
 
 
 @st.cache_data(max_entries=2,show_spinner=False)
-def _styles(modified):
-    return '<style>'+CSS_PATH.read_text(encoding='utf-8')+PET_CSS+'</style>'
+def _launcher_assets(css_modified, lines_modified):
+    return ('<style>'+CSS_PATH.read_text(encoding='utf-8')+PET_CSS+'</style>'
+            '<script>'+LINES_PATH.read_text(encoding='utf-8')+'</script>')
 
 
 @st.cache_resource
@@ -262,9 +264,9 @@ def _view_form(api,data,index):
             format_func=lambda i:f"{grids[i]['latitude']}, {grids[i]['longitude']}",key=f'ai_view_grid_{index}')
         left,right=st.columns(2)
         a=left.date_input('Từ ngày',value=start.date() if start and lo.date()<=start.date()<=hi.date() else None,
-                          min_value=lo.date(),max_value=hi.date(),key=f'ai_view_start_{index}')
+                          min_value=lo.date(),max_value=hi.date(),key=f'ai_view_start_{index}', format="DD/MM/YYYY")
         b=right.date_input('Đến ngày',value=end.date() if end and lo.date()<=end.date()<=hi.date() else None,
-                          min_value=lo.date(),max_value=hi.date(),key=f'ai_view_end_{index}')
+                          min_value=lo.date(),max_value=hi.date(),key=f'ai_view_end_{index}', format="DD/MM/YYYY")
         hour_a=left.time_input('Từ giờ',value=start.time() if start else datetime.min.time(),step=3600,key=f'ai_view_start_hour_{index}')
         hour_b=right.time_input('Đến giờ',value=end.time() if end else datetime.min.replace(hour=23).time(),step=3600,key=f'ai_view_end_hour_{index}')
         frequencies=(['monthly'] if draft['view_kind']=='heatmap' else ['hourly'] if draft['target']=='open_data' or draft['view_kind'] in {'map','statistics'} else ['hourly','daily','monthly','yearly'])
@@ -288,20 +290,12 @@ def render_ai_chat(api):
     sync_history(api)
     pending = st.session_state.get('ai_chat_pending')
     messages = st.session_state['ai_chat_messages']
-    st.html(_styles(CSS_PATH.stat().st_mtime_ns))
+    st.html(_launcher_assets(CSS_PATH.stat().st_mtime_ns, LINES_PATH.stat().st_mtime_ns),
+            unsafe_allow_javascript=True)
     with st.container(key='ai_chat_launcher'):
         st.html('<div class="pet-launch-art">'+themed_pet_art(unread=st.session_state.get('ai_chat_unread',False))+
                 '<span class="pet-launch-caption">ARE</span></div>'
-                '<div class="pet-launch-lines" aria-hidden="true">'
-                '<span>Xin chào!</span>'
-                '<span>Tôi là trợ lý ARE!</span>'
-                '<span>Bạn cần giúp đỡ gì không?</span>'
-                '<span>Cần tìm dữ liệu ERA5?</span>'
-                '<span>Mình giúp bạn đọc biểu đồ.</span>'
-                '<span>Cần kiểm tra dữ liệu thiếu?</span>'
-                '<span>Muốn xem lại dữ liệu đã lưu?</span>'
-                '<span>Có câu hỏi về ERA5 không?</span>'
-                '</div>')
+                '<div class="pet-launch-lines" aria-hidden="true"><span></span></div>')
         st.button('AI chat',key='ai_chat_toggle',type='tertiary',
                   on_click=_toggle)
     if not st.session_state['ai_chat_open']:
@@ -317,9 +311,10 @@ def render_ai_chat(api):
                 st.html('<div class="pet-welcome"><div class="pet-welcome-art">'+themed_pet_art(small=True)+
                         '</div><strong>Chào bạn, mình là ARE!</strong></div>')
                 labels=['Tìm dữ liệu đã lưu','Hướng dẫn vẽ biểu đồ','ARE có thể giúp gì?']
-                for n, suggestion in enumerate(SUGGESTIONS):
-                    st.button(labels[n],key=f'ai_suggestion_{n}',disabled=bool(pending),
-                              on_click=_submit,args=(api,suggestion),width='stretch',type='tertiary')
+                with st.container(key='ai_chat_suggestions', gap='xsmall'):
+                    for n, suggestion in enumerate(SUGGESTIONS):
+                        st.button(labels[n],key=f'ai_suggestion_{n}',disabled=bool(pending),
+                                  on_click=_submit,args=(api,suggestion),width='stretch',type='tertiary')
             start=max(0,len(messages)-st.session_state.get('ai_chat_visible_limit',40))
             if start:
                 st.button('Xem tin trước',key='ai_chat_older',on_click=_show_older,width='stretch',type='tertiary')
@@ -356,7 +351,9 @@ def render_ai_chat(api):
                 title=(saved[2].get('place_name') if saved and saved[0]==context['collection_id'] else None) or 'Bộ đang mở'
                 text='Đang xem · '+title
                 if params:
-                    text+=f" · {variable_label(params['variable'])} · {_date_label(params['start'])} → {_date_label(params['end'])}"
+                    label = ('Khí hậu tháng · Nhiệt độ và lượng mưa' if context['view_kind'] == 'monthly_climate'
+                             else variable_label(params['variable']))
+                    text+=f" · {label} · {_date_label(params['start'])} → {_date_label(params['end'])}"
                 with st.container(key='ai_chat_context'):
                     st.html('<div class="chat-context-label">'+escape(text)+'</div>')
         context=applied_view(st.session_state,st.query_params)

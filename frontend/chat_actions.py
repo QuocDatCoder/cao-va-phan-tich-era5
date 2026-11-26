@@ -24,7 +24,12 @@ def applied_view(state,query):
             from frontend.library import decode_saved_view
             saved_id,label,params,_=decode_saved_view(raw)
             if saved_id==cid:
-                context.update(view_kind=next(k for k,v in VIEW_LABELS.items() if v==label),parameters=params)
+                from backend.app.domain.monthly_climate import MONTHLY_CLIMATE_LABEL
+                if page == 'chart' and label == MONTHLY_CLIMATE_LABEL and result[1] == label:
+                    params = {**params, 'variable': result[2]['variable'], 'frequency': 'monthly'}
+                    context.update(view_kind='monthly_climate', parameters=params)
+                else:
+                    context.update(view_kind=next(k for k,v in VIEW_LABELS.items() if v==label),parameters=params)
         except (ValueError,KeyError,TypeError,StopIteration):
             pass
     try:
@@ -70,7 +75,6 @@ def execute_action(api,raw,index,keep_chat=False):
         state['stored_library_text']=action.search.strip()
         state['stored_page']=0
         state['stored_details_visible']=False
-        state['stored_library_cards']=True
         state['stored_scroll_to_list']=True
         st.query_params['stored_mode']='list'
     else:
@@ -78,7 +82,6 @@ def execute_action(api,raw,index,keep_chat=False):
         state[prefix+'_collection']=cid
         state[prefix+'_preferred_collection_id']=cid
         state[prefix+'_details_visible']=True
-        state[prefix+'_library_cards']=False
         state[prefix+'_action_open']=cid
         state[prefix+'_action_scroll']=cid
         state[prefix+'_restore_filters']=False
@@ -87,6 +90,7 @@ def execute_action(api,raw,index,keep_chat=False):
         if params:
             state.pop(prefix+'_defer_query',None)
             state[prefix+'_variable_'+cid]=params['variable']
+            state[prefix+'_variables_'+cid]=[params['variable']]
             state[prefix+'_grid_'+cid]=grid_index
             local=timezone(timedelta(hours=7))
             for edge in ['start','end']:

@@ -60,7 +60,7 @@ class UIAction(Contract):
 class AppliedView(Contract):
     page: Literal['stored','chart']
     collection_id: str=Field(min_length=1,max_length=128)
-    view_kind: ViewKind='timeseries'
+    view_kind: ViewKind | Literal['monthly_climate']='timeseries'
     parameters: ViewParameters | None=None
 
 

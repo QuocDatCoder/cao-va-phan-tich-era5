@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from backend.app.ai.tool_schemas import ARGUMENT_MODELS, tool_definitions,AnalysisArguments
 from backend.app.ai.chart_analysis import summarize_plot
+from backend.app.domain.monthly_climate import read_monthly_climate
 from backend.app.domain.public_variables import PUBLIC_VARIABLES
 from backend.app.domain.time_utils import to_utc_naive
 from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS
@@ -207,6 +208,44 @@ class DatabaseTools:
 
     def _guide(self,args):
         return self._result('ok',data={'topic':args.topic,'instructions':GUIDES[args.topic]},untrusted_text=False)
+
+    def analyze_monthly_climate(self, collection_id, params):
+        try:
+            entry = self.collections.get(collection_id)
+            provenance = self._provenance(entry)
+            quality = entry['summary'].get('quality') or {}
+            if quality.get('issue_counts', {}).get('suspicious_value', 0):
+                return self._result('quality_review_required', provenance=provenance,
+                    message='Bộ có cảnh báo giá trị nghi vấn. Hãy kiểm tra chất lượng trước khi nhận xét biểu đồ.')
+
+            def read(variable, aggregation):
+                return self.collections.query(collection_id, 'aggregate', variable,
+                    params.latitude, params.longitude, params.start, params.end, 'monthly', aggregation)
+
+            thermal, rain, paired = read_monthly_climate(read, self._variables(entry))
+        except LookupError:
+            return self._result('not_found', message='Bộ dữ liệu của biểu đồ không còn tồn tại.')
+        except (ValueError, ClimateAnalysisError):
+            return self._result('invalid_arguments', message='Không đọc được Khí hậu tháng với bộ, lưới và khoảng thời gian đã áp dụng.')
+        except sqlite3.Error:
+            return self._result('unavailable', message='Chưa đọc được dữ liệu Khí hậu tháng trong kho.')
+        if not paired:
+            return self._result('no_data', provenance=provenance,
+                message='Không có tháng nào đủ dữ liệu ở cả nhiệt độ và lượng mưa trong khoảng đã vẽ.')
+
+        def extremes(index):
+            low = min(paired, key=lambda row: row[index])
+            high = max(paired, key=lambda row: row[index])
+            return {key: dict(month=row[0].strftime('%m/%Y'), value=row[index])
+                    for key, row in [('min', low), ('max', high)]}
+
+        start, end = (datetime.fromisoformat(value) for value in (params.start, params.end))
+        requested_months = (end.year - start.year) * 12 + end.month - start.month + 1
+        return self._result('ok' if len(paired) == requested_months else 'partial',
+            data=dict(month_count=len(paired), requested_months=requested_months,
+                      temperature=extremes(1), rainfall=extremes(2),
+                      temperature_coverage=thermal['coverage'], rainfall_coverage=rain['coverage']),
+            provenance=dict(provenance, start=params.start, end=params.end, grid_location=thermal['grid_location']))
 
     def _chart(self,args):
         if args.variable is not None and args.variable not in PUBLIC_VARIABLES:

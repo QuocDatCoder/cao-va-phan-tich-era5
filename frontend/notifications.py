@@ -216,6 +216,16 @@ def notify_success(message: str, icon: str = "✅"):
     _show_notice(message, icon, "success", 4000)
 
 
+def notify_job_failures(jobs: list[dict]) -> None:
+    messages = []
+    for job in jobs:
+        place = job.get('place_name') or job.get('collection_name') or job['job_id']
+        status = 'bị gián đoạn' if job['status'] == 'interrupted' else 'thất bại'
+        reason = _translate_error(job['error']) if job.get('error') else 'Tác vụ chưa ghi nhận lý do.'
+        messages.append(f'Thu thập tại {place} {status}. {reason}')
+    _show_notice('\n'.join(messages), '❌', 'error')
+
+
 def notify_info(message: str, icon: str = "ℹ️"):
     """Show a brief info toast (auto-dismisses, not de-duplicated)."""
     _show_notice(message, icon, "info", 4000)

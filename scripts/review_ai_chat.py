@@ -181,7 +181,8 @@ def main():
             expect(shell.get_by_text('Đang kiểm tra dữ liệu…',exact=False)).to_be_visible()
             shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
-            page.locator('.st-key-workflow_section').get_by_text('Kho dữ liệu',exact=True).click()
+            page.get_by_role('complementary', name='Điều hướng ERA5').get_by_role(
+                'button', name='Kho dữ liệu', exact=True).click()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Thống kê từ service:',exact=False)).to_be_visible(timeout=20000)
             page.mouse.move(400,100)
@@ -195,7 +196,7 @@ def main():
             # Action must reuse the chosen dataset and enter chart without resetting chat history.
             shell.get_by_role('button',name='Mở trong Biểu đồ',exact=True).click()
             expect(shell).not_to_be_visible()
-            expect(page.get_by_role('heading',name='Biểu đồ',exact=True)).to_be_visible()
+            expect(page.get_by_text('Bộ lọc biểu đồ',exact=True)).to_be_visible()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Thống kê từ service:',exact=False)).to_be_visible()
             page.set_viewport_size(dict(width=390,height=844))
@@ -285,6 +286,7 @@ def main():
             page.screenshot(path=str(out/'history-after-f5.png'))
             shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
+            page.get_by_role('button', name='Quay lại danh sách', exact=True).click()
             page.locator('.st-key-chart_refresh_library button').click()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).to_be_visible()

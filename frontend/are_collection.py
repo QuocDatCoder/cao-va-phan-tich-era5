@@ -62,8 +62,8 @@ def render_collection_draft(api, draft, index):
         st.caption('Một điểm · theo giờ · UTC+7')
         chosen = st.selectbox('Điểm lấy dữ liệu', range(len(rows)), format_func=lambda i: rows[i]['label'])
         label = st.selectbox('Biến khí hậu', options, index=default)
-        a = st.date_input('Từ ngày', value=date.fromisoformat(draft['start']) if draft.get('start') else None)
-        b = st.date_input('Đến hết ngày', value=date.fromisoformat(draft['end']) if draft.get('end') else None)
+        a = st.date_input('Từ ngày', value=date.fromisoformat(draft['start']) if draft.get('start') else None, format="DD/MM/YYYY")
+        b = st.date_input('Đến hết ngày', value=date.fromisoformat(draft['end']) if draft.get('end') else None, format="DD/MM/YYYY")
         submitted = st.form_submit_button('Kiểm tra kho')
     if submitted:
         st.session_state.pop(prefix+'_preview', None)

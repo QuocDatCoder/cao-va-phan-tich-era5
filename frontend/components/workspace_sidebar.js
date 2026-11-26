@@ -68,7 +68,7 @@ export default function({data, parentElement, setTriggerValue}) {
     const brand = document.createElement("strong");
     brand.textContent = "ERA5";
     const collapse = button(state.collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar",
-      state.collapsed ? "left_panel_open" : "left_panel_close", "era5-sidebar-collapse",
+      state.collapsed && !state.drawer ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left", "era5-sidebar-collapse",
       () => {
         if (matchMedia(MOBILE).matches) state.drawer = false;
         else state.collapsed = !state.collapsed;

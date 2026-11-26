@@ -186,7 +186,7 @@ def _cancel_selected_job(client, job_id):
         st.session_state['cancel_job_error'] = (job_id, str(exc))
 
 
-def _render_job_status(client, context, job=None, show_quality: bool = True):
+def _render_job_status(client, context, job=None, show_quality: bool = True, compact: bool = False):
     """Render inside the caller's fragment, without registering another timer."""
     job_id = st.session_state.get("collection_jobs", {}).get(context)
     if not job_id:
@@ -202,21 +202,24 @@ def _render_job_status(client, context, job=None, show_quality: bool = True):
         else:
             job = client.get_job(job_id)
         statuses[job_id] = job['status']
-        _show_job_status(job)
+        if not compact:
+            _show_job_status(job)
         if job['status'] in {'queued', 'running', 'cancelling'}:
             st.button('Đang hủy tác vụ' if job['status'] == 'cancelling' else 'Hủy tác vụ',
                       key='cancel_job_'+job_id, icon=':material/stop_circle:',
                       disabled=job['status'] == 'cancelling',
                       on_click=_cancel_selected_job, args=(client,job_id))
-            st.caption('Hủy sẽ dừng xử lý cục bộ và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để dừng; yêu cầu phía CDS có thể vẫn tồn tại.')
+            if not compact:
+                st.caption('Hủy sẽ dừng xử lý cục bộ và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để dừng; yêu cầu phía CDS có thể vẫn tồn tại.')
         cancel_error = st.session_state.get('cancel_job_error')
         if cancel_error and cancel_error[0] == job_id:
             notify_error(f"Lỗi khi hủy tác vụ: {cancel_error[1]}")
-        with st.container(key="hide_source_details_expander"):
-            with st.expander("Chi tiết nguồn và biến"):
-                st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
-                if job.get("retrieval_variables"):
-                    st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
+        if not compact:
+            with st.container(key="hide_source_details_expander"):
+                with st.expander("Chi tiết nguồn và biến"):
+                    st.caption(f"Nguồn: {job.get('source')} · Dataset: {job.get('dataset')} · Phạm vi: {job.get('spatial_mode')}")
+                    if job.get("retrieval_variables"):
+                        st.caption("Các biến trong yêu cầu tải: " + ", ".join(job["retrieval_variables"]))
         quality = job.get("quality")
         if quality and (show_quality or st.session_state.get('job_quality_'+job_id)):
             st.caption(f"Chất lượng: {quality['status']} · Đã lưu: {quality['imported_values']} giá trị · Cảnh báo: {quality['issue_count']}")
@@ -245,7 +248,8 @@ def _render_job_status(client, context, job=None, show_quality: bool = True):
                             mime="application/json", key="download_quality_"+job_id, on_click="ignore")
         if job.get("error"):
             st.error(job["error"])
-            notify_error(f"Lỗi tác vụ thu thập: {job['error']}")
+            if not compact:
+                notify_error(f"Lỗi tác vụ thu thập: {job['error']}")
         if job["status"] in {'completed', 'failed', 'cancelled'} and previous_status in {'queued', 'running', 'cancelling'}:
             from frontend.library import invalidate_reads
             invalidate_reads()

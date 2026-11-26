@@ -173,6 +173,7 @@ def test_query_failure_after_validation_preserves_existing_chart(ui,monkeypatch)
     app.session_state['workflow_section'] = 'Biểu đồ'
     app.run()
     app.button(key='chart_draw_'+cid).click().run()
+    app.button(key='chart_selected_submit').click().run()
     old=app.session_state['chart_result']
     saved=app.query_params['chart_applied']
     params=json.loads(saved)[2]
@@ -192,6 +193,7 @@ def test_opening_data_keeps_other_tabs_applied_result(ui):
     app.session_state['workflow_section'] = 'Biểu đồ'
     app.run()
     app.button(key='chart_draw_'+cid).click().run()
+    app.button(key='chart_selected_submit').click().run()
     old=app.session_state['chart_result']
     saved=app.query_params['chart_applied']
     action=UIAction(type='open_data',collection_id=cid,parameters=json.loads(saved)[2]).model_dump(mode='json')
@@ -228,7 +230,7 @@ def test_find_action_prefills_search_and_expands_library(ui):
     app.button(key='ai_action_0_0').click().run()
     assert app.session_state['stored_search']=='Hà Nội'
     assert app.text_input(key='stored_library_text').value=='Hà Nội'
-    assert app.session_state['stored_library_cards'] is True and not app.exception
+    assert not app.exception
 
 
 def test_missing_parameters_can_be_filled_in_chat_without_calling_ai_again(ui):

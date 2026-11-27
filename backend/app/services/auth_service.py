@@ -61,11 +61,29 @@ class AuthService:
         )
         return self._create_session(user_id, normalized_username, now)
 
+    def admin_create_user(self, username: str, password: str, *, is_admin: bool = False) -> dict:
+        now = int(time.time())
+        username = username.casefold()
+        user_id = self._repository.create_user(username, _password_hasher.hash(password), now, is_admin=is_admin)
+        return dict(id=user_id, username=username, is_admin=is_admin, is_active=True,
+                    created_at=now, last_login_at=None, last_active_at=None)
+
+    def admin_reset_password(self, user_id: int, password: str, *, revoke_sessions: bool = True) -> int | None:
+        return self._repository.reset_user_password(
+            user_id, _password_hasher.hash(password), int(time.time()), revoke_sessions=revoke_sessions,
+        )
+
     def login(self, username: str, password: str) -> dict:
         user = self._repository.get_user_by_username(username.casefold())
         if user is None or not user["is_active"] or not _password_hasher.verify(password, user["password_hash"]):
             raise InvalidCredentialsError
-        return self._create_session(int(user["id"]), user["username"], int(time.time()), record_login=True)
+        try:
+            return self._create_session(
+                int(user["id"]), user["username"], int(time.time()),
+                record_login=True, verified_password_hash=user["password_hash"],
+            )
+        except InvalidSessionError as exc:
+            raise InvalidCredentialsError from exc
 
     def authenticate(self, access_token: str) -> dict:
         now = int(time.time())
@@ -81,12 +99,16 @@ class AuthService:
             self._token_hash(access_token), int(time.time())
         )
 
-    def _create_session(self, user_id: int, username: str, now: int, *, record_login: bool = False) -> dict:
+    def _create_session(self, user_id: int, username: str, now: int, *, record_login: bool = False,
+                        verified_password_hash: str | None = None) -> dict:
         access_token = secrets.token_urlsafe(32)
         expires_at = now + SESSION_LIFETIME_SECONDS
-        self._repository.create_session(
-            self._token_hash(access_token), user_id, now, expires_at, record_login=record_login
+        created = self._repository.create_session(
+            self._token_hash(access_token), user_id, now, expires_at,
+            record_login=record_login, verified_password_hash=verified_password_hash,
         )
+        if not created:
+            raise InvalidSessionError
         return {
             "access_token": access_token,
             "token_type": "bearer",

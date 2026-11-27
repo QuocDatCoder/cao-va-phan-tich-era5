@@ -85,7 +85,8 @@ def restore_account(api: DashboardApiClient) -> bool:
         st.rerun()
     if valid:
         try:
-            user = replace(api, access_token=token, timeout_seconds=8).current_user()
+            user = replace(api, access_token=token, timeout_seconds=8,
+                           track_activity=not bool(st.session_state.get('chart_live_update'))).current_user()
         except DashboardApiError as exc:
             if exc.status_code in {401, 403}:
                 st.session_state.clear()

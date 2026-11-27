@@ -99,7 +99,10 @@ def _get_download_job_service(
 
 
 def get_download_job_service() -> DownloadJobService:
-    user_id = current_user_id.get()
+    return get_download_job_service_for_user(current_user_id.get())
+
+
+def get_download_job_service_for_user(user_id: int | None) -> DownloadJobService:
     return _get_download_job_service(user_id, settings_cache_key(user_id))
 
 

@@ -1,4 +1,4 @@
-"""Account administration screen for trusted administrators."""
+"""Weather Hub Admin pages and the legacy embedded admin renderer."""
 import streamlit as st
 
 from frontend.api_client import DashboardApiError

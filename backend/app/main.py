@@ -22,7 +22,8 @@ from backend.app.providers.errors import (
 )
 from backend.app.services.climate_analysis_service import ClimateAnalysisError
 from backend.app.services.download_job_service import JobNotFoundError
-from backend.app.services.dependencies import get_synchronization_scheduler
+from backend.app.services.dependencies import get_auth_service, get_synchronization_scheduler
+from backend.app.services.live_refresh_service import start_live_scheduler
 from backend.app.services.synchronization_service import (
     SynchronizationError,
     SynchronizationNotFoundError,
@@ -68,9 +69,9 @@ async def synchronization_not_found_handler(_, exc: SynchronizationNotFoundError
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     scheduler = None
+    live_scheduler = None
     settings = get_settings()
     if settings.auth_enabled and settings.admin_password:
-        from backend.app.services.dependencies import get_auth_service
         get_auth_service().set_admin_password(settings.admin_username, settings.admin_password)
     from backend.app.storage.collection_repository import CollectionRepository, recover_abandoned
     from backend.app.storage.job_repository import JobRepository
@@ -94,8 +95,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         scheduler = get_synchronization_scheduler()
         scheduler.start()
     try:
+        if settings.auth_enabled:
+            live_scheduler = start_live_scheduler(get_auth_service()._repository)
         yield
     finally:
+        if live_scheduler is not None:
+            live_scheduler.shutdown(wait=False)
         if scheduler is not None:
             scheduler.shutdown()
 

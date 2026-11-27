@@ -5,8 +5,24 @@ import json
 
 import streamlit as st
 
-from backend.app.domain.ui_actions import AppliedView,UIAction,VIEW_LABELS,operation_for
+from backend.app.domain.ui_actions import AppliedView, ComparisonView, UIAction, VIEW_LABELS, operation_for
 from frontend.api_client import DashboardApiError
+
+
+def applied_comparison(state):
+    """Return validated active comparison metadata when the Charts comparison panel is open."""
+    if state.get('workflow_section') != 'Biểu đồ' or state.get('chart_details_visible'):
+        return None
+    if not state.get('chart_compare_enabled'):
+        return None
+    saved = state.get('chart_compare_context')
+    if not isinstance(saved, dict) or not isinstance(saved.get('context'), dict):
+        return None
+    try:
+        validated = ComparisonView.model_validate(saved['context']).model_dump(mode='json')
+    except ValueError:
+        return None
+    return {**saved, 'context': validated}
 
 
 def applied_view(state,query):
@@ -115,5 +131,6 @@ def execute_action(api,raw,index,keep_chat=False):
         # pin that would override the next dataset the user opens in the UI.
         state.pop('ai_chat_selected',None)
         state.pop('ai_chat_selected_name',None)
+    state['ai_chat_expanded']=False
     state['ai_chat_open']=keep_chat
     st.rerun(scope='app')

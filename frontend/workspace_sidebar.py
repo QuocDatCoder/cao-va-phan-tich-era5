@@ -24,6 +24,7 @@ _SIDEBAR = st.components.v2.component(
 def select_section(section):
     if section in NAVIGATION:
         st.session_state['workflow_section'] = section
+        st.session_state['ai_chat_expanded'] = False
         st.query_params['view'] = section
 
 

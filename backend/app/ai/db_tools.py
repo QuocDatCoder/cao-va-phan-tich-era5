@@ -6,7 +6,7 @@ import sqlite3
 
 from pydantic import ValidationError
 
-from backend.app.ai.tool_schemas import ARGUMENT_MODELS, tool_definitions,AnalysisArguments
+from backend.app.ai.tool_schemas import ARGUMENT_MODELS, tool_definitions,AnalysisArguments,ChartAnalysisArguments
 from backend.app.ai.chart_analysis import summarize_plot
 from backend.app.domain.monthly_climate import read_monthly_climate
 from backend.app.domain.public_variables import PUBLIC_VARIABLES
@@ -267,6 +267,47 @@ class DatabaseTools:
             status='undefined' if payload.get('available_count') else 'no_data'
         return self._result(status,data=data,metadata=metadata,provenance=p,
             message='Statistics of the plotted period values, not source-hour extrema or causal inference.')
+
+    def analyze_comparison(self, comparison):
+        res_a = self._chart(
+            ChartAnalysisArguments(
+                collection_id=comparison.collection_id_a,
+                **comparison.parameters_a.model_dump(exclude={'aggregation'}),
+            )
+        )
+        if res_a['status'] not in {'ok', 'partial'}:
+            return res_a
+        res_b = self._chart(
+            ChartAnalysisArguments(
+                collection_id=comparison.collection_id_b,
+                **comparison.parameters_b.model_dump(exclude={'aggregation'}),
+            )
+        )
+        if res_b['status'] not in {'ok', 'partial'}:
+            return res_b
+        sa, sb = res_a['data'], res_b['data']
+        diff_mean = (
+            sa['mean'] - sb['mean']
+            if sa.get('mean') is not None and sb.get('mean') is not None and not sa.get('circular')
+            else None
+        )
+        status = 'ok' if res_a['status'] == 'ok' and res_b['status'] == 'ok' else 'partial'
+        return self._result(
+            status,
+            data=dict(
+                series_a=sa,
+                series_b=sb,
+                diff_mean=diff_mean,
+                align_by=comparison.align_by,
+                metadata_a=res_a['metadata'],
+                metadata_b=res_b['metadata'],
+                provenance_a=res_a['provenance'],
+                provenance_b=res_b['provenance'],
+            ),
+            provenance=res_a['provenance'],
+            metadata=res_a['metadata'],
+            message='Verified side-by-side comparison of two saved collections.',
+        )
 
 
 def build_database_tools(settings):

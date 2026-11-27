@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from backend.app.ai.responses_client import AIConnectionError
 from backend.app.ai.project_knowledge import normalize, search_project_knowledge
 from backend.app.ai.tool_schemas import ToolArguments,ChartAnalysisArguments
-from backend.app.ai.chart_analysis import render_chart_analysis
-from backend.app.domain.ui_actions import AppliedView,PrepareView
+from backend.app.ai.chart_analysis import render_chart_analysis, render_comparison_analysis
+from backend.app.domain.ui_actions import AppliedView, ComparisonView, PrepareView
 from backend.app.ai.view_service import prepare_view
 
 MAX_REQUESTS = 4
@@ -83,6 +83,7 @@ class AgentRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=8)
     selected_collection_id: str | None = Field(default=None, min_length=1, max_length=128)
     view_context: AppliedView | None=None
+    comparison_context: ComparisonView | None=None
 
     @field_validator('message')
     @classmethod
@@ -181,6 +182,8 @@ def render_answer(evidence):
                 f" cho {result['name']}: {params['start']} → {params['end']}. Bấm nút bên dưới để mở.")
     if name=='analyze_chart' and result.get('data'):
         return render_chart_analysis(result)
+    if name=='analyze_comparison' and result.get('data'):
+        return render_comparison_analysis(result)
     if name == 'analyze_monthly_climate':
         if not result.get('data'):
             return result['message']
@@ -261,16 +264,27 @@ class ClimateAgent:
         items.append(dict(role='user', content=json.dumps(dict(
             question=request.message.strip(), selected_collection_id=request.selected_collection_id,
             today=datetime.now(timezone(timedelta(hours=7))).date().isoformat(),
-            view_context=request.view_context.model_dump(mode='json') if request.view_context else None), ensure_ascii=False)))
+            view_context=request.view_context.model_dump(mode='json') if request.view_context else None,
+            comparison_context=request.comparison_context.model_dump(mode='json') if request.comparison_context else None), ensure_ascii=False)))
         definitions = self.tools.definitions() + CONTROL_TOOLS
         stopped = 'request_limit'
         requests = 0
         answer_kind='data'
         project_entries={}
         context = request.view_context
+        comp_ctx = request.comparison_context
         monthly_view = context if context and context.view_kind == 'monthly_climate' and context.parameters else None
         question = normalize(request.message).strip().rstrip('.!?').strip()
-        if (context and context.page == 'chart' and context.parameters
+        if comp_ctx and any(
+            kw in question
+            for kw in ('so sanh', 'phan tich', 'nhan xet', 'doi chieu', 'chenh lech', 'cuc tri', 'do phu', 'bo a', 'bo b', '2 bo', 'hai bo')
+        ):
+            name = 'analyze_comparison'
+            arguments = comp_ctx.model_dump(mode='json')
+            result = self.tools.analyze_comparison(comp_ctx)
+            evidence.append(dict(tool=name, arguments=arguments, result=result))
+            stopped = 'tool_result'
+        elif (context and context.page == 'chart' and context.parameters
                 and context.view_kind in {'monthly_climate', 'timeseries'} and re.fullmatch(
                 r'(nhan xet|phan tich|doc|giai thich)( so| nhanh| chuyen gia)?( ve)? bieu do (nay|dang xem)'
                 r'(\. tim dac diem noi bat va kiem tra do phu)?', question)):

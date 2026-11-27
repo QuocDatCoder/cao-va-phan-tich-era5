@@ -48,7 +48,7 @@ def _render_hero():
         )
         with st.container(key='era5_home_intro', gap='small'):
             with st.container(key='era5_intro_first', gap='small'):
-                st.title('Khám phá khí hậu với ERA5', anchor=False)
+                st.title('Khám phá dữ liệu khí tượng', anchor=False)
                 st.write('Chọn địa điểm và khoảng thời gian để xem dữ liệu khí hậu theo giờ.')
             st.html("""
                 <div class="era5-intro-second" aria-hidden="true">
@@ -179,12 +179,12 @@ def _render_preview(preview, label, details):
         st.info(f'Chưa có dữ liệu {label.lower()} trong các bộ gần đây để xem nhanh.')
 
 
-def _open_are(api):
+def _open_era(api):
     from frontend.ai_chat import _submit
 
     st.session_state['ai_chat_open'] = True
     st.session_state['ai_chat_unread'] = False
-    _submit(api, 'Mình mới dùng ERA5. Hướng dẫn mình bắt đầu thu thập và xem dữ liệu nhé.')
+    _submit(api, 'Mình mới dùng ứng dụng. Hướng dẫn mình bắt đầu thu thập và xem dữ liệu nhé.')
     st.rerun(scope='app')
 
 
@@ -244,9 +244,7 @@ def _render_footer(api):
             st.subheader('Nguồn dữ liệu', anchor=False)
             st.html("""
                 <nav aria-label="Nguồn dữ liệu khí hậu">
-                  <a href="https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5">ERA5 tại ECMWF</a>
-                  <a href="https://cds.climate.copernicus.eu/">Copernicus CDS</a>
-                  <a href="https://cds.climate.copernicus.eu/datasets/reanalysis-era5-land">Bộ dữ liệu ERA5-Land</a>
+                  <a href="https://open-meteo.com/en/docs/historical-forecast-api">Open-Meteo Historical Forecast</a>
                   <a href="https://open-meteo.com/en/docs/geocoding-api">Địa danh Open-Meteo</a>
                 </nav>
             """)
@@ -260,12 +258,12 @@ def _render_footer(api):
                                    ('Biểu đồ', 'Phân tích bằng biểu đồ')):
                 st.button(label, key=f'home_footer_{section}', type='tertiary', on_click=select_section,
                           args=(section,))
-            if st.button('Hỏi trợ lý ARE', key='home_ask_are', type='tertiary',
+            if st.button('Hỏi trợ lý ERA', key='home_ask_era', type='tertiary',
                          disabled=not st.session_state.get('ai_chat_history_loaded') or bool(st.session_state.get('ai_chat_pending'))):
-                _open_are(api)
+                _open_era(api)
         with groups.container(gap=None):
             st.subheader('Thông tin bộ dữ liệu', anchor=False)
-            st.html('<dl class="era5-footer-specs"><dt>Sản phẩm</dt><dd>ERA5-Land</dd>'
+            st.html('<dl class="era5-footer-specs"><dt>Sản phẩm</dt><dd>GFS Global</dd>'
                     '<dt>Tần suất</dt><dd>Hàng giờ</dd><dt>Múi giờ</dt><dd>UTC+7</dd>'
                     '<dt>Xuất bảng</dt><dd>CSV</dd></dl>')
         st.html("""
@@ -275,6 +273,6 @@ def _render_footer(api):
               <section><h4>Đọc độ phủ dữ liệu</h4>
                 <p>Độ phủ cho biết số giờ có dữ liệu so với số giờ đã chọn. Xem thông tin này trước khi so sánh hai giai đoạn.</p></section>
             </div>
-            <div class="era5-footer-base"><span><strong>ERA5</strong> Thu thập và phân tích khí hậu</span>
+            <div class="era5-footer-base"><span><strong class="weahub-wordmark">Weather <span>Hub</span></strong> Thu thập và phân tích dữ liệu</span>
               <span>Thời gian hiển thị theo giờ Việt Nam (UTC+7).</span></div>
         """)

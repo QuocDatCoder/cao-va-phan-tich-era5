@@ -132,7 +132,7 @@ def test_aggregate_is_paginated_and_marks_partial_calendar_period(toolset):
     assert not result['data']['periods'][0]['complete']
 
 
-def test_empty_database_is_not_created_and_no_values_are_invented(tmp_path,monkeypatch):
+def test_empty_database_is_not_created_and_no_values_era_invented(tmp_path,monkeypatch):
     def forbidden(*a,**kw): pytest.fail('No provider may be initialized')
     import cdsapi
     monkeypatch.setattr(cdsapi,'Client',forbidden)
@@ -203,14 +203,14 @@ def test_only_allowlisted_tools_can_run(toolset,name):
     assert result['data'] is None
 
 
-def test_guides_are_fixed_and_outside_topics_rejected(toolset):
+def test_guides_era_fixed_and_outside_topics_rejected(toolset):
     tools,_,_=toolset
     result=tools.execute('usage_guide',{'topic':'missing_data'})
     assert result['status']=='ok' and result['untrusted_text'] is False
     assert tools.execute('usage_guide',{'topic':'forecast tomorrow'})['status']=='invalid_arguments'
 
 
-def test_schemas_are_strict_nullable_and_small(toolset):
+def test_schemas_era_strict_nullable_and_small(toolset):
     tools,_,_=toolset
     definitions=tools.definitions()
     assert len(definitions)==6

@@ -65,7 +65,7 @@ class AuthService:
         user = self._repository.get_user_by_username(username.casefold())
         if user is None or not user["is_active"] or not _password_hasher.verify(password, user["password_hash"]):
             raise InvalidCredentialsError
-        return self._create_session(int(user["id"]), user["username"], int(time.time()))
+        return self._create_session(int(user["id"]), user["username"], int(time.time()), record_login=True)
 
     def authenticate(self, access_token: str) -> dict:
         now = int(time.time())
@@ -81,11 +81,11 @@ class AuthService:
             self._token_hash(access_token), int(time.time())
         )
 
-    def _create_session(self, user_id: int, username: str, now: int) -> dict:
+    def _create_session(self, user_id: int, username: str, now: int, *, record_login: bool = False) -> dict:
         access_token = secrets.token_urlsafe(32)
         expires_at = now + SESSION_LIFETIME_SECONDS
         self._repository.create_session(
-            self._token_hash(access_token), user_id, now, expires_at
+            self._token_hash(access_token), user_id, now, expires_at, record_login=record_login
         )
         return {
             "access_token": access_token,

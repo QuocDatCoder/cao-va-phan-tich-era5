@@ -22,6 +22,7 @@ class UserResponse(BaseModel):
 class AdminUserResponse(UserResponse):
     is_active: bool
     created_at: int
+    last_login_at: int | None = None
 
 
 class UserAccessRequest(BaseModel):

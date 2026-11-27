@@ -185,7 +185,7 @@ body:has(.era5-shell[data-theme="dark"]) .st-key-era5_home_sources {
 .era5-footer-notes h4 {padding-bottom: .3rem;}
 .era5-footer-notes p {max-width: 58ch; margin: 0; font-size: .93rem; line-height: 1.45;}
 .era5-footer-base {display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .35rem 1rem; padding-top: .55rem; font-size: .84rem;}
-.era5-footer-base strong {margin-right: .55rem; color: var(--footer-title); font-size: 1rem;}
+.era5-footer-base .weahub-wordmark {margin-inline-end: .55rem; font-size: 1rem;}
 @container (max-width: 720px) {
   .st-key-home_footer_directory {grid-template-columns: repeat(2,minmax(0,1fr));}
 }

@@ -151,7 +151,7 @@ def test_missing_variable_column_reports_columns(make_provider):
         provider.get_timeseries("precipitation", 10.8231, 106.6297, START, END)
 
 
-def test_celsius_values_are_rejected(make_provider):
+def test_celsius_values_era_rejected(make_provider):
     provider, _, _ = make_provider(lambda d, n: build_zip(d, n, kelvin=False))
     with pytest.raises(ClimateDataError, match="°C"):
         provider.get_timeseries("temperature", 10.8231, 106.6297, START, END)
@@ -220,7 +220,7 @@ def test_real_cds_csv_layout(make_provider):
     assert speed.data[0].value == pytest.approx(((-0.047348022) ** 2 + 1.6568289 ** 2) ** 0.5, rel=1e-5)
 
 
-def test_tiny_negative_accumulations_are_clipped_to_zero(make_provider):
+def test_tiny_negative_accumulations_era_clipped_to_zero(make_provider):
     """Mưa/bức xạ âm cực nhỏ (nhiễu khi tách tích lũy) phải về 0; gió âm hợp lệ thì giữ nguyên."""
     def payload(first_day, days):
         stamps = _rows(first_day, days)

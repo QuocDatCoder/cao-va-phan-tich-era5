@@ -8,6 +8,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.user_settings import get_settings_for_user
 from backend.app.domain.schemas import DownloadRequest, Location
 from backend.app.main import create_app
+from backend.app.services.auth_service import SESSION_LIFETIME_SECONDS
 from backend.app.services.dependencies import _get_auth_repository
 from backend.app.storage.collection_repository import CollectionRepository
 from backend.app.storage.job_repository import JobRepository
@@ -52,11 +53,13 @@ def test_registration_login_and_protected_api(api_client):
     assert me.json()["username"] == "alice_1"
     assert me.json()["is_admin"] is False
     assert client.get("/api/v1/synchronization/config", headers=headers).status_code == 200
+    assert client.get("/api/v1/auth/users", headers=headers).status_code == 403
 
     with sqlite3.connect(database_path) as connection:
-        user_id = connection.execute(
-            "SELECT id FROM users WHERE username = ?", ("alice_1",)
-        ).fetchone()[0]
+        user_id, last_login_at = connection.execute(
+            "SELECT id, last_login_at FROM users WHERE username = ?", ("alice_1",)
+        ).fetchone()
+        assert last_login_at is None
         password_hash = connection.execute(
             "SELECT password_hash FROM users WHERE username = ?",
             ("alice_1",),
@@ -88,6 +91,11 @@ def test_registration_login_and_protected_api(api_client):
 
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+    with sqlite3.connect(database_path) as connection:
+        saved_login = connection.execute(
+            "SELECT last_login_at FROM users WHERE id = ?", (user_id,)
+        ).fetchone()[0]
+    assert saved_login == login.json()["expires_at"] - SESSION_LIFETIME_SECONDS
 
 
 def test_accounts_only_list_their_collections_and_legacy_data_stays_archived(api_client):

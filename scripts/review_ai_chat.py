@@ -55,10 +55,10 @@ def child(args):
             question=json.loads(next(x['content'] for x in reversed(kwargs['input_items']) if x.get('role')=='user'))['question']
             if question=='Bạn là ai?':
                 name='answer_question'
-                arguments=dict(category='general',answer='Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',source_ids=[])
-            elif 'Chào ARE' in question:
+                arguments=dict(category='general',answer='Mình là ERA, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',source_ids=[])
+            elif 'Chào ERA' in question:
                 name='answer_question'
-                arguments=dict(category='general',answer='Chào bạn! ARE có thể trò chuyện cùng bạn.',source_ids=[])
+                arguments=dict(category='general',answer='Chào bạn! ERA có thể trò chuyện cùng bạn.',source_ids=[])
             elif 'Phân tích biểu đồ' in question:
                 name='analyze_chart'
                 arguments=dict(collection_id=None,variable=None,latitude=None,longitude=None,
@@ -153,7 +153,7 @@ def main():
             page.get_by_role('button',name='AI chat',exact=True).click()
             shell=page.locator('.st-key-ai_chat_shell')
             expect(shell).to_be_visible()
-            expect(shell.get_by_text('Chào bạn, mình là ARE!',exact=True)).to_be_visible()
+            expect(shell.get_by_text('Chào bạn, mình là ERA!',exact=True)).to_be_visible()
             assert page.locator('.st-key-ai_chat_launcher img[data-mode=sun]').evaluate('(el)=>el.complete && el.naturalWidth>0')
             box=shell.bounding_box()
             assert box['x']>600 and box['y']>=0 and box['y']+box['height']<900
@@ -164,7 +164,7 @@ def main():
             assert 360<=box['width']<=440 and box['y']>=60 and box['y']+box['height']<=768
             workspace=page.locator('.st-key-are_workspace').bounding_box()
             assert workspace['x']+workspace['width']<=box['x']
-            expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_in_viewport(ratio=1)
+            expect(shell.get_by_placeholder('Hỏi ERA…')).to_be_in_viewport(ratio=1)
             page.screenshot(path=str(out/'laptop.png'))
             page.set_viewport_size(dict(width=1280,height=900))
             expect(shell.locator('.pet-heading img[data-mode="sun"]')).to_be_visible()
@@ -176,12 +176,12 @@ def main():
             expect(shell).not_to_be_visible()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell).to_be_visible()
-            shell.get_by_placeholder('Hỏi ARE…').fill('Thống kê nhiệt độ ngày 01/01/2025')
-            shell.get_by_placeholder('Hỏi ARE…').press('Enter')
+            shell.get_by_placeholder('Hỏi ERA…').fill('Thống kê nhiệt độ ngày 01/01/2025')
+            shell.get_by_placeholder('Hỏi ERA…').press('Enter')
             expect(shell.get_by_text('Đang kiểm tra dữ liệu…',exact=False)).to_be_visible()
             shell.get_by_role('button',name='Đóng chat',exact=True).click()
             expect(shell).not_to_be_visible()
-            page.get_by_role('complementary', name='Điều hướng ERA5').get_by_role(
+            page.get_by_role('complementary', name='Điều hướng khí tượng').get_by_role(
                 'button', name='Kho dữ liệu', exact=True).click()
             page.get_by_role('button',name='AI chat',exact=True).click()
             expect(shell.get_by_text('Thống kê từ service:',exact=False)).to_be_visible(timeout=20000)
@@ -212,16 +212,16 @@ def main():
                 const r=el.getBoundingClientRect(),c=getComputedStyle(el);result.push({tag:el.tagName,classes:el.className,style:el.getAttribute('style'),height:r.height,y:r.y,min:c.minHeight,max:c.maxHeight,cssHeight:c.height,flex:c.flex});}
                 return result;}'''),indent=2),encoding='utf-8')
             assert box['y']>=60 and box['y']+box['height']<=500
-            expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_in_viewport(ratio=1)
+            expect(shell.get_by_placeholder('Hỏi ERA…')).to_be_in_viewport(ratio=1)
             page.screenshot(path=str(out/'short-screen.png'))
             page.set_viewport_size(dict(width=1280,height=900))
-            chat_input=shell.get_by_placeholder('Hỏi ARE…')
-            chat_input.fill('Chào ARE')
+            chat_input=shell.get_by_placeholder('Hỏi ERA…')
+            chat_input.fill('Chào ERA')
             chat_input.press('Enter')
-            expect(shell.get_by_text('Chào bạn! ARE có thể trò chuyện cùng bạn.',exact=True)).to_be_visible(timeout=15000)
+            expect(shell.get_by_text('Chào bạn! ERA có thể trò chuyện cùng bạn.',exact=True)).to_be_visible(timeout=15000)
             chat_input.fill('Bạn là ai?')
             chat_input.press('Enter')
-            expect(shell.get_by_text('Mình là ARE, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',exact=True)).to_be_visible(timeout=20000)
+            expect(shell.get_by_text('Mình là ERA, trợ lý hỗ trợ dữ liệu ERA5 và cách dùng ứng dụng.',exact=True)).to_be_visible(timeout=20000)
             chat_input.fill('Giải thích kiến trúc dự án')
             chat_input.press('Enter')
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).to_be_visible(timeout=15000)
@@ -239,7 +239,7 @@ def main():
             expect(page.locator('.st-key-chart_result')).to_be_visible()
             page.screenshot(path=str(out/'applied-daily-action.png'))
             page.get_by_role('button',name='AI chat',exact=True).click()
-            chat_input=shell.get_by_placeholder('Hỏi ARE…')
+            chat_input=shell.get_by_placeholder('Hỏi ERA…')
             chart_url=page.url
             chat_input.fill('Phân tích biểu đồ đang xem')
             chat_input.press('Enter')
@@ -262,7 +262,7 @@ def main():
             page.locator('.st-key-stored_back_to_list button').click()
             expect(page.locator('.st-key-stored_collection_detail')).not_to_be_visible()
             page.get_by_role('button',name='AI chat',exact=True).click()
-            chat_input=shell.get_by_placeholder('Hỏi ARE…')
+            chat_input=shell.get_by_placeholder('Hỏi ERA…')
             chat_input.fill('Vẽ thiếu chu kỳ')
             chat_input.press('Enter')
             expect(shell.get_by_role('button',name='Mở kết quả',exact=True)).to_be_visible(timeout=15000)
@@ -281,7 +281,7 @@ def main():
             previous_posts=(out/'backend.log').read_text(encoding='utf-8').count('POST /api/v1/agent/chat')
             page.reload()
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).to_be_visible(timeout=15000)
-            expect(shell.get_by_placeholder('Hỏi ARE…')).to_be_enabled()
+            expect(shell.get_by_placeholder('Hỏi ERA…')).to_be_enabled()
             assert (out/'backend.log').read_text(encoding='utf-8').count('POST /api/v1/agent/chat')==previous_posts
             page.screenshot(path=str(out/'history-after-f5.png'))
             shell.get_by_role('button',name='Đóng chat',exact=True).click()
@@ -294,19 +294,19 @@ def main():
             page.wait_for_function("""()=>Object.keys(localStorage).some(key=>key.startsWith('era5.are.chat.v1.') &&
                 JSON.parse(localStorage.getItem(key)).messages.length===0)""")
             page.reload()
-            expect(shell.get_by_text('Chào bạn, mình là ARE!',exact=True)).to_be_visible(timeout=15000)
+            expect(shell.get_by_text('Chào bạn, mình là ERA!',exact=True)).to_be_visible(timeout=15000)
             expect(shell.get_by_text('Nguồn trong dự án',exact=True)).not_to_be_visible()
             page.screenshot(path=str(out/'history-cleared.png'))
             # A reload during work keeps the question but must not replay paid work.
             previous_posts=(out/'backend.log').read_text(encoding='utf-8').count('POST /api/v1/agent/chat')
-            chat_input=shell.get_by_placeholder('Hỏi ARE…')
+            chat_input=shell.get_by_placeholder('Hỏi ERA…')
             expect(chat_input).to_be_enabled()
-            chat_input.fill('Chào ARE, câu đang chờ')
+            chat_input.fill('Chào ERA, câu đang chờ')
             chat_input.press('Enter')
             page.wait_for_function("""()=>Object.keys(localStorage).some(key=>key.startsWith('era5.are.chat.v1.') &&
                 JSON.parse(localStorage.getItem(key)).in_flight===true)""")
             page.reload()
-            expect(shell.get_by_text('Câu hỏi đã được giữ; ARE chưa tự gửi lại.',exact=False)).to_be_visible(timeout=15000)
+            expect(shell.get_by_text('Câu hỏi đã được giữ; ERA chưa tự gửi lại.',exact=False)).to_be_visible(timeout=15000)
             deadline=time.monotonic()+10
             while (out/'backend.log').read_text(encoding='utf-8').count('POST /api/v1/agent/chat')<previous_posts+1:
                 if time.monotonic()>deadline:

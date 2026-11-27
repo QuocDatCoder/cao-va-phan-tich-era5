@@ -20,7 +20,8 @@ class AuthRepository:
                     password_hash TEXT NOT NULL,
                     is_admin INTEGER NOT NULL DEFAULT 0,
                     is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    last_login_at INTEGER
                 );
                 CREATE TABLE IF NOT EXISTS auth_sessions (
                     token_hash TEXT PRIMARY KEY,
@@ -39,11 +40,14 @@ class AuthRepository:
                 );
                 """
             )
+            connection.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
             if "is_admin" not in columns:
                 connection.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
             if "is_active" not in columns:
                 connection.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+            if "last_login_at" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN last_login_at INTEGER")
 
     @contextmanager
     def _connect(self):
@@ -82,7 +86,9 @@ class AuthRepository:
 
     def list_users(self) -> list[dict]:
         with self._connect() as connection:
-            return [dict(row) for row in connection.execute("SELECT id,username,is_admin,is_active,created_at FROM users ORDER BY id")]
+            return [dict(row) for row in connection.execute(
+                "SELECT id, username, is_admin, is_active, created_at, last_login_at FROM users ORDER BY id"
+            )]
 
     def set_user_access(self, user_id: int, *, is_admin: bool | None = None, is_active: bool | None = None) -> bool:
         fields, values = [], []
@@ -134,7 +140,7 @@ class AuthRepository:
         return [int(row["id"]) for row in rows]
 
     def create_session(
-        self, token_hash: str, user_id: int, created_at: int, expires_at: int
+        self, token_hash: str, user_id: int, created_at: int, expires_at: int, *, record_login: bool = False
     ) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -142,6 +148,12 @@ class AuthRepository:
                    VALUES (?, ?, ?, ?)""",
                 (token_hash, user_id, created_at, expires_at),
             )
+            if record_login:
+                connection.execute(
+                    """UPDATE users SET last_login_at = ?
+                       WHERE id = ? AND (last_login_at IS NULL OR last_login_at < ?)""",
+                    (created_at, user_id, created_at),
+                )
 
     def get_user_for_session(self, token_hash: str, now: int) -> dict | None:
         with self._connect() as connection:

@@ -1,8 +1,8 @@
-﻿# ERA5 · Thu thập và phân tích dữ liệu khí tượng
+﻿# Thu thập và phân tích dữ liệu khí tượng
 
-Ứng dụng web phục vụ thu thập và phân tích dữ liệu khí tượng lịch sử từ Copernicus Climate Data Store (CDS). Người dùng có thể chọn địa điểm và thời gian, theo dõi tác vụ tải, kiểm tra bộ dữ liệu đã lưu, vẽ biểu đồ và xuất CSV để tiếp tục phân tích.
+Ứng dụng web phục vụ thu thập và phân tích dữ liệu khí tượng lịch sử từ Open-Meteo Historical Forecast API (GFS Global). Người dùng có thể chọn địa điểm và thời gian, theo dõi tác vụ tải, kiểm tra bộ dữ liệu đã lưu, vẽ biểu đồ và xuất CSV để tiếp tục phân tích.
 
-Ví dụ, để khảo sát nhiệt độ tại Hà Nội trong một tháng, người dùng tạo tác vụ ERA5-Land cho một điểm, kiểm tra độ phủ sau khi tác vụ hoàn tất, rồi vẽ chuỗi nhiệt độ theo ngày. Có thể tải kết quả đã lọc về để dùng lại trong báo cáo.
+Ví dụ, để khảo sát nhiệt độ tại Hà Nội trong một tháng, người dùng tạo tác vụ Open-Meteo cho một điểm, kiểm tra độ phủ sau khi tác vụ hoàn tất, rồi vẽ chuỗi nhiệt độ theo ngày. Có thể tải kết quả đã lọc về để dùng lại trong báo cáo.
 
 **Chạy thử trên Windows:** cài môi trường theo mục 3, chạy `.\run_all.bat mock` và mở [dashboard](http://localhost:8501). Chế độ mock dùng dữ liệu giả lập để thử luồng thu thập, xem biểu đồ và xuất CSV.
 
@@ -15,10 +15,10 @@ Ví dụ, để khảo sát nhiệt độ tại Hà Nội trong một tháng, ng
 
 | Chức năng | Kết quả |
 | --- | --- |
-| Thu thập | Tạo tác vụ ERA5-Land theo điểm, theo dõi tiến độ và lịch sử. |
+| Thu thập | Tạo tác vụ Open-Meteo theo điểm, theo dõi tiến độ và lịch sử. |
 | Kho dữ liệu | Tìm bộ đã lưu, xem nguồn, điểm lưới, độ phủ và cảnh báo, tải CSV. |
 | Biểu đồ | Phân tích bộ đã lưu qua sáu chế độ trình bày. |
-| Trợ lý ARE | Hướng dẫn thao tác, tra cứu bộ đã lưu và phân tích kết quả. Người dùng xác nhận trước khi gửi tác vụ thu thập. |
+| Trợ lý ERA | Hướng dẫn thao tác, tra cứu bộ đã lưu và phân tích kết quả. Người dùng xác nhận trước khi gửi tác vụ thu thập. |
 | Quản trị | Xem thống kê hệ thống, lọc lịch sử theo người dùng, cấp quyền và quản lý tài khoản. |
 
 Sáu biến khí tượng gồm nhiệt độ, điểm sương, lượng mưa, tốc độ gió, hướng gió và bức xạ mặt trời. Giao diện hiển thị giờ Việt Nam (UTC+7). Kiểm tra độ phủ và cảnh báo trước khi dùng kết quả.
@@ -31,15 +31,15 @@ Sáu biến khí tượng gồm nhiệt độ, điểm sương, lượng mưa, t
 | Tạo một tác vụ cho một điểm và khoảng ngày ngắn | Lịch sử hiển thị trạng thái xử lý. Khi tác vụ hoàn tất, bộ dữ liệu xuất hiện trong Kho dữ liệu. |
 | Mở bộ dữ liệu và chọn nhiệt độ | Giao diện hiển thị điểm lưới, khoảng thời gian, đơn vị và độ phủ. |
 | Vẽ chuỗi thời gian và tải CSV | Đối chiếu biến, khoảng xem và các giá trị giữa bảng kết quả, biểu đồ và tệp xuất. |
-| Hỏi ARE về bộ đang xem, nếu đã cấu hình AI | ARE dùng ngữ cảnh của bộ dữ liệu và có thể dẫn người dùng tới màn hình liên quan. |
+| Hỏi ERA về bộ đang xem, nếu đã cấu hình AI | ERA dùng ngữ cảnh của bộ dữ liệu và có thể dẫn người dùng tới màn hình liên quan. |
 
-Dữ liệu ERA5 là dữ liệu tái phân tích. Với các ngày gần hiện tại, khả năng thu thập phụ thuộc vào thời điểm CDS công bố dữ liệu. Bản demo mock dùng để kiểm tra quy trình ứng dụng.
+Dữ liệu mới là chuỗi theo giờ từ kho dự báo GFS của Open-Meteo. Bản demo mock dùng để kiểm tra quy trình ứng dụng.
 
 ## 2. Mã nguồn
 
 ```
 Dashboard và Admin (Streamlit) → FastAPI → Dịch vụ thu thập và phân tích
-                                              ├─ Copernicus CDS
+                                              ├─ Open-Meteo Historical Forecast
                                               └─ SQLite và tệp nguồn cục bộ
 ```
 
@@ -50,19 +50,19 @@ Dashboard và Admin (Streamlit) → FastAPI → Dịch vụ thu thập và phân
 | [backend/app/api/](backend/app/api/) | Tuyến FastAPI và xác thực |
 | [backend/app/domain/](backend/app/domain/) | Kiểu dữ liệu và quy tắc khí tượng |
 | [backend/app/services/](backend/app/services/) | Tác vụ tải, truy vấn và phân tích |
-| [backend/app/providers/](backend/app/providers/) | Provider ERA5, ERA5-Land và mock |
+| [backend/app/providers/](backend/app/providers/) | Provider Open-Meteo, mock và tương thích dữ liệu cũ |
 | [backend/app/storage/](backend/app/storage/) | Lưu trữ SQLite |
-| [backend/app/ai/](backend/app/ai/) | Điều phối ARE và công cụ đọc dữ liệu |
+| [backend/app/ai/](backend/app/ai/) | Điều phối ERA và công cụ đọc dữ liệu |
 | [tests/](tests/), [scripts/](scripts/) | Kiểm thử và công cụ kiểm tra |
 
-Luồng chính là **Thu thập → kiểm tra và lưu → chọn bộ dữ liệu → phân tích**. Kho dữ liệu, Biểu đồ và công cụ tra cứu của ARE đọc dữ liệu đã lưu. Khi bật xác thực, dữ liệu được lưu riêng theo từng tài khoản.
+Luồng chính là **Thu thập → kiểm tra và lưu → chọn bộ dữ liệu → phân tích**. Kho dữ liệu, Biểu đồ và công cụ tra cứu của ERA đọc dữ liệu đã lưu. Khi bật xác thực, dữ liệu được lưu riêng theo từng tài khoản.
 
 ### Luồng xử lý và các API chính
 
 1. Dashboard gửi yêu cầu thu thập, gồm nguồn, tọa độ và khoảng thời gian. FastAPI tạo tác vụ và trả mã để giao diện tra cứu trạng thái.
 2. Dịch vụ tải gọi provider phù hợp. Dữ liệu nguồn được xử lý, kiểm tra độ phủ và lưu cùng siêu dữ liệu bộ sưu tập.
 3. Khi người dùng mở bộ sưu tập hoặc vẽ biểu đồ, ứng dụng truy vấn dữ liệu đã lưu theo biến, điểm lưới và khoảng thời gian. Kết quả có thể kèm cảnh báo thiếu dữ liệu.
-4. ARE dùng các công cụ đọc dữ liệu đã lưu để phân tích. Khi cần thu thập thêm, người dùng kiểm tra thông tin và xác nhận tác vụ trên giao diện.
+4. ERA dùng các công cụ đọc dữ liệu đã lưu để phân tích. Khi cần thu thập thêm, người dùng kiểm tra thông tin và xác nhận tác vụ trên giao diện.
 
 | API | Vai trò |
 | --- | --- |
@@ -71,7 +71,7 @@ Luồng chính là **Thu thập → kiểm tra và lưu → chọn bộ dữ li�
 | `GET /api/v1/collections` | Liệt kê các bộ dữ liệu đã lưu. |
 | `GET /api/v1/collections/{collection_id}/quality` | Đọc thông tin chất lượng của bộ dữ liệu. |
 | `GET /api/v1/collections/{collection_id}/{operation}` | Truy vấn phân tích trên bộ đã lưu. |
-| `POST /api/v1/agent/chat` | Gửi câu hỏi cho ARE. |
+| `POST /api/v1/agent/chat` | Gửi câu hỏi cho ERA. |
 
 ## 3. Hướng dẫn cho nhà phát triển
 
@@ -82,19 +82,25 @@ Cần Git và Python 3.11 trở lên. Mở PowerShell tại thư mục dự án.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 | Nhóm cấu hình | Biến cần xem |
 | --- | --- |
-| CDS | CLIMATE_PROVIDER, CDS_URL, CDS_API_KEY |
+| Nguồn dữ liệu | CLIMATE_PROVIDER=open_meteo |
 | Đăng nhập và quản trị | AUTH_ENABLED, ADMIN_USERNAME, ADMIN_PASSWORD |
-| ARE | AI_BASE_URL, AI_MODEL, AI_API_KEY |
+| ERA | AI_BASE_URL, AI_MODEL, AI_API_KEY |
 | Địa chỉ backend và lưu trữ | API_BASE_URL, DATA_DIR, AUTH_DB_PATH, JOB_METADATA_DB_PATH |
 
-Điền thông tin xác thực trong tệp .env cục bộ. Mẫu cấu hình nằm trong [.env.example](.env.example).
+Tạo tệp `.env` ở thư mục gốc nếu cần cấu hình riêng. Điền mật khẩu admin và khóa ERA tại máy chạy backend.
 
 ### Chạy ứng dụng
+
+Đặt `CLIMATE_PROVIDER=open_meteo` trong `.env`, rồi khởi động lại các dịch vụ.
+Trang Thu thập mặc định chọn 7 ngày trọn vẹn gần nhất theo UTC+7 và cho phép chọn
+trong 5 năm đã qua. Nguồn là Open-Meteo Historical Forecast API với mô hình **GFS Global**.
+Gói phi thương mại không cần API key. Các bộ ERA5 đã lưu vẫn mở được trong kho.
+Xem [tài liệu Open-Meteo](https://open-meteo.com/en/docs/historical-forecast-api) và
+[điều khoản sử dụng](https://open-meteo.com/en/terms).
 
 ```powershell
 .\run_all.bat
@@ -123,7 +129,7 @@ Mở các cửa sổ PowerShell tại thư mục dự án. Khởi động backen
 .\.venv\Scripts\python.exe -m streamlit run admin_app.py --server.port 8502
 ```
 
-Dùng chế độ mock khi phát triển giao diện mà chưa có khóa CDS. Để tải dữ liệu thật, điền khóa CDS vào `.env` và kiểm tra quyền truy cập bộ dữ liệu bằng tài khoản CDS. Khởi động lại các dịch vụ sau khi đổi cấu hình. Với trang quản trị, đặt `ADMIN_PASSWORD` trong `.env` trước khi khởi tạo tài khoản admin.
+Dùng chế độ mock để phát triển giao diện ngoại tuyến. Để tải dữ liệu thực từ mô hình GFS, dùng cấu hình Open-Meteo ở trên. Khởi động lại các dịch vụ sau khi đổi cấu hình. Với trang quản trị, đặt `ADMIN_PASSWORD` trong `.env` trước khi khởi tạo tài khoản admin.
 
 ### Sửa mã và kiểm thử
 
@@ -131,7 +137,7 @@ Dùng chế độ mock khi phát triển giao diện mà chưa có khóa CDS. Đ
 | --- | --- |
 | Form thu thập và trạng thái tác vụ | [frontend/workflow.py](frontend/workflow.py) và [dịch vụ tải dữ liệu](backend/app/services/download_job_service.py) |
 | Bộ lọc, biểu đồ và xuất CSV | [frontend/library.py](frontend/library.py), [charts.py](frontend/components/charts.py) và [climate_views.py](frontend/components/climate_views.py) |
-| Hành vi của ARE | [frontend/ai_chat.py](frontend/ai_chat.py) và [backend/app/ai/](backend/app/ai/) |
+| Hành vi của ERA | [frontend/ai_chat.py](frontend/ai_chat.py) và [backend/app/ai/](backend/app/ai/) |
 | Trang quản trị | [frontend/admin_site.py](frontend/admin_site.py) |
 
 1. Tạo nhánh từ main đã cập nhật.
@@ -143,16 +149,16 @@ Dùng chế độ mock khi phát triển giao diện mà chưa có khóa CDS. Đ
 .\.venv\Scripts\python.exe -X utf8 scripts/baseline_offline.py
 ```
 
-Tài liệu chi tiết về [luồng dữ liệu](docs/DOT_3_GIAO_DIEN_QUY_TRINH.md), [provider ERA5](docs/era5_provider.md) và [API cho ARE](docs/AI_API_HANDOFF.md).
+Tài liệu chi tiết về [luồng dữ liệu](docs/DOT_3_GIAO_DIEN_QUY_TRINH.md), [provider ERA5](docs/era5_provider.md) và [API cho ERA](docs/AI_API_HANDOFF.md).
 
 ## 4. Hướng dẫn sử dụng
 
 ### Đăng nhập và thu thập
 
 1. Mở dashboard và đăng ký hoặc đăng nhập.
-2. Vào **Thu thập** để lấy dữ liệu ERA5-Land cho một điểm trên đất liền.
+2. Vào **Thu thập** để lấy dữ liệu Open-Meteo theo tọa độ.
 3. Nhập địa điểm hoặc tọa độ, chọn khoảng ngày và bấm **Bắt đầu thu thập**. Mỗi tác vụ lấy cả sáu biến khí tượng.
-4. Theo dõi **Tác vụ thu thập**. Khi tác vụ hoàn tất, mở **Kho dữ liệu** để xem dữ liệu đã lưu và cảnh báo. CDS có thể xếp hàng hoặc chưa công bố dữ liệu cho ngày gần nhất.
+4. Theo dõi **Tác vụ thu thập**. Khi tác vụ hoàn tất, mở **Kho dữ liệu** để xem dữ liệu đã lưu và cảnh báo. Nguồn có thể trả dữ liệu thiếu cho một số giờ.
 
 ### Xem, vẽ và tải dữ liệu
 
@@ -173,18 +179,18 @@ Trong **Kho dữ liệu**, tìm theo địa điểm và bấm **Xem dữ liệu*
 - Khi độ phủ thấp, mở báo cáo chất lượng để xem phần thiếu trước khi diễn giải giá trị trung bình hoặc xu hướng. Đối với những biểu đồ yêu cầu đủ tháng, chọn khoảng thời gian bao trọn các tháng cần phân tích.
 - Khi so sánh dị thường nhiệt độ, ghi lại cả khoảng đang xem và khoảng nền để người đọc có thể tái hiện kết quả.
 
-### Dùng ARE và trang quản trị
+### Dùng ERA và trang quản trị
 
-Bấm **ARE** trên thanh đầu trang để hỏi về bộ đã lưu, cảnh báo hoặc biểu đồ. Tính năng dùng mô hình cần cấu hình AI ở backend. Ví dụ, sau khi mở biểu đồ nhiệt độ, có thể hỏi “Biểu đồ này cho thấy nhiệt độ thay đổi như thế nào?” hoặc “Bộ dữ liệu này có thiếu thời điểm nào không?”. Nếu ARE đề nghị gửi tác vụ mới, kiểm tra nguồn, vị trí và khoảng ngày trước khi xác nhận.
+Bấm **ERA** trên thanh đầu trang để hỏi về bộ đã lưu, cảnh báo hoặc biểu đồ. Tính năng dùng mô hình cần cấu hình AI ở backend. Ví dụ, sau khi mở biểu đồ nhiệt độ, có thể hỏi “Biểu đồ này cho thấy nhiệt độ thay đổi như thế nào?” hoặc “Bộ dữ liệu này có thiếu thời điểm nào không?”. Nếu ERA đề nghị gửi tác vụ mới, kiểm tra nguồn, vị trí và khoảng ngày trước khi xác nhận.
 
 ### Xử lý sự cố khi sử dụng
 
 | Hiện tượng | Cách kiểm tra |
 | --- | --- |
 | Dashboard báo lỗi kết nối | Mở `/health` trên backend, sau đó kiểm tra `API_BASE_URL` và tiến trình Uvicorn. |
-| Tác vụ chờ lâu hoặc thất bại | Xem chi tiết tác vụ trong mục **Thu thập**. Với dữ liệu thật, đối chiếu khóa CDS, phạm vi tọa độ và ngày đã được công bố. |
+| Tác vụ chờ lâu hoặc thất bại | Xem chi tiết tác vụ trong mục **Thu thập**. Với dữ liệu thật, kiểm tra kết nối Open-Meteo, tọa độ và khoảng ngày. |
 | Bộ dữ liệu có nhưng biểu đồ trống | Kiểm tra biến, điểm lưới và khoảng thời gian đã lưu. Với hoa gió, cần cả tốc độ và hướng gió ở các thời điểm trùng nhau. |
-| ARE không phản hồi | Kiểm tra cấu hình AI và trạng thái backend. Có thể tiếp tục thu thập, xem và xuất dữ liệu qua dashboard. |
+| ERA không phản hồi | Kiểm tra cấu hình AI và trạng thái backend. Có thể tiếp tục thu thập, xem và xuất dữ liệu qua dashboard. |
 
 ### Trang quản trị
 

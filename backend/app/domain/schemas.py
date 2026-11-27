@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from backend.app.domain.time_utils import to_utc_naive
 from backend.app.domain.quality import QualityReport
 
-DataSource = Literal["land", "era5", "mock"]
+DataSource = Literal["land", "era5", "mock", "open_meteo"]
 
 class Location(BaseModel):
     latitude: float = Field(ge=-90, le=90)
@@ -194,7 +194,7 @@ class DownloadRequest(BaseModel):
             raise ValueError("end_date must be greater than or equal to start_date")
         if (self.area is None) == (self.location is None):
             raise ValueError("Provide exactly one of area or location.")
-        if self.source == "land" and self.location is None:
+        if self.source in {"land", "open_meteo"} and self.location is None:
             raise ValueError("Land time-series collects one location, not an area.")
         if self.source == "era5" and self.area is None:
             raise ValueError("ERA5 area collection requires area bounds.")

@@ -57,7 +57,7 @@ def restore(state,raw):
         item['restored']=True
         messages.append(item)
     if saved.in_flight:
-        messages.append(dict(role='assistant',content='Lượt trước chưa lưu xong câu trả lời trước khi tải lại trang. Câu hỏi đã được giữ; ARE chưa tự gửi lại.'))
+        messages.append(dict(role='assistant',content='Lượt trước chưa lưu xong câu trả lời trước khi tải lại trang. Câu hỏi đã được giữ; ERA chưa tự gửi lại.'))
     state['ai_chat_messages']=messages
     state['ai_chat_open']=saved.opened
     state['ai_chat_unread']=saved.unread
@@ -113,7 +113,7 @@ export default function(component) {
 }
 """
 
-_BRIDGE=st.components.v2.component('era5_are_history',html='<span aria-hidden="true"></span>',js=_BRIDGE_JS)
+_BRIDGE=st.components.v2.component('era5_era_history',html='<span aria-hidden="true"></span>',js=_BRIDGE_JS)
 
 
 def _rerender_chat():

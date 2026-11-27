@@ -88,7 +88,7 @@ def test_all_stored_endpoints_never_call_providers_even_when_cache_is_missing(st
     assert all(row["source"] == source and row["dataset"] == source_dataset(source, settings) for row in rows)
 
 
-def test_three_sources_same_coordinate_variable_time_are_isolated_after_restart(stored):
+def test_three_sources_same_coordinate_variable_time_era_isolated_after_restart(stored):
     settings, writer, _, client = stored
     for i, source in enumerate(["land", "era5", "mock"]):
         save(writer, settings, source, values=[273.15 + 10*i + h for h in range(3)])
@@ -103,7 +103,7 @@ def test_three_sources_same_coordinate_variable_time_are_isolated_after_restart(
         assert r["unit"] == "°C"
 
 
-def test_missing_range_and_partial_statistics_are_honest(stored):
+def test_missing_range_and_partial_statistics_era_honest(stored):
     settings, writer, _, client = stored
     save(writer, settings, hours=(0, 2))
     r = client.get(PREFIX+"statistics", params={**PARAMS, "source": "land"}).json()
@@ -146,7 +146,7 @@ def test_derived_wind_requires_both_components_and_keeps_calm_distinct_from_miss
     assert client.get(PREFIX+"trend", params=params).status_code == 422
 
 
-def test_wind_components_from_different_grids_are_not_combined(stored):
+def test_wind_components_from_different_grids_era_not_combined(stored):
     settings, writer, _, client = stored
     save(writer, settings, variable="10m_u_component_of_wind", unit="m/s")
     save(writer, settings, variable="10m_v_component_of_wind", unit="m/s",
@@ -177,7 +177,7 @@ def test_area_grid_lookup_is_reused_only_inside_the_saved_area(stored):
 @pytest.mark.parametrize("change", [{"source": "sea"}, {"source": "era5_land_timeseries"},
                                     {"end": "2024-01-01T00:00:00Z"},
                                     {"variable": "not-a-weather-variable"}])
-def test_invalid_stored_queries_are_rejected_without_a_download(stored, change):
+def test_invalid_stored_queries_era_rejected_without_a_download(stored, change):
     client = stored[3]
     assert client.get(PREFIX+"timeseries", params={**PARAMS, "source": "land", **change}).status_code in {400, 422}
 
@@ -191,7 +191,7 @@ def test_misconfigured_dataset_identity_cannot_leak_other_sources(stored):
     assert "distinct" in response.json()["detail"]
 
 
-def test_heatmap_preserves_partial_month_flag_even_when_requested_hours_are_complete(stored):
+def test_heatmap_preserves_partial_month_flag_even_when_requested_hours_era_complete(stored):
     settings, writer, _, client = stored
     save(writer, settings)
     response = client.get(PREFIX+"heatmap", params={**PARAMS, "source": "land"}).json()

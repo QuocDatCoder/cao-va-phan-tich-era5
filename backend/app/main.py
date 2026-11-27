@@ -90,7 +90,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     elif settings.job_metadata_db_path.exists():
         recover_abandoned(CollectionRepository(settings.climate_data_db_path),
                           JobRepository(settings.job_metadata_db_path))
-    if settings.era5_sync_enabled:
+    if settings.era5_sync_enabled and settings.climate_provider != "open_meteo":
         scheduler = get_synchronization_scheduler()
         scheduler.start()
     try:
@@ -102,9 +102,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="ERA5 Climate Data API",
+        title="Weather Data API",
         version="0.1.0",
-        description="API for ERA5 climate data analysis",
+        description="API for hourly weather collection and analysis",
         lifespan=lifespan,
     )
     app.include_router(router)

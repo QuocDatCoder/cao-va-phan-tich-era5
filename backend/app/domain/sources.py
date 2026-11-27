@@ -3,6 +3,8 @@ from backend.app.domain.schemas import DataSource
 from backend.app.core.config import Settings
 
 
+OPEN_METEO_DATASET = "open-meteo-historical-forecast-gfs-global"
+
 def configured_source(settings: Settings) -> DataSource:
     return "land" if settings.climate_provider == "era5_land_timeseries" else settings.climate_provider
 
@@ -14,6 +16,8 @@ def source_dataset(source: DataSource, settings: Settings) -> str:
         return settings.era5_land_dataset
     if source == "era5":
         return settings.era5_dataset
+    if source == "open_meteo":
+        return OPEN_METEO_DATASET
     if source == "mock":
         return "mock"
     raise ValueError("Unknown data source")

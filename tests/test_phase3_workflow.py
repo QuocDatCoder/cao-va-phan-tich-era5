@@ -89,7 +89,7 @@ def test_home_recent_uses_latest_three_complete_collections_across_pages(monkeyp
 def test_home_is_default_and_shortcut_opens_collection(ui):
     app = AppTest.from_file(str(Path('app.py').resolve())).run(timeout=15)
     assert app.session_state['workflow_section'] == 'Trang chủ'
-    assert app.title[0].value == 'Khám phá khí hậu với ERA5'
+    assert app.title[0].value == 'Khám phá dữ liệu khí tượng'
     assert app.button(key='home_open_folder_open')
     assert app.button(key='home_open_monitoring')
     assert not any(button.key == 'collect_now' for button in app.button)
@@ -250,7 +250,7 @@ def test_collection_with_manual_coordinates_does_not_reuse_city_label(ui, monkey
 
 
 
-def test_duplicate_active_requests_are_atomic_and_source_specific(collection):
+def test_duplicate_active_requests_era_atomic_and_source_specific(collection):
     settings, _, jobs, service, _, _, _ = collection
     request = DownloadRequest(source='land', variable='temperature', location=POINT, **DATES)
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -315,7 +315,7 @@ def test_collection_shows_only_supported_spatial_inputs(ui):
 
 
 def notices(app):
-    return [element for element in app.get('html') if '<template id="are-notice-' in element.value]
+    return [element for element in app.get('html') if '<template id="era-notice-' in element.value]
 
 
 def test_geocoding_failure_keeps_manual_coordinates_usable(ui, monkeypatch):
@@ -878,7 +878,7 @@ def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
     assert not any(call[0] == 'POST' for call in bridge.calls)
 
 
-def test_are_reports_each_failed_job_once(ui):
+def test_era_reports_each_failed_job_once(ui):
     app, _, collection = ui
     jobs, service = collection[2:4]
     for _ in range(2):
@@ -886,7 +886,7 @@ def test_are_reports_each_failed_job_once(ui):
         app.button(key='refresh_jobs').click().run()
         jobs.mark_failed(job.job_id, 'No valid observations were imported; original files were preserved.')
         app.button(key='refresh_jobs').click().run()
-        errors = [item.value for item in notices(app) if 'are-notice-error' in item.value]
+        errors = [item.value for item in notices(app) if 'era-notice-error' in item.value]
         assert len(errors) == 1 and 'Không có quan sát hợp lệ' in errors[0]
         app.button(key='refresh_jobs').click().run()
         assert not notices(app)

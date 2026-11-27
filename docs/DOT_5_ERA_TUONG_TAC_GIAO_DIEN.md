@@ -1,4 +1,4 @@
-# ARE tương tác với giao diện
+# ERA tương tác với giao diện
 
 Đã nối ba luồng đọc dữ liệu: tìm trong kho, mở thông tin/bảng dữ liệu và mở Biểu đồ theo bộ lọc. Model đề xuất hành động; chỉ khi người dùng bấm nút ứng dụng mới chuyển trang. Không có công cụ tạo job, tải CDS, xóa dữ liệu, thực thi SQL/command hoặc chạy JavaScript/URL từ model.
 
@@ -30,12 +30,12 @@ Hành động và dữ liệu hiển thị được giữ trong lịch sử loca
 
 ## Kiểm thử và giới hạn
 
-Bộ chọn Kho dữ liệu, Biểu đồ và form ARE chỉ hiển thị tối đa 6 biến chính có sẵn: nhiệt độ, lượng mưa, điểm sương, tốc độ gió, hướng gió, bức xạ mặt trời. Alias được gộp, gió u/v vẫn lưu và xuất hiện trong thông tin biến bổ sung, không nằm trong bộ chọn chính. Chỉ bổ sung tốc độ/hướng gió khi có cả hai thành phần. Hành động mở kết quả ARE từ chối biến nội bộ; dữ liệu và API phân tích nền không bị xóa.
+Bộ chọn Kho dữ liệu, Biểu đồ và form ERA chỉ hiển thị tối đa 6 biến chính có sẵn: nhiệt độ, lượng mưa, điểm sương, tốc độ gió, hướng gió, bức xạ mặt trời. Alias được gộp, gió u/v vẫn lưu và xuất hiện trong thông tin biến bổ sung, không nằm trong bộ chọn chính. Chỉ bổ sung tốc độ/hướng gió khi có cả hai thành phần. Hành động mở kết quả ERA từ chối biến nội bộ; dữ liệu và API phân tích nền không bị xóa.
 
 Test kiểm tra DTO chặn script/URL/SQL, scope ngày/biến/lưới, không kế thừa bộ khác, nhiều lưới cần lựa chọn, null/rỗng/đơn vị nghi vấn, đúng khoảng 7 giờ, chỉ query một lần, lỗi sau validate giữ kết quả cũ và mở tab khác không làm mất applied của tab trước. Test UI kiểm tra form trong chat không gọi AI, search mở danh sách và generic view không tự query.
 
-Baseline output/are-actions-complete-baseline: 495 passed, 1 skipped (live CDS), backend/frontend HTTP 200, AppTest đạt và user_inputs_unchanged=true. Các kiểm tra bổ sung cho thao tác atomic/UI/history tại output/are-actions-idle-tests: 39 passed. Running-app agent API/Chromium kiểm tra tìm kiếm, mở metadata, áp dụng chu kỳ ngày từ context, form thiếu tham số và các luồng F5/làm mới/không replay; ảnh và log trong output/are-actions-idle-browser-final. Kiểm tra UI này không gọi API AI trả phí/CDS, không có browser error. Chat chỉ phát sự kiện kiểm tra mỗi giây khi có request đang chạy; đã kiểm tra bộ chọn còn mở sau 1,8 giây lúc rảnh. Timer được dọn khi component unmount.
+Baseline output/era-actions-complete-baseline: 495 passed, 1 skipped (live CDS), backend/frontend HTTP 200, AppTest đạt và user_inputs_unchanged=true. Các kiểm tra bổ sung cho thao tác atomic/UI/history tại output/era-actions-idle-tests: 39 passed. Running-app agent API/Chromium kiểm tra tìm kiếm, mở metadata, áp dụng chu kỳ ngày từ context, form thiếu tham số và các luồng F5/làm mới/không replay; ảnh và log trong output/era-actions-idle-browser-final. Kiểm tra UI này không gọi API AI trả phí/CDS, không có browser error. Chat chỉ phát sự kiện kiểm tra mỗi giây khi có request đang chạy; đã kiểm tra bộ chọn còn mở sau 1,8 giây lúc rảnh. Timer được dọn khi component unmount.
 
-Thử thật Luna/low: output/are-actions-live-verified/report.json đạt 3/3 (context → biểu đồ theo ngày, tìm bộ, hỏi lại khi thiếu thời gian/chu kỳ), upstream báo 9.986 token. Lượt đầu 7.005 token phát hiện model nhầm heatmap và fixture không giữ tên vì chưa có selected_place; đã sửa cả rule/validation và fixture, rồi chạy lại. Không tự retry hoặc tăng reasoning/output budget. Đây chỉ là tập thử nhỏ, không bảo đảm mọi cách diễn đạt đều chọn đúng kiểu biểu đồ; nút và tham số vẫn để người dùng kiểm tra trước khi mở.
+Thử thật Luna/low: output/era-actions-live-verified/report.json đạt 3/3 (context → biểu đồ theo ngày, tìm bộ, hỏi lại khi thiếu thời gian/chu kỳ), upstream báo 9.986 token. Lượt đầu 7.005 token phát hiện model nhầm heatmap và fixture không giữ tên vì chưa có selected_place; đã sửa cả rule/validation và fixture, rồi chạy lại. Không tự retry hoặc tăng reasoning/output budget. Đây chỉ là tập thử nhỏ, không bảo đảm mọi cách diễn đạt đều chọn đúng kiểu biểu đồ; nút và tham số vẫn để người dùng kiểm tra trước khi mở.
 
 Tìm kiếm hiện dùng từ khóa metadata, không phải tìm dữ liệu toàn cầu trên CDS hay bộ lọc ngôn ngữ tự nhiên nhiều điều kiện hoàn chỉnh. Hỗ trợ phân tích tương tác bằng các operation có sẵn; chưa hỗ trợ click đỉnh biểu đồ để chat tự lấy điểm, tạo job từ chat hoặc tự thay biểu đồ khi chưa bấm hành động.

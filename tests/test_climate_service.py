@@ -48,7 +48,7 @@ def test_vietnam_calendar_day_queries_previous_utc_date_and_returns_24_hours():
     assert all(point.time.date() == request.start.date() for point in response.data)
 
 
-def test_precipitation_values_and_units_are_preserved():
+def test_precipitation_values_and_units_era_preserved():
     request = TimeSeriesRequest(
         variable="precipitation", location=Location(latitude=10, longitude=106),
         start=datetime(2025, 1, 1), end=datetime(2025, 1, 1, 2),

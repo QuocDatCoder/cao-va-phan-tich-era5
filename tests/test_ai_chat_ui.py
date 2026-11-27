@@ -38,7 +38,7 @@ def test_chat_is_lazy_and_keeps_history_when_closed_and_switching_tabs(ui,monkey
     assert app.session_state['ai_chat_messages']==[]
 
 
-def test_chart_from_saved_data_is_ready_for_are_on_the_first_click(ui, monkeypatch):
+def test_chart_from_saved_data_is_ready_for_era_on_the_first_click(ui, monkeypatch):
     from backend.app.ai.agent import AgentRequest, ClimateAgent
     from backend.app.ai.db_tools import build_database_tools
     from test_ai_agent import FakeClient
@@ -59,7 +59,7 @@ def test_chart_from_saved_data_is_ready_for_are_on_the_first_click(ui, monkeypat
     assert app.session_state['chart_result'][2]['data'] == saved['data']
     assert app.get('plotly_chart')
     assert len([call for call in bridge.calls if call[1].endswith('/timeseries')]) == before
-    assert app.button(key='are_analyze_current')
+    assert app.button(key='era_analyze_current')
 
     requests = []
     agent = ClimateAgent(FakeClient([]), build_database_tools(collection[0]))

@@ -17,7 +17,7 @@ from backend.app.ai.view_service import prepare_view
 MAX_REQUESTS = 4
 MAX_SECONDS = 95
 MAX_TOOL_OUTPUT = 24000
-INSTRUCTIONS = """Bạn là ARE, trợ lý thân thiện của đồ án ERA5, giao tiếp tiếng Việt tự nhiên.
+INSTRUCTIONS = """Bạn là ERA, trợ lý thân thiện của ứng dụng phân tích khí tượng, giao tiếp tiếng Việt tự nhiên.
 Dùng prepare_collection khi người dùng nhờ tải/cào/thu thập dữ liệu. Chỉ chuẩn bị thẻ xác nhận.
 Khi nhờ phân tích mà chưa chọn bộ, dùng search_collections để hiện lựa chọn thay vì giới thiệu chức năng.
 Dùng answer_question(category=general) cho hội thoại và kiến thức phổ thông.
@@ -29,7 +29,7 @@ Phân biệt điều code thể hiện với suy luận/đề xuất: nếu ngu�
 khẳng định đó là ý đồ của tác giả. Có thể nêu nhận xét thiết kế nhưng phải nói rõ là nhận xét.
 answer_question chỉ dùng để giải thích/hội thoại, KHÔNG dùng trả số liệu quan trắc, tồn kho,
 coverage/quality của bộ cụ thể hay thực hiện thao tác. Các câu đó PHẢI dùng công cụ DB.
-Không có quyền thực thi SQL/command, CDS, tải dữ liệu, web hoặc sửa/xóa dữ liệu. Không đọc key,
+Không có quyền thực thi SQL/command, gọi API thời tiết, tải dữ liệu, web hoặc sửa/xóa dữ liệu. Không đọc key,
 .env hay file tùy ý. Có thể giải thích khái niệm/lập trình, nhưng không giả vờ đã chạy lệnh.
 Không có web trực tiếp: đừng khẳng định tin tức, giá, thời tiết hiện tại hoặc thông tin mới nhất.
 Đừng tự chèn số liệu khí tượng thực tế vào trả lời phổ thông. Ví dụ minh họa phải nói rõ giả định.
@@ -161,7 +161,7 @@ def needs_project_sources(question):
     text=normalize(question)
     return any(x in text for x in ['du an','do an','ung dung nay','backend','frontend','parser','snapshot',
         'collectionservice','storedclimateservice','streamlit','fastapi','kien truc','ke hoach','this project','the project','codebase','architecture']) or bool(
-        re.search(r'\bdot\s+\d|\bare\b.*(hoat dong|dung model|su dung|thiet ke|duoc xay)',text))
+        re.search(r'\bdot\s+\d|\bera\b.*(hoat dong|dung model|su dung|thiet ke|duoc xay)',text))
 FIELD_LABELS = dict(collection_id='bộ dữ liệu/địa điểm cần xem', variable='biến khí hậu',
                     start='ngày bắt đầu', end='ngày kết thúc', latitude='vĩ độ lưới',
                     longitude='kinh độ lưới', coordinates='điểm lưới', frequency='chu kỳ tổng hợp')
@@ -200,7 +200,7 @@ def render_answer(evidence):
             f"và {data['rainfall_coverage']:.1%} cho lượng mưa."
         )
     if name=='prepare_collection' and status=='ok':
-        return 'Kiểm tra địa điểm, biến và khoảng ngày trong thẻ bên dưới. ARE sẽ kiểm tra kho trước khi bạn xác nhận thu thập.'
+        return 'Kiểm tra địa điểm, biến và khoảng ngày trong thẻ bên dưới. ERA sẽ kiểm tra kho trước khi bạn xác nhận thu thập.'
     if name == 'answer_question' and result.get('data'):
         return result['data']['answer']
     if name == 'project_knowledge':
@@ -244,7 +244,7 @@ def render_answer(evidence):
             text += 'Xem độ phủ và khoảng thiếu ở phần kết quả bên dưới.'
     p = result.get('provenance') or {}
     if p.get('synthetic'):
-        text += ' Đây là dữ liệu giả lập (mock), không phải quan trắc ERA5 thật.'
+        text += ' Đây là dữ liệu giả lập (mock), không phải dữ liệu thời tiết từ nguồn thực.'
     if p.get('provisional'):
         text += ' Tác vụ chưa kết thúc; snapshot này chỉ là tạm thời.'
     return text
@@ -371,7 +371,7 @@ class ClimateAgent:
                             arguments = monthly_view.model_dump(mode='json')
                             result = self.tools.analyze_monthly_climate(cid, monthly_view.parameters)
                         elif context and context.collection_id==cid and context.view_kind=='map':
-                            result=dict(status='invalid_arguments',data=None,message='Đây là biểu đồ không gian. ARE hiện phân tích chuỗi thời gian tại một điểm; hãy chuyển sang Chuỗi thời gian để đọc xu hướng, không suy ra phân bố không gian từ một điểm.')
+                            result=dict(status='invalid_arguments',data=None,message='Đây là biểu đồ không gian. ERA hiện phân tích chuỗi thời gian tại một điểm; hãy chuyển sang Chuỗi thời gian để đọc xu hướng, không suy ra phân bố không gian từ một điểm.')
                         else:
                             arguments=values
                             result=self.tools.execute('analyze_chart',values)
@@ -422,9 +422,9 @@ class ClimateAgent:
         if stopped == 'missing_key':
             answer = 'Backend chưa có AI_API_KEY. Hãy cấu hình key trong .env cục bộ rồi thử lại; không gửi key vào chat.'
         elif stopped == 'authentication_error':
-            answer = 'ARE chưa kết nối được mô hình: dịch vụ AI từ chối xác thực (HTTP 401). Hãy kiểm tra AI_API_KEY ở backend; không gửi khóa vào chat.'
+            answer = 'ERA chưa kết nối được mô hình: dịch vụ AI từ chối xác thực (HTTP 401). Hãy kiểm tra AI_API_KEY ở backend; không gửi khóa vào chat.'
         elif stopped == 'timeout':
-            answer = 'Dịch vụ AI phản hồi quá thời gian chờ. Bạn có thể gửi lại câu hỏi; ARE không tự gửi lại hoặc tạo tác vụ thu thập.'
+            answer = 'Dịch vụ AI phản hồi quá thời gian chờ. Bạn có thể gửi lại câu hỏi; ERA không tự gửi lại hoặc tạo tác vụ thu thập.'
         elif stopped not in {'complete','tool_result'}:
             # Incomplete planning must never expose an apparently successful answer.
             answer = 'Chưa hoàn tất lượt xử lý AI. Bạn có thể thử lại bằng câu hỏi cụ thể hơn; không có tải dữ liệu hoặc thay đổi DB.'

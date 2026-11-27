@@ -8,6 +8,7 @@ from backend.app.providers.base import ClimateDataProvider
 from backend.app.providers.era5_land_timeseries_provider import ERA5LandTimeseriesProvider
 from backend.app.providers.era5_provider import ERA5ClimateProvider
 from backend.app.providers.mock_provider import MockClimateProvider
+from backend.app.providers.open_meteo import OpenMeteoProvider
 from backend.app.storage.climate_repository import ClimateRepository
 
 
@@ -19,6 +20,8 @@ def _build_provider_for_source(
         return ERA5ClimateProvider(settings=settings, repository=repository)
     if source == "land":
         return ERA5LandTimeseriesProvider(settings=settings, repository=repository)
+    if source == "open_meteo":
+        return OpenMeteoProvider(settings, repository)
     if source == "mock":
         return MockClimateProvider(data_dir=settings.data_dir, repository=repository)
     raise ValueError("Unknown data source")
@@ -48,6 +51,8 @@ setattr(get_provider_for_source, "cache_clear", _source_provider_cache.clear)
 @lru_cache
 def get_climate_provider() -> ClimateDataProvider:
     settings = get_settings()
+    if settings.climate_provider == "open_meteo":
+        return _build_provider_for_source("open_meteo", settings)
     if settings.climate_provider == "era5":
         return ERA5ClimateProvider(
             settings=settings,
@@ -66,6 +71,8 @@ def _get_climate_provider_for_user(
     user_id: int | None, settings_key: tuple[int | None, str]
 ) -> ClimateDataProvider:
     settings = get_settings_for_user(user_id)
+    if settings.climate_provider == "open_meteo":
+        return _build_provider_for_source("open_meteo", settings)
     if settings.climate_provider == "era5":
         return ERA5ClimateProvider(
             settings=settings,

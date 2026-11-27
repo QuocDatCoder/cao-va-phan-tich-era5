@@ -144,7 +144,7 @@ local, yêu cầu cờ rõ ràng mới cho phép tải thật. Ghi log kết qu�
 
 Cập nhật 17/11/2026: đã chọn LLM Agent qua Responses API, mặc định gpt-6-luna/low. Đã có adapter, công cụ DB-only, điều phối có giới hạn và chat nổi góc phải dưới. So sánh Luna/Sol thật trên tám tình huống fixture đều đạt 8/8; xem [thiết kế, kết quả và giới hạn nghiệm thu](DOT_5_AGENT_VA_CHAT.md). Chưa coi các test fixture là nghiệm thu mọi hội thoại trên dữ liệu ERA5 thật.
 
-Theo yêu cầu mở rộng sau đó, ARE đã hỗ trợ thêm hội thoại phổ thông và giải thích sâu dự án từ chỉ mục code/tài liệu có nguồn. Số liệu quan trắc vẫn tách sang công cụ DB-only; lời giải thích model không được gán cờ xác minh DB. Chi tiết kiểm thử mới và giới hạn của chỉ mục nằm trong tài liệu Agent ở trên.
+Theo yêu cầu mở rộng sau đó, ERA đã hỗ trợ thêm hội thoại phổ thông và giải thích sâu dự án từ chỉ mục code/tài liệu có nguồn. Số liệu quan trắc vẫn tách sang công cụ DB-only; lời giải thích model không được gán cờ xác minh DB. Chi tiết kiểm thử mới và giới hạn của chỉ mục nằm trong tài liệu Agent ở trên.
 
 Ưu tiên chatbot có các câu hỏi được hỗ trợ rõ: dữ liệu đã có ở đâu/khi nào, thiếu gì, thống kê trong khoảng và hướng dẫn thao tác. Truy vấn dùng đúng service DB-only, không mở kết nối CDS ngầm hoặc thực thi SQL tự do từ văn bản.
 

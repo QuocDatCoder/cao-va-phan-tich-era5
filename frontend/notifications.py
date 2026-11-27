@@ -148,14 +148,14 @@ def _clear_toast(message: str) -> None:
     st.session_state.pop(_toast_key(message), None)
 
 
-def _show_notice(message: str, icon: str, kind: str, duration: int = 0) -> None:
+def _show_notice(message: str, icon: str, kind: str, duration: int = 0, *, admin: bool = False) -> None:
     # Mount outside Streamlit's fragment tree so a polling rerun cannot dismiss it.
-    notice_id = f"are-notice-{uuid4().hex}"
+    notice_id = f"era-notice-{uuid4().hex}"
     st.html(f"""
         <template id="{notice_id}">
-            <div class="are-notice are-notice-{kind}" role="{'alert' if kind == 'error' else 'status'}">
+            <div class="era-notice era-notice-{kind}{' admin-notice' if admin else ''}" role="{'alert' if kind == 'error' else 'status'}">
                 <span aria-hidden="true">{escape(icon)}</span>
-                <span class="are-notice-text">{escape(message.replace('**', ''))}</span>
+                <span class="era-notice-text">{escape(message.replace('**', ''))}</span>
                 <button type="button" aria-label="Đóng thông báo">×</button>
             </div>
         </template>
@@ -163,7 +163,14 @@ def _show_notice(message: str, icon: str, kind: str, duration: int = 0) -> None:
         (() => {{
             const template = document.getElementById('{notice_id}');
             if (!template) return;
-            document.querySelector('.are-notice')?.querySelector('button').click();
+            if ({str(admin).lower()}) {{
+                const shown = window.era5AdminNotices ??= new Set();
+                if (shown.has(template.id)) return;
+                shown.add(template.id);
+                if (shown.size > 100) shown.delete(shown.values().next().value);
+                if (!template.closest('.st-key-admin_accounts_view')) return;
+            }}
+            document.querySelector('.era-notice')?.querySelector('button').click();
             const notice = template.content.firstElementChild.cloneNode(true);
             const dismiss = () => {{
                 clearTimeout(timer);
@@ -211,9 +218,13 @@ def notify_warning(message: str, icon: str = "⚠️"):
     st.session_state[key] = True
 
 
-def notify_success(message: str, icon: str = "✅"):
+def notify_success(message: str, icon: str = "✅", *, admin: bool = False):
     """Show a brief success toast (auto-dismisses, not de-duplicated)."""
-    _show_notice(message, icon, "success", 4000)
+    _show_notice(message, icon, "success", 4000, admin=admin)
+
+
+def notify_admin_error(message: str):
+    _show_notice(message, "!", "error", 5000, admin=True)
 
 
 def notify_job_failures(jobs: list[dict]) -> None:

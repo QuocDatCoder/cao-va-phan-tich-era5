@@ -16,6 +16,7 @@ from backend.app.services.dependencies import get_auth_service
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 _PASSIVE_GET_ROUTES = {
+    "/api/v1/collections/live",
     "/api/v1/collections/{collection_id}/live",
     "/api/v1/jobs",
     "/api/v1/jobs/{job_id}",

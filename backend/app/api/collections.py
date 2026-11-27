@@ -44,8 +44,15 @@ LiveUser = Annotated[int, Depends(live_user_id)]
 
 
 @router.get('')
-def listing(s: Service, search: str='', limit: int=Query(100,ge=1,le=500), offset: int=Query(0,ge=0)):
-    return dict(collections=s.repository.list(search,limit,offset),limit=limit,offset=offset)
+def listing(s: Service, search: str='', limit: int=Query(100,ge=1,le=500), offset: int=Query(0,ge=0),
+            pinned_ids: Annotated[list[str] | None, Query()] = None):
+    return dict(collections=s.repository.list(search, limit, offset, pinned_ids=pinned_ids),
+                limit=limit, offset=offset)
+
+
+@router.get('/live')
+def list_live(user_id: LiveUser):
+    return {"schedules": get_auth_service()._repository.list_live_schedules(int(time.time()), user_id=user_id)}
 
 @router.get('/{collection_id}')
 def detail(collection_id: str, s: Service):

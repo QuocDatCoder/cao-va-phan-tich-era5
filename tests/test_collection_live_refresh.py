@@ -33,6 +33,7 @@ START = datetime(2026, 11, 26, 23, tzinfo=VIETNAM_TIME)
 END = START + timedelta(hours=1)
 ACCOUNT_PASSWORD = "fixture secure password"
 ADMIN_LIST = "/api/v1/auth/admin/live-schedules"
+LIVE_LIST = "/api/v1/collections/live"
 
 
 def collection_url(cid, suffix=""):
@@ -103,7 +104,8 @@ def live_api(tmp_path, monkeypatch):
         get_settings.cache_clear()
 
 
-def seed_collection(user_id, cid="weather", *, source="open_meteo", place="Hà Nội", hours=(0, 1)):
+def seed_collection(user_id, cid="weather", *, source="open_meteo", place="Hà Nội", hours=(0, 1),
+                    created_at=START):
     repository = CollectionRepository(get_settings_for_user(user_id).climate_data_db_path)
     dataset = OPEN_METEO_DATASET if source == "open_meteo" else "mock"
     request = DownloadRequest(source=source, variable=VARIABLE, location=POINT, selected_place=POINT, frequency="hourly",
@@ -111,7 +113,7 @@ def seed_collection(user_id, cid="weather", *, source="open_meteo", place="Hà N
                               end_date=END.astimezone(UTC).date(), requested_start=START, requested_end=END,
                               request_timezone="UTC+7")
     job = SimpleNamespace(job_id=cid, source=source, dataset=dataset, retrieval_variables=[VARIABLE],
-                          created_at=START)
+                          created_at=created_at)
     repository.create(job, request, VARIABLE)
     repository.running(cid)
     token = current_collection.set((cid, dataset))
@@ -185,15 +187,127 @@ def test_api_backoff_activity_and_admin_disable(live_api):
     assert api.client.post(disable, headers=api.headers).status_code == 403
     assert api.client.post(disable + "-unknown", headers=api.admin).status_code == 404
     rows = api.client.get(ADMIN_LIST, headers=api.admin).json()["schedules"]
-    assert rows == [{
+    expected = {
         **api.client.get(path, headers=api.headers).json(),
         "username": "fixture_user", "user_id": api.user_id, "collection_id": "weather", "place_name": "Hà Nội",
-    }]
+    }
+    assert len(rows) == 1
+    assert {field: rows[0][field] for field in expected} == expected
     assert api.client.post(disable, headers=api.admin).json()["disabled_reason"] == "disabled_by_admin"
     assert api.client.get(path, headers=api.headers).json()["enabled"] is False
     assert set_live(api).json()["disabled_reason"] is None
     assert api.client.delete(collection_url("weather"), headers=api.headers).status_code == 200
     assert api.client.get(ADMIN_LIST, headers=api.admin).json()["schedules"] == []
+
+
+def test_live_list_is_scoped_and_matches_collection_state(live_api):
+    api = live_api
+    seed_collection(api.user_id)
+    seed_collection(api.user_id, "paused")
+    seed_collection(api.user_id, "unscheduled")
+    assert set_live(api).status_code == 200
+    assert set_live(api, "paused", enabled=False, interval=3).status_code == 200
+
+    assert api.client.get(LIVE_LIST).status_code == 401
+    assert api.client.get(LIVE_LIST, headers=api.admin).json() == {"schedules": []}
+    for idle, effective_interval in ((6 * 3600 + 1, 6), (7 * 86400 + 1, None)):
+        activity = int(time.time()) - idle
+        with sqlite3.connect(api.db) as db:
+            db.execute("UPDATE users SET last_active_at=? WHERE id=?", (activity, api.user_id))
+        response = api.client.get(LIVE_LIST, headers=api.headers)
+        assert response.status_code == 200
+        schedules = {row["collection_id"]: row for row in response.json()["schedules"]}
+        assert set(schedules) == {"weather", "paused"}
+        assert schedules["weather"]["effective_interval_hours"] == effective_interval
+        for cid, schedule in schedules.items():
+            detail = api.client.get(collection_url(cid, "/live"), headers=api.headers).json()
+            assert schedule == {"collection_id": cid, **detail}
+        with sqlite3.connect(api.db) as db:
+            assert db.execute("SELECT last_active_at FROM users WHERE id=?", (api.user_id,)).fetchone() == (activity,)
+
+
+@pytest.mark.parametrize("status_code", [404, 405])
+def test_live_list_client_supports_legacy_backend(monkeypatch, status_code):
+    get = Mock(side_effect=DashboardApiError("legacy", status_code=status_code))
+    monkeypatch.setattr(DashboardApiClient, "_get", get)
+    assert DashboardApiClient().list_collection_live() == []
+    get.assert_called_once_with(LIVE_LIST)
+
+
+def test_library_pins_live_cards_and_runs_inline_controls(live_api, monkeypatch):
+    from frontend.library import LIBRARY_PAGE_SIZE
+
+    api = live_api
+    seed_collection(api.user_id, "old")
+    seed_collection(api.user_id, "recent", created_at=START + timedelta(hours=1))
+    for index in range(LIBRARY_PAGE_SIZE):
+        seed_collection(api.user_id, f"new-{index}", source="mock",
+                        created_at=START + timedelta(hours=index + 2))
+    assert set_live(api, "old", interval=3).status_code == 200
+    assert set_live(api, "recent", interval=1).status_code == 200
+    with sqlite3.connect(api.db) as db:
+        db.execute("UPDATE users SET last_active_at=? WHERE id=?", (int(time.time()) - 21601, api.user_id))
+    def send(method, url, *, timeout, **kwargs):
+        response = api.client.request(method, url, **kwargs)
+        return SimpleNamespace(ok=response.is_success, status_code=response.status_code, json=response.json)
+
+    session = SimpleNamespace(get=Mock(side_effect=lambda url, **kwargs: send("GET", url, **kwargs)),
+                              put=lambda url, **kwargs: send("PUT", url, **kwargs),
+                              post=lambda url, **kwargs: send("POST", url, **kwargs))
+    monkeypatch.setattr(DashboardApiClient, "_session", lambda self: session)
+
+    def script(access_token):
+        from frontend.api_client import DashboardApiClient
+        from frontend.library import render_library_list
+
+        render_library_list(DashboardApiClient(base_url="http://testserver", access_token=access_token), "stored")
+
+    _shared_read.clear()
+    app = AppTest.from_function(script, args=(api.headers["Authorization"].split()[1],), default_timeout=15)
+
+    def visible_cards():
+        return [button.key.removeprefix("stored_view_") for button in app.button
+                if button.key and button.key.startswith("stored_view_")]
+
+    try:
+        app.run()
+        assert not app.exception
+        assert visible_cards() == ["recent", "old", *[f"new-{i}" for i in range(LIBRARY_PAGE_SIZE - 1, 1, -1)]]
+        popovers = [p.proto.popover for p in app.get("popover")]
+        live_popovers = [p for p in popovers if p.label == "Cập nhật"]
+        assert len(live_popovers) == 2
+        assert all(p.icon == ":material/sync:" for p in live_popovers)
+        assert [text.value for text in app.markdown if "📌" in text.value] == [
+            ":orange-badge[📌 Tự giãn · 6 giờ]", ":orange-badge[📌 Tự giãn · 6 giờ]",
+        ]
+        assert [call.args[0] for call in session.get.call_args_list] == [
+            f"http://testserver{LIVE_LIST}", "http://testserver/api/v1/collections",
+        ]
+
+        interval = app.selectbox(key="stored_library_live_interval_old")
+        assert interval.options == ["1 giờ", "3 giờ", "6 giờ", "24 giờ"]
+        assert interval.value == 3
+        interval.set_value(24).run()
+        assert not app.exception
+        assert app.toggle(key="stored_library_live_enabled_old").value
+        assert any(text.value == ":green-badge[📌 Tự động · 24 giờ]" for text in app.markdown)
+        app.toggle(key="stored_library_live_enabled_old").set_value(False).run()
+        assert not app.exception
+        assert "old" not in visible_cards()
+        app.button(key="stored_next").click().run()
+        assert visible_cards() == ["new-0", "old"]
+        assert not app.toggle(key="stored_library_live_enabled_old").value
+        assert app.selectbox(key="stored_library_live_interval_old").value == 24
+
+        latest = END + timedelta(hours=1)
+        api.latest.return_value = latest
+        app.button(key="stored_library_refresh_old").click().run()
+        assert not app.exception
+        assert any("thêm 1 giờ dữ liệu" in notice.value for notice in app.success)
+        response = api.client.get(collection_url("old"), headers=api.headers)
+        assert response.json()["metadata"]["requested_end"] == latest.isoformat()
+    finally:
+        _shared_read.clear()
 
 
 def test_refresh_noop_and_in_place_tail_upsert(live_api):
@@ -454,27 +568,25 @@ def test_admin_live_page_filters_and_force_disable(live_api, monkeypatch):
     app.run()
 
     assert not app.exception
-    assert app.header[0].value == "Tự động cập nhật"
-    assert [(metric.label, metric.value) for metric in app.metric] == [
-        ("Đang bật", "1"), ("Đang tự giãn chu kỳ", "1"), ("Đã tắt", "1"),
+    assert app.header[0].value == "Quản lý cập nhật"
+    assert [(metric.label, metric.value) for metric in app.metric][:2] == [
+        ("Đang chạy chuẩn", "1"), ("Đang tự giãn (Backoff)", "1"),
     ]
-    for heading in ("Tài khoản", "Bộ dữ liệu", "Chu kỳ gốc", "Chu kỳ thực tế",
-                    "Trạng thái", "Cập nhật gần nhất", "Thao tác"):
-        assert f"**{heading}**" in [item.value for item in app.markdown]
-    assert {"Hà Nội", "Đà Nẵng", "Huế"} <= {item.value for item in app.markdown}
+    frame = app.dataframe[0].value
+    assert {"Hà Nội", "Đà Nẵng"} <= set(frame["Bộ dữ liệu"].tolist())
+    assert "Huế" not in set(frame["Bộ dữ liệu"].tolist())  # hidden by default 'Cần quản lý'
     assert app.text_input(key="admin_live_search").label == "Tìm kiếm"
-    assert app.selectbox(key="admin_live_status").options == ["Tất cả", "Đang bật", "Đang tự giãn", "Đã tắt"]
     assert app.selectbox(key="admin_live_interval").options == ["Tất cả", "1 giờ", "3 giờ", "6 giờ", "24 giờ"]
     app.text_input(key="admin_live_search").set_value("đà NẴNG").run()
-    app.selectbox(key="admin_live_status").select("Đang tự giãn").run()
+    app.segmented_control(key="admin_live_view_mode").set_value("Đang tự giãn").run()
     app.selectbox(key="admin_live_interval").select("24 giờ").run()
-    assert "Đà Nẵng" in [item.value for item in app.markdown]
-    assert "Hà Nội" not in [item.value for item in app.markdown]
-    button = app.button(key=f"admin_live_disable_{api.user_id}_old")
-    assert button.label == "Tắt"
+    filtered_frame = app.dataframe[0].value
+    assert filtered_frame["Bộ dữ liệu"].tolist() == ["Đà Nẵng"]
+    app.session_state["admin_live_table"] = {"selection": {"rows": [0], "columns": [], "cells": []}}
+    app.run()
+    button = app.button(key="admin_live_disable_selected")
+    assert button.label == "Tắt lịch này"
     button.click().run()
     assert not app.exception
     disable_call.assert_called_once_with(api.user_id, "old")
-    assert [(metric.label, metric.value) for metric in app.metric][-2:] == [
-        ("Đang tự giãn chu kỳ", "0"), ("Đã tắt", "2"),
-    ]
+    assert [(metric.label, metric.value) for metric in app.metric][1] == ("Đang tự giãn (Backoff)", "0")

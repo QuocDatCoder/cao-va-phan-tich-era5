@@ -57,6 +57,16 @@ class DashboardApiClient:
     def list_users(self) -> list[dict[str, Any]]:
         return self._get("/api/v1/auth/users")["users"]
 
+    def admin_create_user(self, username: str, password: str, is_admin: bool = False) -> dict[str, Any]:
+        return self._post("/api/v1/auth/users", {"username": username, "password": password, "is_admin": is_admin})
+
+    def admin_reset_password(self, user_id: int, password: str, revoke_sessions: bool = True) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/users/{user_id}/reset-password",
+                          {"password": password, "revoke_sessions": revoke_sessions})
+
+    def admin_revoke_sessions(self, user_id: int) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/users/{user_id}/revoke-sessions", {})
+
     def update_user(self, user_id: int, **access: bool) -> dict[str, Any]:
         return self._patch(f"/api/v1/auth/users/{user_id}", access)
 
@@ -75,6 +85,31 @@ class DashboardApiClient:
 
     def admin_disable_live_schedule(self, user_id: int, collection_id: str) -> dict[str, Any]:
         return self._post(f"/api/v1/auth/admin/live-schedules/{user_id}/{collection_id}/disable", {})
+
+    def admin_cancel_job(self, user_id: int, job_id: str) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/admin/jobs/{user_id}/{job_id}/cancel", {})
+
+    def admin_delete_collection(self, user_id: int, collection_id: str) -> dict[str, Any]:
+        return self._delete(f"/api/v1/auth/admin/collections/{user_id}/{collection_id}")
+
+    def admin_refresh_live_schedule(self, user_id: int, collection_id: str) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/admin/live-schedules/{user_id}/{collection_id}/refresh", {})
+
+    def admin_enable_live_schedule(self, user_id: int, collection_id: str, interval_hours: int = 1) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/admin/live-schedules/{user_id}/{collection_id}/enable",
+                          {"interval_hours": interval_hours})
+
+    def admin_disable_all_live_schedules(self, user_id: int | None = None) -> dict[str, Any]:
+        path = "/api/v1/auth/admin/live-schedules/disable-all"
+        if user_id is not None:
+            path += f"?user_id={user_id}"
+        return self._post(path, {})
+
+    def admin_cleanup_live_schedules(self) -> dict[str, Any]:
+        return self._delete("/api/v1/auth/admin/live-schedules/cleanup")
+
+    def admin_audit_logs(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self._get("/api/v1/auth/admin/audit-logs", params={"limit": limit})["logs"]
 
     def create_admin_handoff(self) -> str:
         return self._post("/api/v1/auth/admin/handoff", {})["ticket"]
@@ -148,11 +183,22 @@ class DashboardApiClient:
             raise DashboardApiError("Hãy chọn nguồn dữ liệu.")
         return self._get("/api/v1/stored/climate/catalog", params={"source": self.source, "limit": limit, "offset": offset})
 
-    def list_collections(self, search='', limit=100, offset=0):
-        return self._get('/api/v1/collections', params=dict(search=search, limit=limit, offset=offset))
+    def list_collections(self, search='', limit=100, offset=0, pinned_ids=()):
+        params = dict(search=search, limit=limit, offset=offset)
+        if pinned_ids:
+            params['pinned_ids'] = pinned_ids
+        return self._get('/api/v1/collections', params=params)
 
     def get_collection(self, collection_id):
         return self._get(f'/api/v1/collections/{collection_id}')
+
+    def list_collection_live(self) -> list[dict[str, Any]]:
+        try:
+            return self._get("/api/v1/collections/live")["schedules"]
+        except DashboardApiError as exc:
+            if exc.status_code in {404, 405}:
+                return []
+            raise
 
     def get_collection_live(self, collection_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/collections/{collection_id}/live")

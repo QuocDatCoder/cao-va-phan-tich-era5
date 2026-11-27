@@ -1,9 +1,24 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class CredentialsRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_.-]+$")
     password: str = Field(min_length=8, max_length=128)
+
+
+class AdminCreateUserRequest(CredentialsRequest):
+    is_admin: bool = False
+
+
+class AdminResetPasswordRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+    revoke_sessions: bool = True
+
+
+class AdminEnableLiveRequest(BaseModel):
+    interval_hours: Literal[1, 3, 6, 24] = 1
 
 
 class AuthResponse(BaseModel):

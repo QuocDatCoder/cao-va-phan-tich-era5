@@ -2,7 +2,7 @@
 from datetime import datetime, timezone, timedelta
 from dataclasses import replace
 from backend.app.domain.recent_weather import is_same_day_collection
-from backend.app.domain.live_refresh import LIVE_INTERVAL_HOURS, refresh_due
+from backend.app.domain.live_refresh import DEFAULT_LIVE_INTERVAL_HOURS, LIVE_INTERVAL_HOURS, refresh_due
 from backend.app.domain.sources import OPEN_METEO_BEST_MATCH_DATASET
 from backend.app.domain.time_utils import to_vietnam_time
 import json
@@ -81,6 +81,7 @@ def cached_read(api, method, *args, keep_library_pages=True):
 
 def invalidate_reads():
     st.session_state.pop('library_pages', None)
+    st.session_state.pop('live_schedules_cache', None)
     _shared_read.clear()
 
 
@@ -532,55 +533,81 @@ def _live_unavailable(exc):
     return exc.status_code in {404, 405}
 
 
-def _save_live_controls(api, collection_id, enabled_key, interval_key):
+def _save_live_controls(api, collection_id, enabled_key, interval_key, error_key):
+    previous_enabled = (st.session_state.get('live_schedules_cache', {}).get(collection_id) or {}).get('enabled')
+    new_enabled = bool(st.session_state[enabled_key])
     try:
-        api.update_collection_live(collection_id, st.session_state[enabled_key], st.session_state[interval_key])
+        updated = api.update_collection_live(collection_id, new_enabled, st.session_state[interval_key])
     except DashboardApiError as exc:
-        st.session_state['chart_live_error_' + collection_id] = (
+        st.session_state[error_key] = (
             'API tự động cập nhật chưa khả dụng.' if _live_unavailable(exc) else str(exc)
         )
+    else:
+        cache = st.session_state.setdefault('live_schedules_cache', {})
+        if isinstance(updated, dict):
+            cache[collection_id] = updated
+        else:
+            cache.pop(collection_id, None)
+        if previous_enabled is None or previous_enabled != new_enabled:
+            rev_key = f'live_popover_rev_{collection_id}'
+            st.session_state[rev_key] = st.session_state.get(rev_key, 0) + 1
+
+
+def _render_live_status(schedule):
+    if schedule.get('enabled'):
+        hours = schedule['effective_interval_hours']
+        if schedule['backed_off']:
+            st.badge(f'● Tự giãn về {hours} giờ (không hoạt động)', color='orange')
+        else:
+            st.badge(f'● Tự động · {hours} giờ', color='green')
+    elif schedule.get('disabled_reason') == 'inactive_7_days':
+        st.caption('Đã tự tắt sau 7 ngày không hoạt động — bật lại để tiếp tục.')
+    elif schedule.get('disabled_reason') == 'disabled_by_admin':
+        st.caption('Quản trị viên đã tắt tự động cập nhật cho bộ này.')
+    else:
+        st.caption('Tự động cập nhật đang tắt.')
 
 
 @st.fragment(run_every=60)
-def render_collection_live(api, collection_id, current_end, finished_at):
-    try:
-        schedule = api.get_collection_live(collection_id)
-    except DashboardApiError as exc:
-        if _live_unavailable(exc):
-            st.caption('API tự động cập nhật chưa khả dụng.')
-        else:
-            st.warning(str(exc))
-        return
+def render_collection_live(api, collection_id, current_end, finished_at, prefix='chart'):
+    live_cache = st.session_state.setdefault('live_schedules_cache', {})
+    schedule = live_cache.pop(collection_id, None)
+    if schedule is None:
+        try:
+            schedule = api.get_collection_live(collection_id)
+        except DashboardApiError as exc:
+            if _live_unavailable(exc):
+                st.caption('API tự động cập nhật chưa khả dụng.')
+            else:
+                st.warning(str(exc))
+            return
 
-    enabled_key = 'chart_live_enabled_' + collection_id
-    interval_key = 'chart_live_interval_' + collection_id
+    enabled_key = f'{prefix}_live_enabled_' + collection_id
+    interval_key = f'{prefix}_live_interval_' + collection_id
+    error_key = f'{prefix}_live_error_' + collection_id
+    notice_key = f'{prefix}_live_notice_' + collection_id
+    refresh_key = f'{prefix}_refresh_' + collection_id
     st.session_state[enabled_key] = schedule['enabled']
     st.session_state[interval_key] = schedule['requested_interval_hours']
-    callback = dict(on_change=_save_live_controls, args=(api, collection_id, enabled_key, interval_key))
-    with st.container(border=True, key='chart_live_controls', gap='small'):
-        toggle, interval, action = st.columns((1.25, 1, 1), vertical_alignment='center')
-        toggle.toggle('Tự động cập nhật', key=enabled_key, **callback)
-        interval.selectbox('Chu kỳ cập nhật', LIVE_INTERVAL_HOURS, format_func=lambda n: f'{n} giờ',
-                           label_visibility='collapsed', key=interval_key, **callback)
-        manual = action.button('Cập nhật ngay', icon=':material/sync:', key='chart_refresh_' + collection_id)
-        if schedule['enabled']:
-            hours = schedule['effective_interval_hours']
-            if schedule['backed_off']:
-                st.badge(f'● Tự giãn về {hours} giờ (không hoạt động)', color='orange')
-            else:
-                st.badge(f'● Tự động · {hours} giờ', color='green')
-        elif schedule['disabled_reason'] == 'inactive_7_days':
-            st.caption('Đã tự tắt sau 7 ngày không hoạt động — bật lại để tiếp tục.')
-        elif schedule['disabled_reason'] == 'disabled_by_admin':
-            st.caption('Quản trị viên đã tắt tự động cập nhật cho bộ này.')
-        if notice := st.session_state.pop('chart_live_notice_' + collection_id, None):
+    callback = dict(on_change=_save_live_controls, args=(api, collection_id, enabled_key, interval_key, error_key))
+    with st.container(border=True, key=f'{prefix}_live_controls', gap='xsmall'):
+        with st.container(horizontal=True, horizontal_alignment='distribute',
+                          vertical_alignment='center', gap='small', wrap=True):
+            with st.container(horizontal=True, vertical_alignment='center', gap='small', width='content'):
+                st.toggle('Tự động cập nhật', key=enabled_key, **callback)
+                _render_live_status(schedule)
+            with st.container(horizontal=True, vertical_alignment='center', gap='small', width='content'):
+                st.selectbox('Chu kỳ cập nhật', LIVE_INTERVAL_HOURS, format_func=lambda n: f'{n} giờ',
+                             label_visibility='collapsed', key=interval_key, width=110, **callback)
+                manual = st.button('Cập nhật ngay', icon=':material/sync:', key=refresh_key)
+        if notice := st.session_state.pop(notice_key, None):
             st.success(notice)
-        if error := st.session_state.pop('chart_live_error_' + collection_id, None):
+        if error := st.session_state.pop(error_key, None):
             st.warning(error)
             return
 
-        # A background refresh can land while this session has a cached chart.
-        stamp_key = 'chart_live_seen_' + collection_id
+        # A background refresh can land while this session has a cached view.
+        stamp_key = f'{prefix}_live_seen_' + collection_id
         last = schedule['last_refreshed_at']
         seen = st.session_state.get(stamp_key)
         changed = bool(last and last != seen and (
@@ -600,9 +627,9 @@ def render_collection_live(api, collection_id, current_end, finished_at):
         advanced = to_vietnam_time(datetime.fromisoformat(end)) > to_vietnam_time(datetime.fromisoformat(current_end))
         if result['status'] == 'updated' or advanced or changed:
             invalidate_reads()
-            st.session_state['chart_live_update'] = (collection_id, end)
+            st.session_state[f'{prefix}_live_update'] = (collection_id, end)
             if manual:
-                st.session_state['chart_live_notice_' + collection_id] = f"Đã cập nhật · thêm {result['added_hours']} giờ dữ liệu."
+                st.session_state[notice_key] = f"Đã cập nhật · thêm {result['added_hours']} giờ dữ liệu."
             st.rerun(scope='app')
         elif manual:
             st.success('Bộ dữ liệu đã được cập nhật đến giờ mới nhất.')
@@ -611,7 +638,8 @@ def render_collection_live(api, collection_id, current_end, finished_at):
 def render_saved(client, charts=False):
     from frontend.dashboard import _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
     api=client('land')  # Collection ID, rather than this client's default source, controls reads.
-    live_update = st.session_state.pop('chart_live_update', None) if charts else None
+    prefix='chart' if charts else 'stored'
+    live_update = st.session_state.pop(f'{prefix}_live_update', None)
     if live_update:
         api = replace(api, track_activity=False)
     prefix='chart' if charts else 'stored'
@@ -739,9 +767,9 @@ def render_saved(client, charts=False):
         m,s=entry['metadata'],entry['summary']
         if live_update and live_update[0] == selected:
             end = to_vietnam_time(datetime.fromisoformat(live_update[1]))
-            st.session_state['chart_range_end_' + selected] = end.date()
-            st.session_state['chart_hour_end_' + selected] = end.time().replace(tzinfo=None)
-            st.session_state['chart_open_requested'] = selected
+            st.session_state[f'{prefix}_range_end_' + selected] = end.date()
+            st.session_state[f'{prefix}_hour_end_' + selected] = end.time().replace(tzinfo=None)
+            st.session_state[f'{prefix}_open_requested'] = selected
         with st.container(horizontal=True):
             st.button('Quay lại danh sách', key=prefix+'_back_to_list', type='primary',
                       icon=':material/arrow_back:', on_click=back_to_library, args=(prefix,))
@@ -762,9 +790,9 @@ def render_saved(client, charts=False):
                 st.caption(f'Dữ liệu mô hình GFS · Cập nhật lúc {completed:%H:%M · %d/%m/%Y} (UTC+7)')
             else:
                 st.caption('Dữ liệu mô hình GFS')
+        if m['source'] == 'open_meteo':
+            render_collection_live(api, selected, m['requested_end'], entry.get('finished_at'), prefix=prefix)
         if charts:
-            if m['source'] == 'open_meteo':
-                render_collection_live(api, selected, m['requested_end'], entry.get('finished_at'))
             render_collection_quality(api, prefix, entry)
         result_area = st.container()
         if not charts:
@@ -1046,6 +1074,38 @@ def set_library_page(prefix, page):
     st.session_state[prefix+'_page_scroll'] = True
 
 
+def _render_library_live(api, prefix, cid, schedule):
+    enabled_key = f'{prefix}_library_live_enabled_{cid}'
+    interval_key = f'{prefix}_library_live_interval_{cid}'
+    error_key = f'{prefix}_library_live_error_{cid}'
+    notice_key = f'{prefix}_library_live_notice_{cid}'
+    pop_rev = st.session_state.get(f'live_popover_rev_{cid}', 0)
+    with st.popover('Cập nhật', icon=':material/sync:', key=f'{prefix}_live_popover_{cid}_{pop_rev}'):
+        st.session_state[enabled_key] = schedule.get('enabled') is True
+        st.session_state[interval_key] = schedule.get('requested_interval_hours', DEFAULT_LIVE_INTERVAL_HOURS)
+        callback = dict(on_change=_save_live_controls, args=(api, cid, enabled_key, interval_key, error_key))
+        st.toggle('Tự động cập nhật', key=enabled_key, **callback)
+        st.selectbox('Chu kỳ cập nhật', LIVE_INTERVAL_HOURS, format_func=lambda n: f'{n} giờ',
+                     key=interval_key, **callback)
+        _render_live_status(schedule)
+        if error := st.session_state.pop(error_key, None):
+            st.warning(error)
+        if notice := st.session_state.pop(notice_key, None):
+            st.success(notice)
+        if st.button('Cập nhật ngay', icon=':material/sync:', key=f'{prefix}_library_refresh_{cid}'):
+            try:
+                result = api.refresh_collection(cid)
+            except DashboardApiError as exc:
+                st.warning('API cập nhật dữ liệu chưa khả dụng.' if _live_unavailable(exc) else str(exc))
+            else:
+                invalidate_reads()
+                st.session_state[notice_key] = (
+                    f"Đã cập nhật · thêm {result['added_hours']} giờ dữ liệu."
+                    if result['status'] == 'updated' else 'Bộ dữ liệu đã được cập nhật đến giờ mới nhất.'
+                )
+                st.rerun(scope='app')
+
+
 @st.fragment
 def render_library_list(api, prefix):
     if st.session_state.pop('collection_delete_refresh_pending', False):
@@ -1061,8 +1121,25 @@ def render_library_list(api, prefix):
         notify_error(f"Lỗi khi xóa: {error}")
     page=st.session_state.get(prefix+'_page',0)
     search_query = st.session_state.get(prefix+'_search','').strip()
-    entries = cached_read(api, 'list_collections', search_query, LIBRARY_PAGE_SIZE + 1,
-                          page * LIBRARY_PAGE_SIZE)['collections']
+    live_cache = st.session_state.get('live_schedules_cache')
+    if live_cache is None:
+        try:
+            schedules = {schedule['collection_id']: schedule for schedule in api.list_collection_live()}
+        except DashboardApiError:
+            schedules = {}
+        st.session_state['live_schedules_cache'] = dict(schedules)
+    else:
+        schedules = dict(live_cache)
+    pinned_ids = sorted(
+        cid for cid, schedule in schedules.items()
+        if schedule.get('enabled') is True
+        or schedule.get('disabled_reason') in {'inactive_7_days', 'disabled_by_admin'}
+    )
+    list_args = (search_query, LIBRARY_PAGE_SIZE + 1, page * LIBRARY_PAGE_SIZE)
+    # Apply the same pin order before pagination so older live collections reach page one.
+    if pinned_ids:
+        list_args += (pinned_ids,)
+    entries = cached_read(api, 'list_collections', *list_args)['collections']
     has_next = len(entries) > LIBRARY_PAGE_SIZE
     entries = entries[:LIBRARY_PAGE_SIZE]
     if st.session_state.pop(prefix+'_page_scroll', False):
@@ -1082,7 +1159,11 @@ def render_library_list(api, prefix):
         if page:
             st.button('Về trang đầu', on_click=set_library_page, args=(prefix, 0))
         return False
+    pinned = set(pinned_ids)
+    entries.sort(key=lambda item: item['id'] not in pinned)
     for item in entries:
+        cid = item['id']
+        schedule = schedules.get(cid, {})
         meta,summary=item['metadata'],item['summary']
         with st.container(border=True):
             status = STATUS.get(item['status'], item['status'])
@@ -1090,7 +1171,18 @@ def render_library_list(api, prefix):
             with st.container(horizontal=True, horizontal_alignment='distribute',
                               vertical_alignment='center', gap='small', wrap=True):
                 st.markdown(f"**{collection_title(meta)}**")
-                st.badge(status, color=color)
+                with st.container(horizontal=True, horizontal_alignment='right', gap='small', width='content'):
+                    if cid in pinned:
+                        if schedule.get('enabled') is True:
+                            backed_off = schedule['backed_off']
+                            live_label = 'Tự giãn' if backed_off else 'Tự động'
+                            hours = schedule['effective_interval_hours']
+                            st.badge(f'📌 {live_label} · {hours} giờ', color='orange' if backed_off else 'green')
+                        elif schedule.get('disabled_reason') == 'inactive_7_days':
+                            st.badge('📌 Đã tắt (7 ngày)', color='orange')
+                        elif schedule.get('disabled_reason') == 'disabled_by_admin':
+                            st.badge('📌 Admin đã tắt', color='red')
+                    st.badge(status, color=color)
 
             local = timezone(timedelta(hours=7))
             start, end = (datetime.fromisoformat(meta[k]).astimezone(local)
@@ -1106,25 +1198,29 @@ def render_library_list(api, prefix):
                 metadata.append(f"Đã lưu {summary.get('available_count', 0)}/{summary.get('expected_count', '—')} giá trị chính")
             collected_at = datetime.fromisoformat(item['created_at']).astimezone(local)
             st.caption(' · '.join(metadata) + f'  \nThu thập lúc: {collected_at:%d/%m/%Y %H:%M} (UTC+7)')
-            with st.container(horizontal=True):
-                if st.button('Xem dữ liệu', icon=':material/table_view:', key=prefix+'_view_'+item['id'],
-                             on_click=open_details, args=(item['id'],),
-                             type='primary' if prefix == 'stored' else 'secondary'):
-                    st.rerun()
-                if st.button('Vẽ biểu đồ', icon=':material/bar_chart:', key=prefix+'_draw_'+item['id'],
-                             on_click=open_chart_options, args=(item['id'],), disabled=not item['grids'],
-                             help='Bộ dữ liệu chưa có điểm lưới để vẽ.' if not item['grids'] else None,
-                             type='primary' if prefix == 'chart' else 'secondary'):
-                    st.rerun()
-                if prefix == 'stored':
-                    with st.popover('Xóa', key=prefix+'_delete_popover_'+item['id'], icon=':material/delete:',
-                                    disabled=item['status'] in {'queued', 'running', 'cancelling'},
-                                    type='secondary'):
-                        st.write('Xóa bộ dữ liệu này và lịch sử tác vụ. Thao tác không thể hoàn tác.')
-                        st.caption(label(item))
-                        st.caption('File nguồn và cache dùng chung được giữ lại.')
-                        st.button('Xác nhận xóa', key=prefix+'_delete_confirm_'+item['id'], type='primary',
-                                  on_click=delete_confirmed, args=(api, item['id'], prefix))
+            with st.container(horizontal=True, horizontal_alignment='distribute',
+                              vertical_alignment='center', gap='small', wrap=True):
+                with st.container(horizontal=True, gap='small', width='content'):
+                    if st.button('Xem dữ liệu', icon=':material/table_view:', key=prefix+'_view_'+item['id'],
+                                 on_click=open_details, args=(item['id'],),
+                                 type='primary' if prefix == 'stored' else 'secondary'):
+                        st.rerun()
+                    if st.button('Vẽ biểu đồ', icon=':material/bar_chart:', key=prefix+'_draw_'+item['id'],
+                                 on_click=open_chart_options, args=(item['id'],), disabled=not item['grids'],
+                                 help='Bộ dữ liệu chưa có điểm lưới để vẽ.' if not item['grids'] else None,
+                                 type='primary' if prefix == 'chart' else 'secondary'):
+                        st.rerun()
+                    if prefix == 'stored':
+                        with st.popover('Xóa', key=prefix+'_delete_popover_'+item['id'], icon=':material/delete:',
+                                        disabled=item['status'] in {'queued', 'running', 'cancelling'},
+                                        type='secondary'):
+                            st.write('Xóa bộ dữ liệu này và lịch sử tác vụ. Thao tác không thể hoàn tác.')
+                            st.caption(label(item))
+                            st.caption('File nguồn và cache dùng chung được giữ lại.')
+                            st.button('Xác nhận xóa', key=prefix+'_delete_confirm_'+item['id'], type='primary',
+                                      on_click=delete_confirmed, args=(api, item['id'], prefix))
+                if meta['source'] == 'open_meteo':
+                    _render_library_live(api, prefix, cid, schedule)
     if page > 0 or has_next:
         with st.container(horizontal=True, vertical_alignment='center', gap='small'):
             st.button('Trang trước', disabled=page==0, key=prefix+'_prev', icon=':material/chevron_left:',

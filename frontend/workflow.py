@@ -48,6 +48,16 @@ def render_dashboard():
     stage = st.empty()
     if guest and (st.session_state['workflow_section'] != HOME_SECTION
                   or st.session_state.get('workflow_login_requested')):
+        restoring_f5 = (
+            not st.session_state.get('auth_restore_ready')
+            and st.session_state.get('rendered_workflow_section') is None
+            and not st.session_state.get('workflow_login_requested')
+            and st.query_params.get('view') in {'Thu thập', 'Dữ liệu đã lưu', 'Biểu đồ'}
+        )
+        if restoring_f5:
+            with stage.container(key='era_auth_restoring'):
+                st.caption('Đang khôi phục phiên đăng nhập…')
+            return
         with stage.container(key='era_auth_gate'):
             render_login_gate(client(None), on_back=_return_to_guest_home)
         return

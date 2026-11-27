@@ -1,7 +1,9 @@
+from collections import Counter
 from contextlib import closing, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import sqlite3
+import time
 
 from backend.app.domain.live_refresh import (
     DEFAULT_LIVE_INTERVAL_HOURS,
@@ -72,6 +74,18 @@ class AuthRepository:
                     expires_at INTEGER NOT NULL,
                     consumed_at INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS admin_audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    actor_user_id INTEGER,
+                    actor_username TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_admin_audit_logs_created_at
+                    ON admin_audit_logs(created_at DESC);
                 CREATE TABLE IF NOT EXISTS collection_live_schedules (
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     collection_id TEXT NOT NULL,
@@ -105,12 +119,12 @@ class AuthRepository:
             with connection:
                 yield connection
 
-    def create_user(self, username: str, password_hash: str, created_at: int) -> int:
+    def create_user(self, username: str, password_hash: str, created_at: int, *, is_admin: bool = False) -> int:
         try:
             with self._connect() as connection:
                 cursor = connection.execute(
-                    "INSERT INTO users(username, password_hash, created_at) VALUES (?, ?, ?)",
-                    (username, password_hash, created_at),
+                    "INSERT INTO users(username, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?)",
+                    (username, password_hash, created_at, is_admin),
                 )
                 return int(cursor.lastrowid)
         except sqlite3.IntegrityError as exc:
@@ -152,9 +166,12 @@ class AuthRepository:
             "enabled": False, "disabled_reason": None, "last_refreshed_at": None,
         }, now)
 
-    def update_live_schedule(self, user_id, collection_id, place_name, enabled, interval, now):
+    def update_live_schedule(self, user_id, collection_id, place_name, enabled, interval, now, *, record_activity=True):
         with self._connect() as connection:
-            self._record_activity(connection, user_id, now)
+            if record_activity:
+                self._record_activity(connection, user_id, now)
+            else:
+                self._expire_live(connection, now, user_id)
             if enabled and connection.execute(
                 """SELECT COUNT(*) FROM collection_live_schedules
                    WHERE user_id = ? AND enabled = 1 AND collection_id != ?""",
@@ -175,15 +192,67 @@ class AuthRepository:
             )
         return self.get_live_schedule(user_id, collection_id, now)
 
-    def list_live_schedules(self, now, *, active_only=False):
+    def enable_live_schedule(self, user_id: int, collection_id: str, place_name: str,
+                             interval_hours: int, now: int) -> dict:
+        return self.update_live_schedule(
+            user_id, collection_id, place_name, True, interval_hours, now, record_activity=False,
+        )
+
+    def list_live_schedules(self, now, *, active_only=False, user_id=None):
+        filters = []
+        params = ()
+        if active_only:
+            filters.append("schedules.enabled = 1 AND users.is_active = 1")
+        if user_id is not None:
+            filters.append("schedules.user_id = ?")
+            params = (user_id,)
+        where = " WHERE " + " AND ".join(filters) if filters else ""
         with self._connect() as connection:
-            self._expire_live(connection, now)
-            where = "WHERE schedules.enabled = 1 AND users.is_active = 1" if active_only else ""
+            self._expire_live(connection, now, user_id)
             rows = connection.execute(
-                _LIVE_ROWS + where + " ORDER BY users.username, schedules.collection_id",
+                _LIVE_ROWS + where + " ORDER BY users.username, schedules.collection_id", params,
             ).fetchall()
+        if user_id is not None:
+            return [{"collection_id": row["collection_id"], **_live_state(row, now)} for row in rows]
+        active_counts = Counter(row["user_id"] for row in rows if row["enabled"])
         fields = ("username", "user_id", "collection_id", "place_name")
-        return [{**{field: row[field] for field in fields}, **_live_state(row, now)} for row in rows]
+        result = []
+        for row in rows:
+            state = _live_state(row, now)
+            next_refresh = None
+            if state["enabled"]:
+                last_refresh = state["last_refreshed_at"]
+                if last_refresh is None:
+                    next_refresh = datetime.fromtimestamp(now, UTC)
+                else:
+                    last = datetime.fromisoformat(last_refresh)
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=UTC)
+                    next_refresh = last.astimezone(UTC) + timedelta(hours=state["effective_interval_hours"])
+            result.append({
+                **{field: row[field] for field in fields}, **state,
+                "idle_seconds": max(0, int(now - row["activity_at"])),
+                "last_active_at": int(row["activity_at"]),
+                "user_is_active": bool(row["is_active"]),
+                "next_refresh_at": next_refresh.isoformat() if next_refresh is not None else None,
+                "user_active_live_count": active_counts[row["user_id"]],
+            })
+        return result
+
+    def disable_all_live_schedules(self, now: int, user_id: int | None = None) -> int:
+        with self._connect() as connection:
+            return connection.execute(
+                """UPDATE collection_live_schedules
+                   SET enabled = 0, disabled_reason = 'disabled_by_admin', updated_at = ?
+                   WHERE enabled = 1 AND (? IS NULL OR user_id = ?)""",
+                (now, user_id, user_id),
+            ).rowcount
+
+    def cleanup_disabled_live_schedules(self) -> int:
+        with self._connect() as connection:
+            return connection.execute(
+                "DELETE FROM collection_live_schedules WHERE enabled = 0 AND disabled_reason IS NULL"
+            ).rowcount
 
     def disable_live_schedule(self, user_id, collection_id, now):
         with self._connect() as connection:
@@ -241,8 +310,58 @@ class AuthRepository:
     def list_users(self) -> list[dict]:
         with self._connect() as connection:
             return [dict(row) for row in connection.execute(
-                "SELECT id, username, is_admin, is_active, created_at, last_login_at FROM users ORDER BY id"
+                "SELECT id, username, is_admin, is_active, created_at, last_login_at, last_active_at FROM users ORDER BY id"
             )]
+
+    def record_audit_log(self, actor_user_id: int | None, actor_username: str, action: str,
+                         target_type: str, target_id: str, detail: str = "", now: int | None = None) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO admin_audit_logs
+                   (actor_user_id, actor_username, action, target_type, target_id, detail, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (actor_user_id, actor_username, action, target_type, target_id, detail,
+                 int(time.time()) if now is None else now),
+            )
+
+    def list_audit_logs(self, limit: int = 50) -> list[dict]:
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM admin_audit_logs ORDER BY created_at DESC, id DESC LIMIT ?", (max(0, limit),),
+            )]
+
+    @staticmethod
+    def _revoke_user_sessions(connection, user_id: int, now: int) -> int:
+        return connection.execute(
+            "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (now, user_id),
+        ).rowcount
+
+    def revoke_user_sessions(self, user_id: int, now: int) -> int:
+        with self._connect() as connection:
+            return self._revoke_user_sessions(connection, user_id, now)
+
+    def reset_user_password(self, user_id: int, password_hash: str, now: int, *, revoke_sessions: bool) -> int | None:
+        with self._connect() as connection:
+            result = connection.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+            if not result.rowcount:
+                return None
+            return self._revoke_user_sessions(connection, user_id, now) if revoke_sessions else 0
+
+    def count_active_sessions(self, now: int, user_id: int | None = None) -> int:
+        with self._connect() as connection:
+            return connection.execute(
+                """SELECT COUNT(*) FROM auth_sessions
+                   WHERE revoked_at IS NULL AND expires_at > ? AND (? IS NULL OR user_id = ?)""",
+                (now, user_id, user_id),
+            ).fetchone()[0]
+
+    def active_sessions_by_user(self, now: int) -> dict[int, int]:
+        with self._connect() as connection:
+            return dict(connection.execute(
+                """SELECT user_id, COUNT(*) FROM auth_sessions
+                   WHERE revoked_at IS NULL AND expires_at > ? GROUP BY user_id""", (now,),
+            ).fetchall())
 
     def set_user_access(self, user_id: int, *, is_admin: bool | None = None, is_active: bool | None = None) -> bool:
         fields, values = [], []
@@ -294,14 +413,18 @@ class AuthRepository:
         return [int(row["id"]) for row in rows]
 
     def create_session(
-        self, token_hash: str, user_id: int, created_at: int, expires_at: int, *, record_login: bool = False
-    ) -> None:
+        self, token_hash: str, user_id: int, created_at: int, expires_at: int, *,
+        record_login: bool = False, verified_password_hash: str | None = None,
+    ) -> bool:
         with self._connect() as connection:
-            connection.execute(
+            inserted = connection.execute(
                 """INSERT INTO auth_sessions(token_hash, user_id, created_at, expires_at)
-                   VALUES (?, ?, ?, ?)""",
-                (token_hash, user_id, created_at, expires_at),
+                   SELECT ?, id, ?, ? FROM users WHERE id = ? AND is_active = 1
+                     AND (? IS NULL OR password_hash = ?)""",
+                (token_hash, created_at, expires_at, user_id, verified_password_hash, verified_password_hash),
             )
+            if not inserted.rowcount:
+                return False
             if record_login:
                 connection.execute(
                     """UPDATE users SET last_login_at = ?
@@ -309,6 +432,7 @@ class AuthRepository:
                     (created_at, user_id, created_at),
                 )
             self._record_activity(connection, user_id, created_at)
+            return True
 
     def get_user_for_session(self, token_hash: str, now: int) -> dict | None:
         with self._connect() as connection:

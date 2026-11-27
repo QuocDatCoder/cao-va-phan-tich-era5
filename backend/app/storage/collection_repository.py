@@ -161,7 +161,7 @@ class CollectionRepository(ClimateRepository):
         return dict(collection_id=collection_id, job_id=job_id, deleted=deleted,
                     source_files_preserved=True)
 
-    def list(self, search='', limit=100, offset=0):
+    def list(self, search='', limit=100, offset=0, *, pinned_ids=None):
         if not self._db_path.exists():
             return []
         with self._connect() as c:
@@ -169,7 +169,11 @@ class CollectionRepository(ClimateRepository):
                 return []
             # One connection and batched related rows, rather than reopening SQLite per card.
             rows = c.execute('SELECT * FROM collections ORDER BY created_at DESC,id').fetchall()
-            rows = [r for r in rows if search.casefold() in (r['metadata']+' '+r['created_at']).casefold()][offset:offset+limit]
+            rows = [r for r in rows if search.casefold() in (r['metadata']+' '+r['created_at']).casefold()]
+            if pinned_ids:
+                pins = set(pinned_ids)
+                rows.sort(key=lambda row: row['id'] not in pins)
+            rows = rows[offset:offset + limit]
             result = []
             for row in rows:
                 entry = dict(row)

@@ -19,6 +19,25 @@ from backend.app.storage.collection_repository import CollectionRepository, stam
 
 logger = logging.getLogger(__name__)
 _LOCKS = tuple(Lock() for _ in range(64))
+_SCHEDULER_INTERVAL_SECONDS = 60
+_SCHEDULER_JOB_ID = "open-meteo-live-refresh"
+_SCHEDULER_LOCK = Lock()
+_SCHEDULER_STATE = dict(started_at=None, last_tick_at=None, last_refreshed_count=0, last_error=None)
+_SCHEDULER_REF: BackgroundScheduler | None = None
+
+
+def get_scheduler_health() -> dict:
+    with _SCHEDULER_LOCK:
+        scheduler = _SCHEDULER_REF
+        running = scheduler is not None and scheduler.running
+        job = scheduler.get_job(_SCHEDULER_JOB_ID) if running else None
+        next_run = job.next_run_time if job else None
+        return {
+            **_SCHEDULER_STATE,
+            "running": running,
+            "interval_seconds": _SCHEDULER_INTERVAL_SECONDS,
+            "next_run_at": next_run.astimezone(UTC).isoformat() if next_run else None,
+        }
 
 
 def collection_lock(user_id, collection_id):
@@ -29,7 +48,7 @@ def require_open_meteo(repository, collection_id):
     entry = repository.get(collection_id)
     if entry is None:
         raise LookupError("Không tìm thấy bộ dữ liệu.")
-    if entry["metadata"]["source"] != "open_meteo":
+    if entry["metadata"].get("source") != "open_meteo":
         raise ValueError("Tự động cập nhật chỉ hỗ trợ bộ dữ liệu Open-Meteo.")
     return entry
 
@@ -103,22 +122,47 @@ def _read_missing_hours(user_id, entry, hours, latest):
 
 def run_live_schedules(schedules, *, now=None):
     checked_at = int(time.time()) if now is None else now
-    for row in schedules.list_live_schedules(checked_at, active_only=True):
-        if not refresh_due(row, checked_at):
-            continue
-        user_id, collection_id = row["user_id"], row["collection_id"]
-        try:
-            refresh_collection(schedules, user_id, collection_id, automatic=True, now=now)
-        except LookupError:
-            # A collection may have been removed independently of the schedule.
-            schedules.delete_live_schedule(user_id, collection_id)
-        except Exception:
-            logger.exception("Live refresh failed for account %s, collection %s", user_id, collection_id)
+    last_tick = datetime.fromtimestamp(time.time() if now is None else now, UTC).isoformat()
+    with _SCHEDULER_LOCK:
+        _SCHEDULER_STATE["last_tick_at"] = last_tick
+    refreshed_count = 0
+    last_error = None
+    try:
+        for row in schedules.list_live_schedules(checked_at, active_only=True):
+            if not refresh_due(row, checked_at):
+                continue
+            user_id, collection_id = row["user_id"], row["collection_id"]
+            try:
+                result = refresh_collection(schedules, user_id, collection_id, automatic=True, now=now)
+                refreshed_count += result["status"] != "not_due"
+            except LookupError as exc:
+                # A collection may have been removed independently of the schedule.
+                last_error = str(exc) or type(exc).__name__
+                schedules.delete_live_schedule(user_id, collection_id)
+            except Exception as exc:
+                last_error = str(exc) or type(exc).__name__
+                logger.exception("Live refresh failed for account %s, collection %s", user_id, collection_id)
+    except Exception as exc:
+        last_error = str(exc) or type(exc).__name__
+        raise
+    finally:
+        with _SCHEDULER_LOCK:
+            if _SCHEDULER_STATE["last_tick_at"] == last_tick:
+                _SCHEDULER_STATE.update(last_refreshed_count=refreshed_count, last_error=last_error)
 
 
 def start_live_scheduler(schedules):
+    global _SCHEDULER_REF
     scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(run_live_schedules, "interval", minutes=1, args=[schedules],
-                      id="open-meteo-live-refresh", max_instances=1, coalesce=True)
-    scheduler.start()
+    scheduler.add_job(run_live_schedules, "interval", seconds=_SCHEDULER_INTERVAL_SECONDS,
+                      args=[schedules], id=_SCHEDULER_JOB_ID, max_instances=1, coalesce=True)
+    with _SCHEDULER_LOCK:
+        try:
+            scheduler.start()
+        except Exception as exc:
+            _SCHEDULER_STATE["last_error"] = str(exc) or type(exc).__name__
+            raise
+        _SCHEDULER_REF = scheduler
+        _SCHEDULER_STATE.update(started_at=datetime.now(UTC).isoformat(), last_tick_at=None,
+                                last_refreshed_count=0, last_error=None)
     return scheduler

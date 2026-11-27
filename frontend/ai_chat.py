@@ -11,7 +11,7 @@ import streamlit as st
 from frontend.api_client import DashboardApiError
 from frontend.notifications import notify_error
 from frontend.chat_history import sync_history
-from frontend.chat_actions import applied_view,execute_action
+from frontend.chat_actions import applied_comparison, applied_view, execute_action
 from backend.app.domain.ui_actions import UIAction,VIEW_LABELS
 from frontend.components.charts import variable_label
 from frontend.components.weather_pet import PET_CSS, themed_pet_art
@@ -41,6 +41,47 @@ def _toggle():
 def _close():
     # Closing is idempotent, including when a preceding widget rerun is pending.
     st.session_state['ai_chat_open']=False
+
+
+def _toggle_expand():
+    st.session_state['ai_chat_expanded'] = not st.session_state.get('ai_chat_expanded', False)
+
+
+def contextual_quick_prompts(context, selected_name=None, comparison=None):
+    """Return short (label, prompt) quick-action pairs tailored to the active view."""
+    if comparison:
+        return [
+            ('Phân tích so sánh A & B', 'Phân tích và nhận xét đối chiếu hai bộ dữ liệu A và B đang so sánh.'),
+            ('Đối chiếu cực trị & độ phủ', 'So sánh cực trị và kiểm tra độ phủ của hai bộ dữ liệu đang xem.'),
+        ]
+    if context and context.get('parameters'):
+        return [
+            ('Phân tích bộ đang xem', 'Phân tích chuyên gia biểu đồ đang xem. Tìm đặc điểm nổi bật và kiểm tra độ phủ.'),
+            ('Tìm cực trị', 'Tìm các mốc cực trị (cao nhất, thấp nhất hoặc mưa lớn nhất) trong bộ dữ liệu đang xem.'),
+            ('Kiểm tra dữ liệu thiếu', 'Kiểm tra chất lượng, độ phủ và các khoảng giờ còn thiếu của bộ dữ liệu đang xem.'),
+        ]
+    if selected_name:
+        return [
+            ('Tóm tắt bộ đã chọn', f'Tóm tắt tổng quan và độ phủ của bộ dữ liệu {selected_name}.'),
+            ('Kiểm tra cảnh báo', f'Kiểm tra các cảnh báo chất lượng của bộ dữ liệu {selected_name}.'),
+        ]
+    return [
+        ('Kho có gì?', 'Kho đang có những bộ dữ liệu nào?'),
+        ('Hướng dẫn vẽ biểu đồ', 'Làm sao vẽ biểu đồ?'),
+        ('ERA giúp được gì?', 'Ứng dụng hỗ trợ hỏi những gì?'),
+    ]
+
+
+def format_chat_export(messages):
+    """Format chat messages into a clean Markdown document for report use."""
+    lines = ['# Hội thoại với Trợ lý ERA', '']
+    for msg in messages:
+        speaker = 'Người dùng' if msg.get('role') == 'user' else 'Trợ lý ERA'
+        content = (msg.get('content') or '').strip()
+        lines.append(f'## {speaker}')
+        lines.append(content)
+        lines.append('')
+    return '\n'.join(lines).strip() + '\n'
 
 
 def _select(cid,name='Bộ đang xem'):
@@ -93,6 +134,15 @@ def _show_older():
     st.session_state['ai_chat_visible_limit']=st.session_state.get('ai_chat_visible_limit',40)+40
 
 
+def _run_comparison_chat(api, payload, fallback):
+    try:
+        return api.agent_chat(payload)
+    except DashboardApiError as exc:
+        if exc.status_code == 422 and fallback:
+            return fallback
+        raise
+
+
 def _submit(api, text):
     if (not st.session_state.get('ai_chat_history_loaded') or not isinstance(text,str)
             or not text.strip() or len(text)>2000 or st.session_state.get('ai_chat_pending')):
@@ -100,12 +150,19 @@ def _submit(api, text):
     messages = st.session_state['ai_chat_messages']
     history = [dict(role=m['role'],content=m['content'][:2000]) for m in messages[-8:]]
     context=applied_view(st.session_state,st.query_params)
+    comparison=applied_comparison(st.session_state)
     payload = dict(message=text.strip(),history=history,view_context=context,
                    selected_collection_id=st.session_state.get('ai_chat_selected') or (context['collection_id'] if context else None))
+    if comparison:
+        payload['comparison_context'] = comparison['context']
     messages.append(dict(role='user',content=text.strip()))
     # Preserve history until the user clears it; only the model context is bounded.
     st.session_state['ai_chat_messages'] = messages
-    st.session_state['ai_chat_pending'] = (_workers().submit(api.agent_chat,payload),monotonic())
+    if comparison and comparison.get('fallback_result'):
+        job = _workers().submit(_run_comparison_chat, api, payload, comparison['fallback_result'])
+    else:
+        job = _workers().submit(api.agent_chat, payload)
+    st.session_state['ai_chat_pending'] = (job, monotonic())
 
 
 def _collect():
@@ -157,9 +214,11 @@ def _evidence(api,result, index):
     last = evidence[-1]['result']
     p = last.get('provenance') or {}
     if p:
-        st.caption(f"{p.get('timezone')}")
+        tz_text = p.get('timezone') or 'UTC+7'
         if p.get('start'):
-            st.caption(f"{_date_label(p['start'])} → {_date_label(p['end'])}")
+            st.caption(f"{_date_label(p['start'])} → {_date_label(p['end'])} · {tz_text}")
+        else:
+            st.caption(f"{tz_text}")
     data = last.get('data')
     if evidence[-1]['tool']=='prepare_collection' and last['status']=='ok':
         from frontend.era_collection import render_collection_draft
@@ -222,23 +281,32 @@ def _evidence(api,result, index):
 
 
 def _actions(api,result,index):
-    for n,raw in enumerate(result.get('actions',[])):
+    valid_actions=[]
+    for raw in result.get('actions',[]):
         try:
-            action=UIAction.model_validate(raw)
+            valid_actions.append(UIAction.model_validate(raw))
         except ValueError:
             continue
-        label={'find_data':'Mở kết quả trong Kho dữ liệu','open_data':'Xem dữ liệu','open_chart':'Mở trong Biểu đồ'}[action.type]
-        if action.parameters and result.get('evidence') and result['evidence'][-1].get('tool')=='prepare_view':
-            p=action.parameters
-            st.caption(f"{variable_label(p.variable)} · {VIEW_LABELS[action.view_kind]} · "+
+    if valid_actions:
+        first=valid_actions[0]
+        if first.parameters and result.get('evidence') and result['evidence'][-1].get('tool')=='prepare_view':
+            p=first.parameters
+            st.caption(f"{variable_label(p.variable)} · {VIEW_LABELS[first.view_kind]} · "+
                        {'hourly':'Giờ','daily':'Ngày','monthly':'Tháng','yearly':'Năm'}[p.frequency])
-        evidence=(result.get('evidence') or [{}])[-1]
-        pattern=((evidence.get('result') or {}).get('data') or {}).get('daily_pattern') if evidence.get('tool')=='analyze_chart' else None
-        segment=bool(n==0 and pattern and abs(pattern['notable_delta'])>1e-9 and action.type=='open_chart')
-        if segment:
-            label='Xem đoạn biểu đồ · '+pattern['notable_day']
-        st.button(label,key=f'ai_action_{index}_{n}',on_click=execute_action,args=(api,action.model_dump(mode='json'),index,segment),
-                  disabled=bool(st.session_state.get('ai_chat_pending')),type='primary' if n==0 else 'secondary')
+        is_compare = bool(result.get('evidence') and result['evidence'][-1].get('tool') == 'analyze_comparison')
+        with st.container(horizontal=True, gap='xsmall'):
+            for n, action in enumerate(valid_actions):
+                if is_compare and len(valid_actions) == 2:
+                    label = 'Mở Bộ A' if n == 0 else 'Mở Bộ B'
+                else:
+                    label={'find_data':'Mở kết quả trong Kho dữ liệu','open_data':'Xem dữ liệu','open_chart':'Mở trong Biểu đồ'}[action.type]
+                evidence=(result.get('evidence') or [{}])[-1]
+                pattern=((evidence.get('result') or {}).get('data') or {}).get('daily_pattern') if evidence.get('tool')=='analyze_chart' else None
+                segment=bool(n==0 and pattern and abs(pattern['notable_delta'])>1e-9 and action.type=='open_chart')
+                if segment:
+                    label='Xem đoạn biểu đồ · '+pattern['notable_day']
+                st.button(label,key=f'ai_action_{index}_{n}',on_click=execute_action,args=(api,action.model_dump(mode='json'),index,segment),
+                          disabled=bool(st.session_state.get('ai_chat_pending')),type='primary' if n==0 else 'secondary')
     error=st.session_state.get('ai_chat_action_error')
     if error and error[0]==index:
         notify_error(f"Lỗi AI: {error[1]}")
@@ -301,12 +369,34 @@ def render_ai_chat(api):
     if not st.session_state['ai_chat_open']:
         return
     with st.container(key='ai_chat_shell'):
+        expanded = st.session_state.get('ai_chat_expanded', False)
+        expanded_attr = ' data-expanded="true"' if expanded else ''
         with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_header'):
-            st.html('<div class="pet-heading"><div class="pet-heading-art">'+themed_pet_art(small=True)+
-                    '</div><div><strong>ERA</strong></div></div>')
+            st.html(f'<div class="pet-heading"{expanded_attr}><div class="pet-heading-art">'+themed_pet_art(small=True)+
+                    '</div><div><strong>ERA</strong><small class="pet-subtitle"><span class="pet-online-dot"></span>Trợ lý khí tượng</small></div></div>')
+            if messages:
+                st.download_button(
+                    'Xuất .md',
+                    data=format_chat_export(messages),
+                    file_name='era_chat_export.md',
+                    mime='text/markdown',
+                    key='ai_chat_export',
+                    icon=':material/download:',
+                    type='tertiary',
+                    help='Tải nội dung hội thoại dạng Markdown để đưa vào báo cáo',
+                    on_click='ignore',
+                )
+            st.button(
+                'Thu gọn' if expanded else 'Mở rộng',
+                key='ai_chat_expand',
+                on_click=_toggle_expand,
+                icon=':material/close_fullscreen:' if expanded else ':material/open_in_full:',
+                type='tertiary',
+                help='Chuyển đổi kích thước khung chat ERA',
+            )
             st.button('Làm mới',key='ai_chat_clear',on_click=_clear,disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),icon=':material/refresh:',type='tertiary',help='Xóa lịch sử và bắt đầu cuộc trò chuyện mới')
             st.button('Đóng chat',icon=':material/close:',key='ai_chat_close',on_click=_close,type='tertiary',help='Đóng khung chat và giữ cuộc trò chuyện')
-        with st.container(height=320,key='ai_chat_messages',autoscroll=True,border=False):
+        with st.container(height=520 if expanded else 320,key='ai_chat_messages',autoscroll=True,border=False):
             if not messages:
                 st.html('<div class="pet-welcome"><div class="pet-welcome-art">'+themed_pet_art(small=True)+
                         '</div><strong>Chào bạn, mình là ERA!</strong></div>')
@@ -321,11 +411,15 @@ def render_ai_chat(api):
             for i in range(start,len(messages)):
                 message=messages[i]
                 with st.chat_message(message['role'],avatar=':material/cloud:' if message['role']=='assistant' else ':material/person:'):
-                    if (message.get('result') or {}).get('answer_kind') in {'general','project'}:
-                        # Formatting for explanations/code; no HTML or remote image embeds.
-                        st.markdown(message['content'].replace('![','['),unsafe_allow_html=False)
+                    content = message['content']
+                    has_md = message['role'] == 'assistant' and any(
+                        tok in content for tok in ('**', '\n- ', '\n* ', '\n1. ', '`', '### ', '## ')
+                    )
+                    if (message.get('result') or {}).get('answer_kind') in {'general','project'} or has_md:
+                        # Formatting for explanations/code/structured answers; no HTML or remote image embeds.
+                        st.markdown(content.replace('![','['),unsafe_allow_html=False)
                     else:
-                        st.text(message['content'])
+                        st.text(content)
                     if message.get('result'):
                         if message.get('restored'):
                             try:
@@ -337,29 +431,68 @@ def render_ai_chat(api):
             if pending:
                 st.html(f'<div class="chat-wait" role="status"><span class="chat-wait-dots"><i></i><i></i><i></i></span>Đang kiểm tra dữ liệu… {int(monotonic()-pending[1])}s</div>')
         selected = st.session_state.get('ai_chat_selected')
+        comparison = applied_comparison(st.session_state)
+        context = applied_view(st.session_state, st.query_params)
         if selected:
             with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_context'):
                 name=escape(st.session_state.get('ai_chat_selected_name','Bộ đã chọn'))
                 st.html(f'<div class="chat-context-label" title="{name}">Đang hỏi · {name}</div>')
                 st.button('Bỏ chọn',key='ai_chat_unselect',icon=':material/close:',type='tertiary',disabled=bool(pending),on_click=_unselect,help='Bỏ chọn bộ dữ liệu')
-        else:
-            context=applied_view(st.session_state,st.query_params)
-            if context:
-                params=context['parameters']
-                page=context['page']
-                saved=st.session_state.get(page+'_result')
-                title=(saved[2].get('place_name') if saved and saved[0]==context['collection_id'] else None) or 'Bộ đang mở'
-                text='Đang xem · '+title
-                if params:
-                    label = ('Khí hậu tháng · Nhiệt độ và lượng mưa' if context['view_kind'] == 'monthly_climate'
-                             else variable_label(params['variable']))
-                    text+=f" · {label} · {_date_label(params['start'])} → {_date_label(params['end'])}"
-                with st.container(key='ai_chat_context'):
-                    st.html('<div class="chat-context-label">'+escape(text)+'</div>')
-        context=applied_view(st.session_state,st.query_params)
-        if context and context.get('parameters'):
-            st.button('Phân tích bộ đang xem', key='era_analyze_current',disabled=bool(pending),
-                      on_click=_submit,args=(api,'Phân tích chuyên gia biểu đồ đang xem. Tìm đặc điểm nổi bật và kiểm tra độ phủ.'))
+        elif comparison:
+            comp_text = f"Đang so sánh · {comparison['place_a']} vs {comparison['place_b']} · {variable_label(comparison['variable'])}"
+            with st.container(key='ai_chat_context'):
+                st.html(f'<div class="chat-context-label" title="{escape(comp_text)}">{escape(comp_text)}</div>')
+        elif context:
+            params=context['parameters']
+            page=context['page']
+            saved=st.session_state.get(page+'_result')
+            title=(saved[2].get('place_name') if saved and saved[0]==context['collection_id'] else None) or 'Bộ đang mở'
+            text='Đang xem · '+title
+            if params:
+                label = ('Khí hậu tháng · Nhiệt độ và lượng mưa' if context['view_kind'] == 'monthly_climate'
+                         else variable_label(params['variable']))
+                text+=f" · {label} · {_date_label(params['start'])} → {_date_label(params['end'])}"
+            with st.container(key='ai_chat_context'):
+                st.html('<div class="chat-context-label">'+escape(text)+'</div>')
+        quick_prompts = contextual_quick_prompts(
+            context,
+            selected_name=st.session_state.get('ai_chat_selected_name') if selected else None,
+            comparison=comparison,
+        )
+        if comparison:
+            with st.container(horizontal=True, gap='xsmall', key='era_quick_prompts'):
+                for idx, (btn_label, prompt_text) in enumerate(quick_prompts):
+                    st.button(
+                        btn_label,
+                        key=f'era_compare_prompt_{idx}',
+                        disabled=bool(pending),
+                        on_click=_submit,
+                        args=(api, prompt_text),
+                        type='primary' if idx == 0 else 'secondary',
+                    )
+        elif context and context.get('parameters'):
+            with st.container(horizontal=True, gap='xsmall', key='era_quick_prompts'):
+                for idx, (btn_label, prompt_text) in enumerate(quick_prompts):
+                    btn_key = 'era_analyze_current' if idx == 0 else f'era_quick_prompt_{idx}'
+                    st.button(
+                        btn_label,
+                        key=btn_key,
+                        disabled=bool(pending),
+                        on_click=_submit,
+                        args=(api, prompt_text),
+                        type='primary' if idx == 0 else 'secondary',
+                    )
+        elif messages and selected:
+            with st.container(horizontal=True, gap='xsmall', key='era_quick_prompts'):
+                for idx, (btn_label, prompt_text) in enumerate(quick_prompts):
+                    st.button(
+                        btn_label,
+                        key=f'era_selected_prompt_{idx}',
+                        disabled=bool(pending),
+                        on_click=_submit,
+                        args=(api, prompt_text),
+                        type='secondary',
+                    )
         st.chat_input('Hỏi ERA…',key='ai_chat_input',max_chars=2000,
                       disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),submit_mode='disable',on_submit=_submit_input,args=(api,))
         if not st.session_state.get('ai_chat_history_loaded'):

@@ -64,6 +64,14 @@ class AppliedView(Contract):
     parameters: ViewParameters | None=None
 
 
+class ComparisonView(Contract):
+    collection_id_a: str=Field(min_length=1,max_length=128)
+    collection_id_b: str=Field(min_length=1,max_length=128)
+    parameters_a: ViewParameters
+    parameters_b: ViewParameters
+    align_by: Literal['time','elapsed']='time'
+
+
 class PrepareView(Contract):
     target: Literal['open_data','open_chart']
     collection_id: str | None=Field(default=None,min_length=1,max_length=128)

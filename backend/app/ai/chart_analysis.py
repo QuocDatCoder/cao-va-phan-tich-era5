@@ -142,3 +142,63 @@ def render_chart_analysis(result):
                 'Bộ có','Đây là','Snapshot','Các thống kê','Giới hạn:')
         lines=[line for line in lines if line.startswith(common+prefixes)]
     return '\n\n'.join(lines)
+
+
+def render_comparison_analysis(result):
+    d = result['data']
+    sa, sb = d['series_a'], d['series_b']
+    pa, pb = d['provenance_a'], d['provenance_b']
+    ma, mb = d['metadata_a'], d['metadata_b']
+    unit = sa['unit'] or sb['unit']
+    f = lambda v: format(v, '.4g') if v is not None else 'không xác định'
+    names = {
+        'temperature': 'Nhiệt độ', '2m_temperature': 'Nhiệt độ',
+        'dewpoint': 'Điểm sương', '2m_dewpoint_temperature': 'Điểm sương',
+        'precipitation': 'Lượng mưa', 'total_precipitation': 'Lượng mưa',
+        'wind_speed': 'Tốc độ gió', 'wind_direction': 'Hướng gió',
+        'solar_radiation': 'Bức xạ mặt trời', 'surface_solar_radiation_downwards': 'Bức xạ mặt trời',
+    }
+    var_name = names.get(ma['variable'], ma['variable'])
+    freq_label = FREQUENCIES.get(sa['frequency'], sa['frequency'])
+    lines = [
+        f"**So sánh {var_name} ({unit}) · chu kỳ {freq_label} · UTC+7**",
+        (
+            f"- **Bộ A ({pa['place_name']})** `{label(pa['start'])} → {label(pa['end'])}`:\n"
+            f"  - Trung bình: **{f(sa.get('mean'))} {unit}** · Độ phủ: **{ma['available_count']}/{ma['expected_count']} giờ** ({ma['coverage']:.1%})"
+            + (
+                f"\n  - Cực trị: thấp nhất **{f(sa['min']['value'])} {unit}** ({label(sa['min']['time'])}) · "
+                f"cao nhất **{f(sa['max']['value'])} {unit}** ({label(sa['max']['time'])})"
+                if sa.get('min') and sa.get('max') else ''
+            )
+        ),
+        (
+            f"- **Bộ B ({pb['place_name']})** `{label(pb['start'])} → {label(pb['end'])}`:\n"
+            f"  - Trung bình: **{f(sb.get('mean'))} {unit}** · Độ phủ: **{mb['available_count']}/{mb['expected_count']} giờ** ({mb['coverage']:.1%})"
+            + (
+                f"\n  - Cực trị: thấp nhất **{f(sb['min']['value'])} {unit}** ({label(sb['min']['time'])}) · "
+                f"cao nhất **{f(sb['max']['value'])} {unit}** ({label(sb['max']['time'])})"
+                if sb.get('min') and sb.get('max') else ''
+            )
+        ),
+    ]
+    diff_mean = d.get('diff_mean')
+    if diff_mean is not None:
+        relation = 'cao hơn' if diff_mean > 1e-9 else 'thấp hơn' if diff_mean < -1e-9 else 'tương đương'
+        lines.append(
+            f"- **Chênh lệch trung bình (A − B):** **{diff_mean:+.2f} {unit}** "
+            f"(Bộ A {relation} Bộ B)."
+        )
+    if sa.get('amplitude') is not None and sb.get('amplitude') is not None:
+        lines.append(
+            f"- **Biên độ dao động:** Bộ A **{f(sa['amplitude'])} {unit}** vs Bộ B **{f(sb['amplitude'])} {unit}**."
+        )
+    if not sa.get('complete') or not sb.get('complete'):
+        lines.append(
+            "- **Lưu ý độ phủ:** Ít nhất một bộ chưa đủ 100% giờ yêu cầu; chênh lệch chỉ tính trên phần dữ liệu đã lưu."
+        )
+    if pa.get('synthetic') or pb.get('synthetic'):
+        lines.append("- **Nguồn giả lập:** Có bộ dữ liệu mock trong phép đối chiếu này.")
+    lines.append(
+        "_Giới hạn: Đối chiếu mô tả trên hai chuỗi dữ liệu đã lưu, không tự suy diễn nguyên nhân khí tượng hoặc xu hướng khí hậu dài hạn._"
+    )
+    return '\n\n'.join(lines)

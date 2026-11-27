@@ -5,11 +5,13 @@ import json
 import re
 import unicodedata
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 import pandas as pd
 import streamlit as st
 from frontend.components.charts import variable_label
+from frontend.components.excel_export import EXCEL_MIME, build_collection_excel
 from frontend.components.stored_table import render_stored_table
 from frontend.components.climate_views import (
     ANOMALY, CLIMATOLOGY, DERIVED_OPERATIONS, REGIONAL_MAP, WIND_ROSE, build_derived_chart,
@@ -574,6 +576,11 @@ def render_saved(client, charts=False):
             st.header('Biểu đồ' if charts else 'Dữ liệu đã lưu', anchor=False)
             st.button('Làm mới', key=prefix+'_refresh_library', icon=':material/refresh:',
                       on_click=invalidate_reads)
+        if charts:
+            if st.toggle('So sánh 2 bộ dữ liệu (địa điểm / khoảng thời gian)', key='chart_compare_enabled'):
+                from frontend.components.comparison_view import render_comparison_panel
+                render_comparison_panel(api)
+                st.divider()
         search_key = prefix+'_library_text'
         st.session_state.setdefault(search_key, st.session_state.get(prefix+'_search', ''))
         with st.form(prefix+'_library_search', border=False):
@@ -867,6 +874,11 @@ def render_saved(client, charts=False):
                         st.button('Vẽ biểu đồ từ dữ liệu này', type='primary', icon=':material/bar_chart:',
                                   on_click=open_chart_from_data, args=(selected, multi or [payload], selected_grid))
                         st.download_button('Tải CSV theo giờ',export.to_csv(index=False).encode('utf-8-sig'),file_name=f'collection_{selected}.csv',mime='text/csv',key='download_timeseries_csv',on_click='ignore',icon=':material/download:')
+                        st.download_button(
+                            'Tải Excel (.xlsx)', data=partial(build_collection_excel, multi or [payload]),
+                            file_name=f'collection_{selected}.xlsx', mime=EXCEL_MIME,
+                            key='download_timeseries_excel', on_click='ignore', icon=':material/download:',
+                        )
                     render_stored_table(
                         frame, export.get('time'), multi or [payload], selected,
                         payload['requested_start'], payload['requested_end'],

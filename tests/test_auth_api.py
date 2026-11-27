@@ -18,6 +18,8 @@ from backend.app.storage.job_repository import JobRepository
 def api_client(tmp_path, monkeypatch):
     database_path = tmp_path / "auth.sqlite3"
     monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("ADMIN_USERNAME", "fixture_admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "fixture admin password")
     monkeypatch.setenv("AUTH_DB_PATH", str(database_path))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CLIMATE_DATA_DB_PATH", str(tmp_path / "legacy" / "climate.sqlite3"))
@@ -84,6 +86,7 @@ def test_registration_login_and_protected_api(api_client):
     )
     assert login.status_code == 200
     assert login.json()["username"] == "alice_1"
+    assert login.json()["is_admin"] is False
     assert client.post(
         "/api/v1/auth/login",
         json={"username": "alice_1", "password": "incorrect password"},
@@ -96,6 +99,26 @@ def test_registration_login_and_protected_api(api_client):
             "SELECT last_login_at FROM users WHERE id = ?", (user_id,)
         ).fetchone()[0]
     assert saved_login == login.json()["expires_at"] - SESSION_LIFETIME_SECONDS
+
+
+def test_admin_login_and_handoff_return_admin_role(api_client):
+    client, _ = api_client
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": "fixture_admin", "password": "fixture admin password"},
+    )
+    assert login.status_code == 200
+    session = login.json()
+    assert session["is_admin"] is True
+    headers = {"Authorization": f"Bearer {session['access_token']}"}
+    assert client.get("/api/v1/auth/admin/overview", headers=headers).status_code == 200
+
+    handoff = client.post("/api/v1/auth/admin/handoff", headers=headers)
+    assert handoff.status_code == 200
+    redeemed = client.post("/api/v1/auth/admin/handoff/redeem", json=handoff.json())
+    assert redeemed.status_code == 200
+    assert redeemed.json()["is_admin"] is True
+    assert client.post("/api/v1/auth/admin/handoff/redeem", json=handoff.json()).status_code == 401
 
 
 def test_accounts_only_list_their_collections_and_legacy_data_stays_archived(api_client):

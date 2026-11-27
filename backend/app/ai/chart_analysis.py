@@ -126,7 +126,7 @@ def render_chart_analysis(result):
     if d['warning_count']:
         lines.append(f"Bộ có {d['warning_count']} cảnh báo chất lượng; cần đối chiếu báo cáo trước khi dùng kết luận.")
     if p.get('synthetic'):
-        lines.append('Đây là dữ liệu giả lập (mock), không phải quan trắc ERA5 thật.')
+        lines.append('Biểu đồ này dùng dữ liệu khí tượng giả lập (mock).')
     if p.get('provisional'):
         lines.append('Snapshot tạm thời: tác vụ chưa kết thúc.')
     lines.append('Giới hạn: một chuỗi tại một điểm chưa đủ xác định nguyên nhân, bất thường khí hậu hoặc dự báo. Muốn kết luận cần chuỗi nền dài hơn và các biến/nguồn đối chứng. Báo cáo không đọc ảnh hoặc dữ liệu ngoài DB.')

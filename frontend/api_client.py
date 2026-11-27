@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import local
 from typing import Any
 
 import requests
@@ -11,6 +12,16 @@ class DashboardApiError(Exception):
 
 
 DEFAULT_TIMEOUT_SECONDS = 180.0
+_sessions = local()
+
+
+class _PooledSession(requests.Session):
+    def request(self, *args, **kwargs):
+        try:
+            return super().request(*args, **kwargs)
+        finally:
+            # Keep redirect cookies within one request, as with a fresh Session.
+            self.cookies.clear()
 
 
 @dataclass(frozen=True)
@@ -253,7 +264,12 @@ class DashboardApiClient:
         return f"{self.base_url.rstrip('/')}{path}"
 
     def _session(self) -> requests.Session:
-        return self.session or requests.Session()
+        if self.session is not None:
+            return self.session
+        session = getattr(_sessions, "session", None)
+        if session is None:
+            session = _sessions.session = _PooledSession()
+        return session
 
     def _auth_headers(self) -> dict[str, str] | None:
         if not self.access_token:
@@ -263,6 +279,5 @@ class DashboardApiClient:
     def _timeout_message(self) -> str:
         return (
             f"Yêu cầu tới máy chủ API đã quá thời gian chờ sau {self.timeout_seconds:g} giây. "
-            "Yêu cầu ERA5 lần đầu có thể lâu hơn; hãy tăng API_TIMEOUT_SECONDS "
-            "hoặc tạo tác vụ tải dữ liệu trước."
+            "Hãy thử lại hoặc tăng API_TIMEOUT_SECONDS nếu yêu cầu thường xuyên quá thời gian chờ."
         )

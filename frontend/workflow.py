@@ -1,6 +1,7 @@
 """User workflow. Only submitted forms perform collection or data queries."""
 from datetime import date, datetime, timedelta, timezone
 
+from backend.app.core.config import get_settings
 from backend.app.domain.recent_weather import historical_date_bounds, latest_weather_hour
 import json
 import os
@@ -16,9 +17,9 @@ from frontend.appearance import apply_appearance
 from frontend.dashboard import _translate_status
 from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info, notify_job_failures
-from frontend.auth import render_login_gate
+from frontend.auth import render_login_gate, restore_account
 from frontend.home import render_home
-from frontend.workspace_sidebar import HOME_SECTION, NAVIGATION, render_sidebar
+from frontend.workspace_sidebar import HOME_SECTION, NAVIGATION, render_sidebar, select_section
 
 FREQUENCIES = {"Giờ": "hourly", "Ngày": "daily", "Tháng": "monthly", "Năm": "yearly"}
 
@@ -36,26 +37,38 @@ def render_dashboard():
     if st.query_params.get('retry_admin') == '1':
         st.session_state['admin_handoff_done'] = False
         del st.query_params['retry_admin']
-    if not render_login_gate(client(None)):
-        return
-    if st.session_state.pop('era_open_collection_jobs', False):
+    guest = get_settings().auth_enabled and not restore_account(client(None))
+    if not guest and st.session_state.pop('era_open_collection_jobs', False):
         st.session_state['workflow_section'] = 'Thu thập'
         st.session_state['apply_shared'] = True
         st.session_state['ai_chat_open'] = False
     st.session_state.setdefault('auth_admin_username', os.getenv('ADMIN_USERNAME', 'admin').casefold())
-    render_sidebar(client(None))
-    from frontend.ai_chat import render_ai_chat
-    with st.container(key='era5_floating_chat'):
-        render_ai_chat(client(None))
-    with st.container(key='era_workspace'):
-        render_workspace()
+    render_sidebar(client(None), guest=guest)
+    chat_slot = st.empty()
+    stage = st.empty()
+    if guest and (st.session_state['workflow_section'] != HOME_SECTION
+                  or st.session_state.get('workflow_login_requested')):
+        with stage.container(key='era_auth_gate'):
+            render_login_gate(client(None), on_back=_return_to_guest_home)
+        return
+    if not guest:
+        st.session_state.pop('workflow_login_requested', None)
+        from frontend.ai_chat import render_ai_chat
+        with chat_slot.container(key='era5_floating_chat'):
+            render_ai_chat(client(None))
+    with stage.container(key='era_workspace'):
+        render_workspace(guest=guest)
+
+
+def _return_to_guest_home():
+    select_section(HOME_SECTION)
 
 
 @st.fragment
-def render_workspace():
+def render_workspace(*, guest=False):
     if st.session_state.pop('chart_handoff_rerun', False):
         st.rerun(scope='app')
-    section = st.session_state.get('workflow_section', HOME_SECTION)
+    section = HOME_SECTION if guest else st.session_state.get('workflow_section', HOME_SECTION)
     st.query_params['view'] = section
     switching = st.session_state.get('rendered_workflow_section') != section
     if switching and section in {'Dữ liệu đã lưu','Biểu đồ'}:
@@ -80,7 +93,7 @@ def render_workspace():
                                       vertical_alignment="center", gap="small", wrap=False,
                                       height=44, border=False):
                         st.header(section, anchor=False)
-                render_section(section)
+                render_section(section, guest=guest)
         if switching:
             st.html(f"""<script>
                 if (document.documentElement.dataset.weahubDestination === "{route_key}") {{
@@ -90,10 +103,10 @@ def render_workspace():
         st.session_state['rendered_workflow_section'] = section
 
 
-def render_section(section):
+def render_section(section, *, guest=False):
     try:
         if section == HOME_SECTION:
-            render_home(client('land'))
+            render_home(client('land'), guest=guest)
         elif section == "Thu thập":
             render_collection()
         elif section == "Dữ liệu đã lưu":
@@ -106,7 +119,6 @@ def render_section(section):
 
 def source_input(prefix):
     if prefix == "collect":
-        from backend.app.core.config import get_settings
         if get_settings().climate_provider == "open_meteo":
             return "open_meteo"
     return "land"
@@ -252,8 +264,13 @@ def submit_collection_job(api, payload, params):
 def render_open_meteo_collection_form():
     first_day, yesterday = historical_date_bounds()
     with st.container(border=True):
-        mode = st.radio("Địa điểm", ["Tìm theo tên", "Nhập tọa độ"],
-                        horizontal=True, key="collect_location_mode", persist_state="session")
+        st.session_state.setdefault("collect_location_mode", "Tìm theo tên")
+        mode = st.segmented_control(
+            "Địa điểm",
+            ["Tìm theo tên", "Nhập tọa độ"],
+            required=True,
+            key="collect_location_mode",
+        )
         selected_place = None
         if mode == "Tìm theo tên":
             location_search("collect")
@@ -264,15 +281,27 @@ def render_open_meteo_collection_form():
         else:
             point = point_inputs("collect")
 
-        period = st.radio("Khoảng thời gian (UTC+7)", ["7 ngày gần nhất", "30 ngày gần nhất", "Hôm nay", "Tùy chọn"],
-                          horizontal=True, key="collect_period", persist_state="session")
-        start = max(first_day, yesterday - timedelta(days=29 if period == "30 ngày gần nhất" else 6))
+        st.session_state.setdefault("collect_period", "Hôm nay")
+        period = st.segmented_control(
+            "Khoảng thời gian (UTC+7)",
+            ["Hôm nay", "7 ngày gần nhất", "30 ngày gần nhất", "Tùy chọn"],
+            required=True,
+            key="collect_period",
+        )
+        latest_hour = latest_weather_hour()
+        today = latest_hour.date()
+        start = max(first_day, yesterday - timedelta(days=6))
         end = yesterday
+        summary_text = ""
         if period == "Hôm nay":
-            latest_hour = latest_weather_hour()
-            start = end = latest_hour.date()
-            st.caption(f"{start:%d/%m/%Y} · 00:00 – {latest_hour:%H:%M} · Dữ liệu mô hình GFS")
-        elif period == "Tùy chọn":
+            start = end = today
+            summary_text = f"{start:%d/%m/%Y} · 00:00 – {latest_hour:%H:%M}"
+        elif period in {"7 ngày gần nhất", "30 ngày gần nhất"}:
+            days_back = 29 if period == "30 ngày gần nhất" else 6
+            start = max(first_day, today - timedelta(days=days_back))
+            end = today
+            summary_text = f"{start:%d/%m/%Y} 00:00 – {end:%d/%m/%Y} {latest_hour:%H:%M}"
+        else:
             left, right = st.columns(2)
             for key, default in (("collect_start", start), ("collect_end", end)):
                 value = st.session_state.get(key)
@@ -284,11 +313,15 @@ def render_open_meteo_collection_form():
             end = right.date_input("Ngày kết thúc", value=None if "collect_end" in st.session_state else end,
                                    min_value=first_day, max_value=yesterday, key="collect_end",
                                    format="DD/MM/YYYY", persist_state="session")
-        else:
-            st.caption(f"{start:%d/%m/%Y} – {end:%d/%m/%Y}")
-        st.caption("Mỗi lần thu thập lấy đủ 6 biến khí hậu.")
-        submitted = st.button("Bắt đầu thu thập", key="collect_now", type="primary",
-                              disabled=mode == "Tìm theo tên" and selected_place is None)
+            if start and end:
+                summary_text = f"{start:%d/%m/%Y} – {end:%d/%m/%Y}"
+        with st.container(horizontal=True, horizontal_alignment="distribute",
+                          vertical_alignment="center", gap="small", wrap=True):
+            footer = f"{summary_text} · Đủ 6 biến khí tượng (GFS)" if summary_text else "Mỗi lần thu thập lấy đủ 6 biến khí tượng (GFS)."
+            st.caption(footer)
+            submitted = st.button("Bắt đầu thu thập", key="collect_now", type="primary",
+                                  icon=":material/cloud_download:",
+                                  disabled=mode == "Tìm theo tên" and selected_place is None)
     return start, end, point, selected_place, submitted
 
 
@@ -346,7 +379,7 @@ def render_collection():
             notify_error(msg)
         else:
             a,b = local_date_range(start,end)
-            if source == 'open_meteo' and st.session_state.get('collect_period') == 'Hôm nay':
+            if source == 'open_meteo' and st.session_state.get('collect_period') in {'Hôm nay', '7 ngày gần nhất', '30 ngày gần nhất'}:
                 b = min(datetime.fromisoformat(b), latest_weather_hour()).isoformat()
             centre = point if area is None else dict(latitude=(area['north']+area['south'])/2,
                                                      longitude=(area['west']+area['east'])/2)
@@ -392,12 +425,13 @@ def _update_job_list(api):
         pending = None
     if pending and pending[1].done():
         st.session_state.pop('workflow_jobs_pending', None)
-        st.session_state['workflow_jobs_due'] = monotonic() + 15
+        next_delay = 15
         try:
             checked_at = datetime.now(timezone(timedelta(hours=7))).strftime('%H:%M:%S')
             jobs = [dict(job, _status_checked_at=checked_at) for job in pending[1].result()]
             tracked = st.session_state.setdefault('workflow_jobs_to_notify', set())
             failures = []
+            completed_now = False
             for job in jobs:
                 jid, status = job['job_id'], job['status']
                 if status in {'queued','running','cancelling'}:
@@ -405,12 +439,19 @@ def _update_job_list(api):
                 elif jid in tracked:
                     tracked.discard(jid)
                     if status == 'completed':
+                        completed_now = True
                         name = job.get('collection_name')
                         notify_success(f'Đã hoàn tất thu thập: {name}' if name else 'Đã hoàn tất thu thập dữ liệu.')
                     elif status in {'failed', 'interrupted'}:
                         failures.append(job)
+            if completed_now:
+                from frontend.library import invalidate_reads
+                invalidate_reads()
             if failures:
                 notify_job_failures(failures)
+            active_jobs = [j for j in jobs if j['status'] in {'queued', 'running', 'cancelling'}]
+            if active_jobs:
+                next_delay = 2 if any(j.get('source') in {'open_meteo', 'mock'} for j in active_jobs) else 5
             st.session_state['workflow_job_list'] = jobs
             latest = st.session_state.get('workflow_latest_submitted_job')
             if latest:
@@ -430,6 +471,7 @@ def _update_job_list(api):
             st.session_state.pop('workflow_jobs_error', None)
         except DashboardApiError as exc:
             st.session_state['workflow_jobs_error'] = str(exc)
+        st.session_state['workflow_jobs_due'] = monotonic() + next_delay
         pending = None
     jobs = st.session_state.get('workflow_job_list')
     active = any(j['status'] in {'queued','running','cancelling'} for j in jobs or [])

@@ -49,7 +49,7 @@ def _store_session(payload: dict) -> None:
     st.session_state['admin_handoff_done'] = False
 
 
-def render_login_gate(api: DashboardApiClient) -> bool:
+def restore_account(api: DashboardApiClient) -> bool:
     from frontend.notifications import notify_warning
 
     ready = st.session_state.get('auth_restore_ready', False)
@@ -66,7 +66,6 @@ def render_login_gate(api: DashboardApiClient) -> bool:
     if not ready and not valid:
         restored = getattr(bridge, 'restored', None)
         if not isinstance(restored, dict):
-            st.caption('Đang khôi phục phiên đăng nhập…')
             return False
         session = restored.get('session')
         if isinstance(session, dict):
@@ -107,8 +106,14 @@ def render_login_gate(api: DashboardApiClient) -> bool:
         st.session_state.clear()
         st.session_state['auth_restore_ready'] = True
         notify_warning('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
+    return False
+
+
+def render_login_gate(api: DashboardApiClient, *, on_back):
     with st.container(key='era5_login_card', border=True):
-        return _render_login_forms(api)
+        st.button('Quay lại Trang chủ', key='auth_back_home', icon=':material/arrow_back:',
+                  type='tertiary', on_click=on_back)
+        _render_login_forms(api)
 
 
 def logout_account(api):
@@ -126,7 +131,12 @@ def logout_account(api):
 
 def _render_login_forms(api):
     from frontend.notifications import notify_error
-    st.title("Tài khoản ERA5")
+    st.html(
+        '<div style="display:flex;align-items:center;gap:.45rem;margin:.25rem 0 .35rem;">'
+        '<span style="font-size:1.55rem;font-weight:750;letter-spacing:-.02em;">Tài khoản</span>'
+        '<strong class="weahub-wordmark" style="font-size:1.55rem;">Weather <span>Hub</span></strong>'
+        '</div>'
+    )
     st.caption("Đăng nhập để mở kho dữ liệu và tiếp tục công việc của bạn.")
     login_tab, register_tab = st.tabs(["Đăng nhập", "Đăng ký"])
 
@@ -175,7 +185,6 @@ def _render_login_forms(api):
                 notify_error(str(exc))
             else:
                 st.rerun()
-    return False
 
 
 def _redirect_to_admin(api: DashboardApiClient) -> None:

@@ -24,9 +24,9 @@ MAX_GRID_CHOICES = 20
 MAX_MISSING_RANGES = 24
 GUIDES = {
     'supported_questions': 'ERA hỗ trợ xã giao ngắn, khí tượng liên quan và giải thích code/thiết kế dự án kèm nguồn. Có thể tìm bộ đã lưu, kiểm tra thiếu/cảnh báo, thống kê, tổng hợp và phân tích biểu đồ đang xem qua DB. Khi có bộ lọc đã áp dụng, không cần nhập lại ngày/biến/lưới. Phân tích gồm cực trị, biến động và xu hướng mô tả; chưa kết luận nguyên nhân, dự báo, anomaly khí hậu hoặc tự thu thập.',
-    'collect': 'Mở Thu thập, chọn nguồn, địa điểm hoặc vùng, biến và ngày rồi bấm Bắt đầu thu thập. Theo dõi job và đọc cảnh báo. Agent không tạo job hay gọi CDS thay bạn.',
+    'collect': 'Mở Thu thập, chọn địa điểm và khoảng thời gian rồi bấm Bắt đầu thu thập. Mỗi tác vụ lấy đủ 6 biến khí hậu từ Open-Meteo (GFS Global). Bạn có thể theo dõi tiến độ và đọc cảnh báo trên trang Thu thập.',
     'saved_data': 'Vào Kho dữ liệu, tìm và bấm Xem dữ liệu. Chọn biến, điểm lưới và ngày rồi Áp dụng bộ lọc; có thể tải CSV. Bộ khác nhau không được tự trộn.',
-    'charts': 'Có thể nhờ ERA chuẩn bị nút Mở trong Biểu đồ với biến, lưới, khoảng ngày giờ và chu kỳ cụ thể. Bấm nút để mở kết quả trên trang Biểu đồ. Nếu chưa đủ tham số, chọn trong form ở chat hoặc Bộ lọc biểu đồ. Kỳ tháng/năm chưa trọn không đại diện cho cả kỳ; Agent không tự tải CDS.',
+    'charts': 'Có thể nhờ ERA chuẩn bị nút Mở trong Biểu đồ với biến, lưới, khoảng ngày giờ và chu kỳ cụ thể. Bấm nút để mở kết quả trên trang Biểu đồ. Nếu chưa đủ tham số, chọn trong form ở chat hoặc Bộ lọc biểu đồ. Kỳ tháng/năm chưa trọn không đại diện cho cả kỳ. ERA dùng dữ liệu đã lưu trong kho.',
     'quality': 'Xem báo cáo chất lượng của bộ/tác vụ. Dữ liệu thiếu không được thay bằng 0. Cảnh báo nghi vấn đơn vị phải được kiểm tra trước khi diễn giải số liệu; hướng gió có thể không xác định khi lặng gió.',
     'missing_data': 'Độ phủ phụ thuộc đúng bộ, biến, lưới và khoảng giờ. Khi thiếu, chỉ thống kê phần đã có và nói rõ giới hạn; sang Thu thập nếu muốn chủ động bổ sung. Agent không tải ngầm.',
 }
@@ -56,7 +56,7 @@ class DatabaseTools:
 
     def execute(self,name,arguments):
         if not isinstance(name,str) or name not in self._handlers:
-            return self._result('unsupported_tool',message='Công cụ không được hỗ trợ. Không có quyền SQL, command, CDS hoặc sửa dữ liệu.')
+            return self._result('unsupported_tool',message='Công cụ không được hỗ trợ. ERA không có quyền chạy SQL, thực thi lệnh, gọi API thời tiết hoặc sửa dữ liệu.')
         try:
             raw=arguments if isinstance(arguments,str) else json.dumps(arguments,allow_nan=False)
             if len(raw)>16384:
@@ -110,7 +110,7 @@ class DatabaseTools:
         return self._result('ok' if page else 'no_data',data=[self._summary(e) for e in page],
                             has_more=more,next_offset=args.offset+len(page) if more else None,
                             selection_required=len(page)>1 or more,search_scope='saved_collection_metadata',
-                            message='Danh sách có phân trang; chưa quét các trang sau.' if more else 'Chỉ gồm các bộ đã lưu khớp từ khóa, không phải danh sách dữ liệu toàn cầu của CDS.')
+                            message='Danh sách có phân trang; chưa quét các trang sau.' if more else 'Danh sách chỉ gồm các bộ dữ liệu đã lưu trong kho khớp với từ khóa.')
 
     def _describe(self,args):
         if args.collection_id is None:

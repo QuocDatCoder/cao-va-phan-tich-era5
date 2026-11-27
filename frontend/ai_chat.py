@@ -21,7 +21,7 @@ CSS_PATH = Path(__file__).with_name('components').joinpath('ai_chat.css')
 LINES_PATH = CSS_PATH.with_name('era_launcher_lines.js')
 
 
-@st.cache_data(max_entries=2,show_spinner=False)
+@st.cache_resource(max_entries=1, show_spinner=False)
 def _launcher_assets(css_modified, lines_modified):
     return ('<style>'+CSS_PATH.read_text(encoding='utf-8')+PET_CSS+'</style>'
             '<script>'+LINES_PATH.read_text(encoding='utf-8')+'</script>')

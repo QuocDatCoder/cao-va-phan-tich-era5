@@ -50,8 +50,8 @@ def build_comparison_series(
     align_by: str = "time",
 ) -> dict[str, Any]:
     """Prepare two aligned DataFrames and summary statistics for side-by-side comparison."""
-    frame_a = timeseries_frame(payload_a).copy()
-    frame_b = timeseries_frame(payload_b).copy()
+    frame_a = timeseries_frame(payload_a)
+    frame_b = timeseries_frame(payload_b)
 
     if align_by == "elapsed":
         frame_a["x"] = range(len(frame_a))
@@ -90,6 +90,11 @@ def comparison_summary_rows(
 ) -> list[dict[str, Any]]:
     """Build display rows comparing mean, max, min, and point count between A and B."""
     bundle = build_comparison_series(payload_a, payload_b, label_a, label_b, align_by=align_by)
+    return _summary_rows(bundle)
+
+
+def _summary_rows(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    label_a, label_b = bundle["label_a"], bundle["label_b"]
     if label_a == label_b or {label_a, label_b} & {"Chỉ số", "Chênh lệch (A - B)"}:
         label_a, label_b = f"A · {label_a}", f"B · {label_b}"
     sa, sb = bundle["stats_a"], bundle["stats_b"]
@@ -145,7 +150,13 @@ def multi_series_comparison_figure(
 ) -> go.Figure:
     """Create a Plotly figure overlaying two climate series."""
     bundle = build_comparison_series(payload_a, payload_b, label_a, label_b, align_by=align_by)
+    return _comparison_figure(bundle)
+
+
+def _comparison_figure(bundle: dict[str, Any]) -> go.Figure:
     fa, fb = bundle["frame_a"], bundle["frame_b"]
+    label_a, label_b = bundle["label_a"], bundle["label_b"]
+    align_by = bundle["align_by"]
     variable, unit, frequency = bundle["variable"], bundle["unit"], bundle["frequency"]
 
     fig = go.Figure()
@@ -200,6 +211,7 @@ def _collection_vars(entry: dict[str, Any]) -> list[str]:
     return public_variables([m["primary_variable"]] + [v["variable"] for v in entry.get("variables", [])])
 
 
+@st.fragment
 def render_comparison_panel(api: Any) -> None:
     """Render the interactive 2-collection comparison panel inside the Charts screen."""
     from frontend.library import cached_read, label
@@ -222,6 +234,7 @@ def render_comparison_panel(api: Any) -> None:
 
     by_id = {e["id"]: e for e in entries}
     ids = list(by_id)
+    labels = {cid: label(entry) for cid, entry in by_id.items()}
 
     with st.form("chart_compare_form"):
         col_a, col_b = st.columns(2)
@@ -229,14 +242,14 @@ def render_comparison_panel(api: Any) -> None:
             "Bộ dữ liệu A",
             ids,
             index=0,
-            format_func=lambda cid: label(by_id[cid]),
+            format_func=labels.__getitem__,
             key="compare_collection_a",
         )
         id_b = col_b.selectbox(
             "Bộ dữ liệu B",
             ids,
             index=1 if len(ids) > 1 else 0,
-            format_func=lambda cid: label(by_id[cid]),
+            format_func=labels.__getitem__,
             key="compare_collection_b",
         )
 
@@ -391,6 +404,9 @@ def render_comparison_panel(api: Any) -> None:
         except (DashboardApiError, KeyError, IndexError) as exc:
             notify_error(f"Không thể so sánh 2 bộ dữ liệu: {exc}")
             return
+        if st.session_state.get("ai_chat_open"):
+            # ERA renders before the workspace and needs the new context for its prompts.
+            st.rerun(scope="app")
 
     saved = st.session_state.get("chart_compare_result")
     if not saved:
@@ -410,10 +426,10 @@ def render_comparison_panel(api: Any) -> None:
         f"{diff_mean:+.2f} {unit}" if diff_mean is not None else "—",
     )
 
-    fig = multi_series_comparison_figure(payload_a, payload_b, name_a, name_b, align_by=saved_align)
+    fig = _comparison_figure(bundle)
     st.plotly_chart(fig, width="stretch", key="chart_compare_plotly")
 
-    rows = comparison_summary_rows(payload_a, payload_b, name_a, name_b, align_by=saved_align)
+    rows = _summary_rows(bundle)
     st.dataframe(rows, hide_index=True, width="stretch")
     st.download_button(
         "Tải Excel (.xlsx)", data=partial(build_comparison_excel, payload_a, payload_b, name_a, name_b, saved_align),

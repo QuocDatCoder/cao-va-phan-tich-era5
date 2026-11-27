@@ -1,5 +1,6 @@
-﻿"""Exercise actual Streamlit forms against isolated local API fixtures; no CDS."""
+"""Exercise actual Streamlit forms against isolated local API fixtures; no CDS."""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 import json
 import sqlite3
@@ -49,7 +50,6 @@ class Bridge:
 def ui(collection, monkeypatch):
     from frontend.library import _shared_read
     _shared_read.clear()
-    monkeypatch.setattr(workflow, 'render_login_gate', lambda *_: True)
     monkeypatch.setattr(workflow, 'source_input', lambda prefix: workflow.st.selectbox(
         'Nguồn (kiểm thử)', ['land', 'era5', 'mock'], key=prefix+'_source'))
     bridge = Bridge(collection[-1])
@@ -98,6 +98,53 @@ def test_home_is_default_and_shortcut_opens_collection(ui):
     assert app.button(key='collect_now')
     assert not any(title.value == 'Nguồn dữ liệu' for title in app.subheader)
     assert not app.exception
+
+
+def test_guest_home_previews_all_six_hourly_weather_variables(monkeypatch):
+    from backend.app.core.config import get_settings
+    from frontend import ai_chat, home
+
+    monkeypatch.setenv('AUTH_ENABLED', 'true')
+    get_settings.cache_clear()
+    def unexpected(*args, **kwargs):
+        pytest.fail('Guest Home must run without saved-data or ERA calls')
+
+    monkeypatch.setattr(DashboardApiClient, '_get', unexpected)
+    monkeypatch.setattr(DashboardApiClient, '_post', unexpected)
+    monkeypatch.setattr(home, 'cached_read', unexpected)
+    monkeypatch.setattr(ai_chat, 'render_ai_chat', unexpected)
+    variables = {
+        'Nhiệt độ': '°C',
+        'Lượng mưa': 'mm',
+        'Điểm sương': '°C',
+        'Tốc độ gió': 'm/s',
+        'Hướng gió': '°',
+        'Bức xạ mặt trời': 'MJ/m²',
+    }
+    try:
+        app = AppTest.from_file(str(Path('app.py').resolve()), default_timeout=15).run()
+        assert app.session_state['workflow_section'] == 'Trang chủ'
+        assert app.title[0].value == 'Khám phá dữ liệu khí tượng'
+        assert not app.tabs
+        assert not any(button.key == 'home_ask_era' for button in app.button)
+        assert any('Chế độ xem thử · Dữ liệu demo' in item.value for item in app.markdown)
+        recent_card = next(item.value for item in app.markdown if '10.7800, 106.7000' in item.value)
+        assert 'TP. Hồ Chí Minh, Việt Nam' in recent_card
+        assert '01/01/2026' in recent_card
+        assert app.button(key='home_guest_login').label == 'Đăng nhập để thu thập & lưu dữ liệu riêng'
+        assert len(app.pills(key='home_preview_variable').options) == len(variables)
+        for label, unit in variables.items():
+            app.pills(key='home_preview_variable').set_value(label).run()
+            assert not app.exception
+            plot, = app.get('plotly_chart')
+            chart = json.loads(plot.proto.spec)
+            trace, = chart['data']
+            assert len(trace['x']) == 24
+            assert datetime.fromisoformat(trace['x'][0]) == datetime(2026, 1, 1)
+            assert datetime.fromisoformat(trace['x'][-1]) == datetime(2026, 1, 1, 23)
+            assert chart['layout']['yaxis']['title']['text'] == f'{label} ({unit})'
+    finally:
+        get_settings.cache_clear()
 
 
 def test_weather_map_draws_a_single_saved_grid(ui):

@@ -52,8 +52,9 @@ def timeseries_frame(payload: dict[str, Any]) -> pd.DataFrame:
     return frame.sort_values("time")
 
 
-def timeseries_figure(payload: dict[str, Any]) -> go.Figure:
-    frame = timeseries_frame(payload)
+def timeseries_figure(payload: dict[str, Any], *, frame: pd.DataFrame | None = None) -> go.Figure:
+    if frame is None:
+        frame = timeseries_frame(payload)
     unit = payload.get("unit", "")
     variable = variable_label(payload.get("variable"))
     style, color = SERIES_STYLE.get(variable, ("line", "#2366b1"))
@@ -161,8 +162,9 @@ def heatmap_figure(payload: dict[str, Any]) -> go.Figure:
     return fig
 
 
-def map_figure(payload: dict[str, Any]) -> go.Figure:
-    frame = pd.DataFrame(payload.get("data", []))
+def map_figure(payload: dict[str, Any], *, frame: pd.DataFrame | None = None) -> go.Figure:
+    if frame is None:
+        frame = pd.DataFrame(payload.get("data", []))
     if frame.empty:
         frame = pd.DataFrame(columns=["latitude", "longitude", "value"])
 
@@ -179,9 +181,10 @@ def map_figure(payload: dict[str, Any]) -> go.Figure:
     lon_range = [center["lon"] - lon_padding, center["lon"] + lon_padding]
 
     single_point = len(frame) == 1
-    frame["label"] = frame["value"].map(
-        lambda v: f"{v:.2f} {unit}".strip() if pd.notna(v) else ""
-    )
+    if single_point:
+        frame = frame.assign(label=frame["value"].map(
+            lambda v: f"{v:.2f} {unit}".strip() if pd.notna(v) else ""
+        ))
     fig = px.scatter_geo(
         frame,
         lat="latitude",

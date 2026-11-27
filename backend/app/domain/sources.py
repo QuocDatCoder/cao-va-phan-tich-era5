@@ -4,6 +4,7 @@ from backend.app.core.config import Settings
 
 
 OPEN_METEO_DATASET = "open-meteo-historical-forecast-gfs-global"
+OPEN_METEO_BEST_MATCH_DATASET = "open-meteo-forecast-best-match"
 
 def configured_source(settings: Settings) -> DataSource:
     return "land" if settings.climate_provider == "era5_land_timeseries" else settings.climate_provider

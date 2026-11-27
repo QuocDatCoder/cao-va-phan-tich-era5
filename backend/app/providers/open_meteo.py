@@ -9,9 +9,9 @@ from uuid import uuid4
 
 from backend.app.domain.cancellation import check_cancelled
 from backend.app.domain.quality import current_quality
-from backend.app.domain.recent_weather import historical_date_bounds
+from backend.app.domain.recent_weather import GFS_FIRST_DATE, historical_date_bounds
 from backend.app.domain.schemas import ClimatePoint, DownloadArtifact, Location, TimeSeriesResponse
-from backend.app.domain.sources import source_dataset
+from backend.app.domain.sources import OPEN_METEO_BEST_MATCH_DATASET, source_dataset
 from backend.app.domain.wind import WIND_COMPONENTS
 from backend.app.providers.base import ClimateDataProvider
 from backend.app.providers.era5_provider import ERA5_VARIABLES
@@ -42,16 +42,19 @@ class OpenMeteoProvider(ClimateDataProvider):
     def download_area(self, variable, area, start_date, end_date, frequency):
         raise ClimateDataError("Open-Meteo thu thập theo một tọa độ.")
 
-    def _fetch(self, location, start_date, end_date, *, live_interval=None):
+    def _fetch(self, location, start_date, end_date, *, live_interval=None, refresh_archive=False, model="gfs_global"):
         today = datetime.now(timezone.utc).date()
         earliest, latest = historical_date_bounds()
-        if live_interval is None and not earliest - timedelta(days=1) <= start_date <= end_date <= min(today, latest):
+        first = GFS_FIRST_DATE if refresh_archive else earliest - timedelta(days=1)
+        if live_interval is None and not first <= start_date <= end_date <= min(today, latest):
             raise ClimateDataError("Chọn khoảng thời gian trong 5 năm đã qua.")
         url = LIVE_FORECAST_URL if live_interval else FORECAST_URL
         params = dict(latitude=location.latitude, longitude=location.longitude,
                       start_date=start_date.isoformat(), end_date=end_date.isoformat(),
                       hourly=",".join(field for field, _, _ in FIELDS.values()),
-                      timezone="GMT", wind_speed_unit="ms", models="gfs_global")
+                      timezone="GMT", wind_speed_unit="ms")
+        if model is not None:
+            params["models"] = model
         check_cancelled()
         try:
             with urlopen(f"{url}?{urlencode(params)}", timeout=30) as response:
@@ -87,6 +90,27 @@ class OpenMeteoProvider(ClimateDataProvider):
         if any(not values for values in series.values()):
             raise ClimateDataError("Open-Meteo chưa có đủ biến trong khoảng ngày đã chọn.")
         return payload, grid, series
+
+    def fetch_refresh(self, location, first_hour, last_hour, latest, *, dataset):
+        """Read the archive up to the UTC day containing today's Vietnam midnight."""
+        recent_date = latest.replace(hour=0).astimezone(timezone.utc).date()
+        first_date, last_date = first_hour.date(), last_hour.date()
+        model = None if dataset == OPEN_METEO_BEST_MATCH_DATASET else "gfs_global"
+        if first_date < recent_date:
+            _, grid, series = self._fetch(
+                location, first_date, min(last_date, recent_date - timedelta(days=1)),
+                refresh_archive=True, model=model,
+            )
+            yield grid, series
+        if last_date >= recent_date:
+            start_date = max(first_date, recent_date)
+            start = max(first_hour, datetime.combine(start_date, datetime.min.time()))
+            _, grid, series = self._fetch(
+                location, start_date, last_date,
+                live_interval=(start.replace(tzinfo=timezone.utc), last_hour.replace(tzinfo=timezone.utc)),
+                model=model,
+            )
+            yield grid, series
 
     def download_point(self, variable, location, start_date: date, end_date: date, frequency, *, live_interval=None):
         payload, grid, series = self._fetch(location, start_date, end_date, live_interval=live_interval)

@@ -1,9 +1,14 @@
 """A library of named collection snapshots, not a merged cache inventory."""
 from datetime import datetime, timezone, timedelta
+from dataclasses import replace
 from backend.app.domain.recent_weather import is_same_day_collection
+from backend.app.domain.live_refresh import LIVE_INTERVAL_HOURS, refresh_due
+from backend.app.domain.sources import OPEN_METEO_BEST_MATCH_DATASET
+from backend.app.domain.time_utils import to_vietnam_time
 import json
 import re
 import unicodedata
+import time
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -483,7 +488,7 @@ def render_collection_quality(api, prefix, entry):
             st.caption('Dữ liệu giả lập')
         if m['source'] == 'open_meteo':
             dataset = m.get('dataset')
-            source_label = ('Open-Meteo Forecast · Best Match' if dataset == 'open-meteo-forecast-best-match'
+            source_label = ('Open-Meteo Forecast · Best Match' if dataset == OPEN_METEO_BEST_MATCH_DATASET
                             else 'Open-Meteo Forecast · GFS' if is_same_day_collection(
                                 datetime.fromisoformat(m['requested_start']), datetime.fromisoformat(m['requested_end']),
                                 datetime.fromisoformat(entry['created_at']))
@@ -523,9 +528,92 @@ def render_collection_quality(api, prefix, entry):
             with st.expander('Chi tiết cảnh báo'): st.dataframe(q[1]['issues'][:100],hide_index=True)
 
 
+def _live_unavailable(exc):
+    return exc.status_code in {404, 405}
+
+
+def _save_live_controls(api, collection_id, enabled_key, interval_key):
+    try:
+        api.update_collection_live(collection_id, st.session_state[enabled_key], st.session_state[interval_key])
+    except DashboardApiError as exc:
+        st.session_state['chart_live_error_' + collection_id] = (
+            'API tự động cập nhật chưa khả dụng.' if _live_unavailable(exc) else str(exc)
+        )
+
+
+@st.fragment(run_every=60)
+def render_collection_live(api, collection_id, current_end, finished_at):
+    try:
+        schedule = api.get_collection_live(collection_id)
+    except DashboardApiError as exc:
+        if _live_unavailable(exc):
+            st.caption('API tự động cập nhật chưa khả dụng.')
+        else:
+            st.warning(str(exc))
+        return
+
+    enabled_key = 'chart_live_enabled_' + collection_id
+    interval_key = 'chart_live_interval_' + collection_id
+    st.session_state[enabled_key] = schedule['enabled']
+    st.session_state[interval_key] = schedule['requested_interval_hours']
+    callback = dict(on_change=_save_live_controls, args=(api, collection_id, enabled_key, interval_key))
+    with st.container(border=True, key='chart_live_controls', gap='small'):
+        toggle, interval, action = st.columns((1.25, 1, 1), vertical_alignment='center')
+        toggle.toggle('Tự động cập nhật', key=enabled_key, **callback)
+        interval.selectbox('Chu kỳ cập nhật', LIVE_INTERVAL_HOURS, format_func=lambda n: f'{n} giờ',
+                           label_visibility='collapsed', key=interval_key, **callback)
+        manual = action.button('Cập nhật ngay', icon=':material/sync:', key='chart_refresh_' + collection_id)
+        if schedule['enabled']:
+            hours = schedule['effective_interval_hours']
+            if schedule['backed_off']:
+                st.badge(f'● Tự giãn về {hours} giờ (không hoạt động)', color='orange')
+            else:
+                st.badge(f'● Tự động · {hours} giờ', color='green')
+        elif schedule['disabled_reason'] == 'inactive_7_days':
+            st.caption('Đã tự tắt sau 7 ngày không hoạt động — bật lại để tiếp tục.')
+        elif schedule['disabled_reason'] == 'disabled_by_admin':
+            st.caption('Quản trị viên đã tắt tự động cập nhật cho bộ này.')
+        if notice := st.session_state.pop('chart_live_notice_' + collection_id, None):
+            st.success(notice)
+        if error := st.session_state.pop('chart_live_error_' + collection_id, None):
+            st.warning(error)
+            return
+
+        # A background refresh can land while this session has a cached chart.
+        stamp_key = 'chart_live_seen_' + collection_id
+        last = schedule['last_refreshed_at']
+        seen = st.session_state.get(stamp_key)
+        changed = bool(last and last != seen and (
+            not finished_at or to_vietnam_time(datetime.fromisoformat(last)) >
+            to_vietnam_time(datetime.fromisoformat(finished_at))
+        ))
+        if not (manual or changed or refresh_due(schedule, time.time())):
+            return
+        try:
+            result = (api.refresh_collection(collection_id) if manual
+                      else api.refresh_collection(collection_id, automatic=True))
+        except DashboardApiError as exc:
+            st.warning('API cập nhật dữ liệu chưa khả dụng.' if _live_unavailable(exc) else str(exc))
+            return
+        st.session_state[stamp_key] = result.get('last_refreshed_at', last)
+        end = result['requested_end']
+        advanced = to_vietnam_time(datetime.fromisoformat(end)) > to_vietnam_time(datetime.fromisoformat(current_end))
+        if result['status'] == 'updated' or advanced or changed:
+            invalidate_reads()
+            st.session_state['chart_live_update'] = (collection_id, end)
+            if manual:
+                st.session_state['chart_live_notice_' + collection_id] = f"Đã cập nhật · thêm {result['added_hours']} giờ dữ liệu."
+            st.rerun(scope='app')
+        elif manual:
+            st.success('Bộ dữ liệu đã được cập nhật đến giờ mới nhất.')
+
+
 def render_saved(client, charts=False):
     from frontend.dashboard import _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
     api=client('land')  # Collection ID, rather than this client's default source, controls reads.
+    live_update = st.session_state.pop('chart_live_update', None) if charts else None
+    if live_update:
+        api = replace(api, track_activity=False)
     prefix='chart' if charts else 'stored'
     saved_view = st.query_params.get(prefix+'_applied')
     show_details = st.session_state.get(prefix+'_details_visible', False)
@@ -649,6 +737,11 @@ def render_saved(client, charts=False):
                     pass
         st.session_state['selected_collection_id']=selected
         m,s=entry['metadata'],entry['summary']
+        if live_update and live_update[0] == selected:
+            end = to_vietnam_time(datetime.fromisoformat(live_update[1]))
+            st.session_state['chart_range_end_' + selected] = end.date()
+            st.session_state['chart_hour_end_' + selected] = end.time().replace(tzinfo=None)
+            st.session_state['chart_open_requested'] = selected
         with st.container(horizontal=True):
             st.button('Quay lại danh sách', key=prefix+'_back_to_list', type='primary',
                       icon=':material/arrow_back:', on_click=back_to_library, args=(prefix,))
@@ -670,6 +763,8 @@ def render_saved(client, charts=False):
             else:
                 st.caption('Dữ liệu mô hình GFS')
         if charts:
+            if m['source'] == 'open_meteo':
+                render_collection_live(api, selected, m['requested_end'], entry.get('finished_at'))
             render_collection_quality(api, prefix, entry)
         result_area = st.container()
         if not charts:

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import sqlite3
+import time
 
 from backend.app.api.auth_dependencies import require_current_user
 from backend.app.domain.auth import AuthResponse, CredentialsRequest, UserResponse, AdminUserResponse, UserAccessRequest, AdminHandoffRequest
@@ -78,6 +79,21 @@ def list_users(_: dict = Depends(require_admin), service: AuthService = Depends(
 @router.get("/admin/overview")
 def admin_overview(_: dict = Depends(require_admin), service: AuthService = Depends(get_auth_service)):
     return service._repository.get_admin_overview()
+
+
+@router.get("/admin/live-schedules")
+def admin_live_schedules(_: dict = Depends(require_admin), service: AuthService = Depends(get_auth_service)):
+    return {"schedules": service._repository.list_live_schedules(int(time.time()))}
+
+
+@router.post("/admin/live-schedules/{user_id}/{collection_id}/disable")
+def admin_disable_live_schedule(
+    user_id: int, collection_id: str,
+    _: dict = Depends(require_admin), service: AuthService = Depends(get_auth_service),
+):
+    if not service._repository.disable_live_schedule(user_id, collection_id, int(time.time())):
+        raise HTTPException(404, "Không tìm thấy lịch tự động cập nhật.")
+    return service._repository.get_live_schedule(user_id, collection_id, int(time.time()))
 
 
 @router.get("/admin/collection-history")

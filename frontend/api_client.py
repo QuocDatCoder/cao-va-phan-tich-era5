@@ -32,6 +32,7 @@ class DashboardApiClient:
     source: str | None = None
     stored_only: bool = False
     access_token: str | None = None
+    track_activity: bool = True
 
     def register(self, username: str, password: str) -> dict[str, Any]:
         return self._post(
@@ -68,6 +69,12 @@ class DashboardApiClient:
     def admin_collection_history(self, user_id: int | None = None) -> list[dict[str, Any]]:
         params = {"user_id": user_id} if user_id is not None else None
         return self._get("/api/v1/auth/admin/collection-history", params=params)["history"]
+
+    def admin_live_schedules(self) -> list[dict[str, Any]]:
+        return self._get("/api/v1/auth/admin/live-schedules")["schedules"]
+
+    def admin_disable_live_schedule(self, user_id: int, collection_id: str) -> dict[str, Any]:
+        return self._post(f"/api/v1/auth/admin/live-schedules/{user_id}/{collection_id}/disable", {})
 
     def create_admin_handoff(self) -> str:
         return self._post("/api/v1/auth/admin/handoff", {})["ticket"]
@@ -147,6 +154,17 @@ class DashboardApiClient:
     def get_collection(self, collection_id):
         return self._get(f'/api/v1/collections/{collection_id}')
 
+    def get_collection_live(self, collection_id: str) -> dict[str, Any]:
+        return self._get(f"/api/v1/collections/{collection_id}/live")
+
+    def update_collection_live(self, collection_id: str, enabled: bool, interval_hours: int = 1) -> dict[str, Any]:
+        return self._write("put", f"/api/v1/collections/{collection_id}/live",
+                           {"enabled": enabled, "interval_hours": interval_hours})
+
+    def refresh_collection(self, collection_id: str, *, automatic: bool = False) -> dict[str, Any]:
+        path = f"/api/v1/collections/{collection_id}/refresh"
+        return self._post(path + ("?automatic=true" if automatic else ""), {})
+
     def delete_collection(self, collection_id):
         try:
             headers = self._auth_headers()
@@ -225,8 +243,12 @@ class DashboardApiClient:
         return self._decode_response(response)
 
     def _patch(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._write("patch", path, payload)
+
+    def _write(self, method: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = self._session().patch(self._url(path), json=payload, timeout=self.timeout_seconds, headers=self._auth_headers())
+            send = getattr(self._session(), method)
+            response = send(self._url(path), json=payload, timeout=self.timeout_seconds, headers=self._auth_headers())
         except requests.Timeout as exc:
             raise DashboardApiError(self._timeout_message()) from exc
         except requests.RequestException as exc:
@@ -246,7 +268,9 @@ class DashboardApiClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise DashboardApiError("Máy chủ API trả về phản hồi không hợp lệ.") from exc
+            raise DashboardApiError(
+                "Máy chủ API trả về phản hồi không hợp lệ.", status_code=response.status_code,
+            ) from exc
 
         if not response.ok:
             detail = payload.get("detail") if isinstance(payload, dict) else None
@@ -274,7 +298,10 @@ class DashboardApiClient:
     def _auth_headers(self) -> dict[str, str] | None:
         if not self.access_token:
             return None
-        return {"Authorization": f"Bearer {self.access_token}"}
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        if not self.track_activity:
+            headers["X-Weather-Activity"] = "passive"
+        return headers
 
     def _timeout_message(self) -> str:
         return (

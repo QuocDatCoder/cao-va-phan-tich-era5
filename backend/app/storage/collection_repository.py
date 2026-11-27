@@ -229,35 +229,87 @@ class CollectionRepository(ClimateRepository):
         entry = self.get(collection_id)
         if entry is None:
             return None
-        m = entry['metadata']
-        primary = m['primary_variable']
-        components = WIND_COMPONENTS if primary in DERIVED_WIND_UNITS else [primary]
-        expected_hours = len(hourly_timestamps(datetime.fromisoformat(m['requested_start_utc']),datetime.fromisoformat(m['requested_end_utc'])))
         with self._connect() as c:
-            counts = c.execute('''SELECT variable,COUNT(*) AS count FROM collection_observations
-                WHERE collection_id=? GROUP BY variable''',(collection_id,)).fetchall()
-            grids = c.execute('SELECT latitude,longitude FROM collection_grids WHERE collection_id=?',(collection_id,)).fetchall()
-            valid = 0
-            for grid in grids:
-                sets = []
-                for variable in components:
-                    sets.append({r[0] for r in c.execute('''SELECT time_utc FROM collection_observations
-                        WHERE collection_id=? AND variable=? AND grid_latitude=? AND grid_longitude=?
-                        AND time_utc>=? AND time_utc<=?''',(collection_id,variable,*grid,m['requested_start_utc'],m['requested_end_utc']))})
-                valid += len(set.intersection(*sets))
-            expected = expected_hours * (len(grids) if grids else 1)
-            summary = dict(expected_count=expected, available_count=valid, missing_count=expected-valid,
-                           coverage=valid/expected if expected else 0, primary_variable=primary,
-                           expected_hours_per_grid=expected_hours, grid_count=len(grids),
-                           imported_values=sum(r['count'] for r in counts), counts_by_variable={r['variable']:r['count'] for r in counts},
-                           quality=quality)
+            summary = self._summarize(c, collection_id, entry['metadata'], quality)
             summary['grid_coordinates_verified'] = not any(i.get('code')=='missing_coordinates' for i in issues)
-            state = 'failed' if error or not valid else 'complete' if valid==expected else 'partial'
-            c.execute('UPDATE collections SET status=?,finished_at=?,summary=?,error=? WHERE id=?',
-                      (state,datetime.now(UTC).isoformat(),json.dumps(summary),error,collection_id))
+            self._finish(c, collection_id, summary, error)
             c.executemany('INSERT OR REPLACE INTO collection_quality_issues VALUES (?,?,?)',
                           [(collection_id,i,json.dumps(issue,ensure_ascii=False)) for i,issue in enumerate(issues)])
         return summary
+
+    @staticmethod
+    def _available_hours(c, collection_id, metadata, grid, start, end):
+        primary = metadata['primary_variable']
+        components = WIND_COMPONENTS if primary in DERIVED_WIND_UNITS else [primary]
+        return set.intersection(*[
+            {row[0] for row in c.execute('''SELECT time_utc FROM collection_observations
+                WHERE collection_id=? AND variable=? AND grid_latitude=? AND grid_longitude=?
+                AND time_utc>=? AND time_utc<=?''', (collection_id, variable, *grid, start, end))}
+            for variable in components
+        ])
+
+    def missing_refresh_hours(self, entry, latest):
+        m = entry['metadata']
+        start, end = datetime.fromisoformat(m['requested_start_utc']), datetime.fromisoformat(m['requested_end_utc'])
+        candidates = hourly_timestamps(end if entry['status'] == 'complete' else start, latest)
+        if entry['status'] == 'complete':
+            candidates = [hour for hour in candidates if hour > end]
+        if not candidates:
+            return []
+        with self._connect() as c:
+            covered = [
+                self._available_hours(c, entry['id'], m, (grid['latitude'], grid['longitude']),
+                                      stamp(candidates[0]), stamp(candidates[-1]))
+                for grid in entry['grids']
+            ]
+        available = set.intersection(*covered) if covered else set()
+        return [hour for hour in candidates if stamp(hour) not in available]
+
+    def _summarize(self, c, collection_id, metadata, quality):
+        start, end = metadata['requested_start_utc'], metadata['requested_end_utc']
+        expected_hours = len(hourly_timestamps(datetime.fromisoformat(start), datetime.fromisoformat(end)))
+        counts = c.execute('''SELECT variable,COUNT(*) AS count FROM collection_observations
+            WHERE collection_id=? GROUP BY variable''', (collection_id,)).fetchall()
+        grids = c.execute('SELECT latitude,longitude FROM collection_grids WHERE collection_id=?',
+                          (collection_id,)).fetchall()
+        valid = sum(len(self._available_hours(c, collection_id, metadata, grid, start, end)) for grid in grids)
+        expected = expected_hours * (len(grids) if grids else 1)
+        return dict(expected_count=expected, available_count=valid, missing_count=expected-valid,
+                    coverage=valid/expected if expected else 0, primary_variable=metadata['primary_variable'],
+                    expected_hours_per_grid=expected_hours, grid_count=len(grids),
+                    imported_values=sum(row['count'] for row in counts),
+                    counts_by_variable={row['variable']: row['count'] for row in counts}, quality=quality)
+
+    @staticmethod
+    def _finish(c, collection_id, summary, error=None):
+        valid = summary['available_count']
+        state = 'failed' if error or not valid else 'partial' if summary['missing_count'] else 'complete'
+        c.execute('UPDATE collections SET status=?,finished_at=?,summary=?,error=? WHERE id=?',
+                  (state, datetime.now(UTC).isoformat(), json.dumps(summary), error, collection_id))
+
+    def apply_live_refresh(self, collection_id, latest, observations):
+        """Publish observations and their new coverage in the same transaction."""
+        with self._connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT metadata,summary FROM collections WHERE id=?', (collection_id,)).fetchone()
+            if row is None:
+                raise LookupError('Bộ dữ liệu không còn tồn tại.')
+            metadata, previous = json.loads(row['metadata']), json.loads(row['summary'])
+            c.executemany('INSERT OR IGNORE INTO collection_observations VALUES (?,?,?,?,?,?,?,?)', observations)
+            c.executemany('INSERT OR IGNORE INTO collection_grids VALUES (?,?,?)',
+                          {(collection_id, record[3], record[4]) for record in observations})
+            if stamp(latest) > metadata['requested_end_utc']:
+                metadata.update(requested_end=latest.isoformat(), requested_end_utc=stamp(latest),
+                                end_date=to_utc_naive(latest).date().isoformat())
+            summary = self._summarize(c, collection_id, metadata, previous.get('quality'))
+            summary['grid_coordinates_verified'] = previous.get('grid_coordinates_verified', True)
+            if summary['quality'] is not None:
+                summary['quality']['imported_values'] = summary['imported_values']
+            c.execute('UPDATE collections SET metadata=? WHERE id=?',
+                      (json.dumps(metadata, ensure_ascii=False), collection_id))
+            self._finish(c, collection_id, summary)
+        added_hours = summary['available_count'] - previous.get('available_count', 0)
+        return metadata['requested_end'], added_hours
 
     def issues(self, collection_id, limit=500, offset=0):
         with self._connect() as c:

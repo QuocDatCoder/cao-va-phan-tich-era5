@@ -1,10 +1,44 @@
 from contextlib import closing, contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
+
+from backend.app.domain.live_refresh import (
+    DEFAULT_LIVE_INTERVAL_HOURS,
+    INACTIVE_AFTER_SECONDS,
+    MAX_ACTIVE_LIVE_SCHEDULES,
+    adaptive_backoff,
+)
 
 
 class UsernameAlreadyExistsError(Exception):
     pass
+
+
+class LiveScheduleLimitError(Exception):
+    pass
+
+
+def _live_state(row, now):
+    state = adaptive_backoff(
+        row["requested_interval_hours"], now - row["activity_at"],
+        bool(row["enabled"]), row["disabled_reason"],
+    )
+    return {
+        "enabled": state.effective_enabled,
+        "requested_interval_hours": row["requested_interval_hours"],
+        "effective_interval_hours": state.effective_interval_hours,
+        "backed_off": state.backed_off,
+        "disabled_reason": state.disabled_reason,
+        "last_refreshed_at": row["last_refreshed_at"],
+    }
+
+
+_LIVE_ROWS = """
+    SELECT schedules.*, users.username, users.is_active,
+           COALESCE(users.last_active_at, users.last_login_at, users.created_at) AS activity_at
+    FROM collection_live_schedules AS schedules JOIN users ON users.id = schedules.user_id
+"""
 
 
 class AuthRepository:
@@ -38,6 +72,18 @@ class AuthRepository:
                     expires_at INTEGER NOT NULL,
                     consumed_at INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS collection_live_schedules (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    collection_id TEXT NOT NULL,
+                    place_name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    requested_interval_hours INTEGER NOT NULL DEFAULT 1
+                        CHECK (requested_interval_hours IN (1, 3, 6, 24)),
+                    last_refreshed_at TEXT,
+                    disabled_reason TEXT,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, collection_id)
+                );
                 """
             )
             connection.execute("BEGIN IMMEDIATE")
@@ -48,6 +94,8 @@ class AuthRepository:
                 connection.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
             if "last_login_at" not in columns:
                 connection.execute("ALTER TABLE users ADD COLUMN last_login_at INTEGER")
+            if "last_active_at" not in columns:
+                connection.execute("ALTER TABLE users ADD COLUMN last_active_at INTEGER")
 
     @contextmanager
     def _connect(self):
@@ -67,6 +115,112 @@ class AuthRepository:
                 return int(cursor.lastrowid)
         except sqlite3.IntegrityError as exc:
             raise UsernameAlreadyExistsError from exc
+
+    @staticmethod
+    def _expire_live(connection, now, user_id=None):
+        connection.execute(
+            """UPDATE collection_live_schedules
+               SET enabled = 0, disabled_reason = 'inactive_7_days', updated_at = ?
+               WHERE enabled = 1 AND (? IS NULL OR user_id = ?) AND user_id IN (
+                   SELECT id FROM users
+                   WHERE COALESCE(last_active_at, last_login_at, created_at) <= ?
+               )""",
+            (now, user_id, user_id, now - INACTIVE_AFTER_SECONDS),
+        )
+
+    def record_activity(self, user_id: int, now: int) -> None:
+        with self._connect() as connection:
+            self._record_activity(connection, user_id, now)
+
+    def _record_activity(self, connection, user_id, now):
+        # Persist expiry before a returning user can reset the inactivity clock.
+        self._expire_live(connection, now, user_id)
+        connection.execute(
+            "UPDATE users SET last_active_at = ? WHERE id = ? AND COALESCE(last_active_at, 0) < ?",
+            (now, user_id, now),
+        )
+
+    def get_live_schedule(self, user_id, collection_id, now):
+        with self._connect() as connection:
+            self._expire_live(connection, now, user_id)
+            row = connection.execute(
+                _LIVE_ROWS + "WHERE schedules.user_id = ? AND schedules.collection_id = ?",
+                (user_id, collection_id),
+            ).fetchone()
+        return _live_state(row or {
+            "requested_interval_hours": DEFAULT_LIVE_INTERVAL_HOURS, "activity_at": now,
+            "enabled": False, "disabled_reason": None, "last_refreshed_at": None,
+        }, now)
+
+    def update_live_schedule(self, user_id, collection_id, place_name, enabled, interval, now):
+        with self._connect() as connection:
+            self._record_activity(connection, user_id, now)
+            if enabled and connection.execute(
+                """SELECT COUNT(*) FROM collection_live_schedules
+                   WHERE user_id = ? AND enabled = 1 AND collection_id != ?""",
+                (user_id, collection_id),
+            ).fetchone()[0] >= MAX_ACTIVE_LIVE_SCHEDULES:
+                raise LiveScheduleLimitError
+            connection.execute(
+                """INSERT INTO collection_live_schedules
+                       (user_id, collection_id, place_name, enabled, requested_interval_hours, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (user_id, collection_id) DO UPDATE SET
+                       place_name = excluded.place_name, enabled = excluded.enabled,
+                       requested_interval_hours = excluded.requested_interval_hours,
+                       disabled_reason = CASE WHEN excluded.enabled THEN NULL
+                                             ELSE collection_live_schedules.disabled_reason END,
+                       updated_at = excluded.updated_at""",
+                (user_id, collection_id, place_name, enabled, interval, now),
+            )
+        return self.get_live_schedule(user_id, collection_id, now)
+
+    def list_live_schedules(self, now, *, active_only=False):
+        with self._connect() as connection:
+            self._expire_live(connection, now)
+            where = "WHERE schedules.enabled = 1 AND users.is_active = 1" if active_only else ""
+            rows = connection.execute(
+                _LIVE_ROWS + where + " ORDER BY users.username, schedules.collection_id",
+            ).fetchall()
+        fields = ("username", "user_id", "collection_id", "place_name")
+        return [{**{field: row[field] for field in fields}, **_live_state(row, now)} for row in rows]
+
+    def disable_live_schedule(self, user_id, collection_id, now):
+        with self._connect() as connection:
+            return connection.execute(
+                """UPDATE collection_live_schedules
+                   SET enabled = 0, disabled_reason = 'disabled_by_admin', updated_at = ?
+                   WHERE user_id = ? AND collection_id = ?""",
+                (now, user_id, collection_id),
+            ).rowcount == 1
+
+    def record_live_refresh(self, user_id, collection_id, place_name, now, *, automatic):
+        refreshed = datetime.fromtimestamp(now, UTC).isoformat()
+        with self._connect() as connection:
+            if automatic:
+                connection.execute(
+                    """UPDATE collection_live_schedules SET last_refreshed_at = ?, updated_at = ?
+                       WHERE user_id = ? AND collection_id = ?
+                         AND (last_refreshed_at IS NULL OR last_refreshed_at < ?)""",
+                    (refreshed, now, user_id, collection_id, refreshed),
+                )
+            else:
+                connection.execute(
+                    """INSERT INTO collection_live_schedules
+                           (user_id, collection_id, place_name, last_refreshed_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id, collection_id) DO UPDATE SET
+                           last_refreshed_at = excluded.last_refreshed_at, updated_at = excluded.updated_at
+                       WHERE collection_live_schedules.last_refreshed_at IS NULL
+                          OR collection_live_schedules.last_refreshed_at < excluded.last_refreshed_at""",
+                    (user_id, collection_id, place_name, refreshed, now),
+                )
+
+    def delete_live_schedule(self, user_id, collection_id):
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM collection_live_schedules WHERE user_id = ? AND collection_id = ?",
+                (user_id, collection_id),
+            )
 
     def get_user_by_username(self, username: str) -> dict | None:
         with self._connect() as connection:
@@ -154,6 +308,7 @@ class AuthRepository:
                        WHERE id = ? AND (last_login_at IS NULL OR last_login_at < ?)""",
                     (created_at, user_id, created_at),
                 )
+            self._record_activity(connection, user_id, created_at)
 
     def get_user_for_session(self, token_hash: str, now: int) -> dict | None:
         with self._connect() as connection:

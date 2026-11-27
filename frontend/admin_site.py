@@ -14,6 +14,8 @@ from frontend.workspace_sidebar import _SIDEBAR
 from frontend.appearance import apply_appearance
 from frontend.notifications import notify_admin_error, notify_success
 from frontend.dashboard import _translate_status
+from backend.app.domain.live_refresh import LIVE_INTERVAL_HOURS
+from backend.app.domain.time_utils import to_vietnam_time
 
 
 _TOKEN_KEY = "admin_access_token"
@@ -22,6 +24,7 @@ _ADMIN_ROLE_ERROR = "Tài khoản này không có quyền quản trị."
 _ADMIN_NAV = {
     "overview": ("Tổng quan", "dashboard"),
     "accounts": ("Quản lý tài khoản", "manage_accounts"),
+    "live-schedules": ("Tự động cập nhật", "sync"),
 }
 _BRIDGE = st.components.v2.component(
     "era5_admin_session_bridge",
@@ -317,14 +320,79 @@ def main() -> None:
         st.session_state["admin_login_error"] = _ADMIN_ROLE_ERROR
         st.rerun()
     _render_admin_sidebar(api, user["username"])
-    accounts = st.session_state.get("admin_section") == "accounts"
+    section = st.session_state.get("admin_section")
     with st.container(key="admin_workspace"):
-        if accounts:
+        if section == "accounts":
             with st.container(key="admin_accounts_view"):
                 _render_accounts(api, user)
+        elif section == "live-schedules":
+            _render_live_schedules(api)
         else:
             st.header("Tổng quan hệ thống", anchor=False)
             _render_overview(api)
+
+
+def _live_status(row):
+    if not row["enabled"]:
+        return "Đã tắt", "gray"
+    return ("Đang tự giãn", "orange") if row["backed_off"] else ("Đang bật", "green")
+
+
+def _render_live_schedules(api: DashboardApiClient) -> None:
+    st.header("Tự động cập nhật", anchor=False)
+    try:
+        schedules = api.admin_live_schedules()
+    except DashboardApiError as exc:
+        st.error(str(exc))
+        return
+
+    statuses = ("Đang bật", "Đang tự giãn", "Đã tắt")
+    cards = st.columns(3)
+    for card, status, title in zip(cards, statuses, ("Đang bật", "Đang tự giãn chu kỳ", "Đã tắt")):
+        card.metric(title, sum(_live_status(row)[0] == status for row in schedules), border=True)
+
+    search, status_filter, interval_filter = st.columns((2, 1, 1))
+    term = search.text_input("Tìm kiếm", placeholder="Tài khoản hoặc địa điểm", key="admin_live_search").strip().casefold()
+    status = status_filter.selectbox("Trạng thái", ("Tất cả", *statuses), key="admin_live_status")
+    intervals = ("Tất cả", *(f"{hours} giờ" for hours in LIVE_INTERVAL_HOURS))
+    interval = interval_filter.selectbox("Chu kỳ thực tế", intervals, key="admin_live_interval")
+    rows = [
+        row for row in schedules
+        if (term in row["username"].casefold() or term in row["place_name"].casefold())
+        and (status == "Tất cả" or _live_status(row)[0] == status)
+        and (interval == "Tất cả" or f"{row['effective_interval_hours']} giờ" == interval)
+    ]
+
+    widths = (1.2, 1.7, 1, 1, 1.2, 1.4, .75)
+    with st.container(border=True, key="admin_live_table", gap="small"):
+        columns = ("Tài khoản", "Bộ dữ liệu", "Chu kỳ gốc", "Chu kỳ thực tế",
+                   "Trạng thái", "Cập nhật gần nhất", "Thao tác")
+        for cell, title in zip(st.columns(widths, gap="small"), columns):
+            cell.markdown(f"**{title}**")
+        if not rows:
+            st.caption("Không có lịch phù hợp.")
+        for row in rows:
+            account, place, original, effective, state, refreshed, action = st.columns(
+                widths, gap="small", vertical_alignment="center",
+            )
+            account.text(row["username"])
+            place.markdown(row["place_name"].replace("$", r"\$"))
+            place.caption(row["collection_id"][:8])
+            original.text(f"{row['requested_interval_hours']} giờ")
+            hours = row["effective_interval_hours"]
+            effective.text(f"{hours} giờ" if hours is not None else "—")
+            label, color = _live_status(row)
+            state.badge(label, color=color)
+            last = row["last_refreshed_at"]
+            refreshed.text(to_vietnam_time(datetime.fromisoformat(last)).strftime("%d/%m/%Y %H:%M") if last else "—")
+            user_id, collection_id = row["user_id"], row["collection_id"]
+            if row["enabled"] and action.button("Tắt", key=f"admin_live_disable_{user_id}_{collection_id}"):
+                try:
+                    api.admin_disable_live_schedule(user_id, collection_id)
+                except DashboardApiError as exc:
+                    st.error(str(exc))
+                else:
+                    st.rerun()
 
 
 def _render_overview(api: DashboardApiClient) -> None:

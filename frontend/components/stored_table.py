@@ -45,6 +45,61 @@ def _open_month(key, selection_key, months):
         st.session_state[f'{key}_Ngày_page_{month}'] = 0
 
 
+def _open_hour(key, when):
+    day = when.date() if isinstance(when, datetime) else when
+    st.session_state[key+'_level'] = 'Giờ'
+    st.session_state[key+'_day'] = day
+    st.session_state[key+'_highlight_hour'] = when if isinstance(when, datetime) else None
+    st.session_state[f'{key}_hour_page_{day}'] = 0
+
+
+def _render_highlights(frame, times, variables, key):
+    st.subheader('Điểm nổi bật', anchor=False)
+    labels = {item['variable']: variable_label(item['variable']) for item in variables}
+    variable = (st.selectbox('Biến xem điểm nổi bật', list(labels), format_func=labels.get,
+                             key=key+'_highlight_variable') if len(labels) > 1 else variables[0]['variable'])
+    item = next(item for item in variables if item['variable'] == variable)
+    unit = item['unit']
+    values = frame[f'{labels[variable]} ({unit})'].dropna()
+    if values.empty:
+        st.caption('Biến đang chọn chưa có giá trị trong khoảng đã lọc.')
+        return
+
+    def formatted(value):
+        return f'{value:.4g} {unit}'
+
+    if variable == 'wind_direction':
+        directions = ('Bắc', 'Đông Bắc', 'Đông', 'Đông Nam', 'Nam', 'Tây Nam', 'Tây', 'Tây Bắc')
+        counts = (((values % 360 + 22.5) // 45) % 8).value_counts()
+        dominant = counts[counts == counts.max()]
+        st.metric('Hướng gió thường gặp', ' / '.join(directions[int(i)] for i in sorted(dominant.index)),
+                  border=True)
+        st.caption(f'Mỗi hướng trên xuất hiện {dominant.iloc[0] / len(values):.1%} trong các giờ có dữ liệu.')
+        return
+
+    if resolve_aggregation(variable, 'auto') == 'sum':
+        totals = values.groupby(times.dt.date).sum()
+        summaries = [('Tổng trong khoảng', formatted(values.sum()), None)]
+        if variable in {'precipitation', 'total_precipitation'}:
+            summaries.append(('Ngày có mưa / có dữ liệu', f'{(totals > 0).sum()}/{len(totals)} ngày', None))
+        if totals.max() > 0:
+            summaries.append(('Ngày có tổng cao nhất', formatted(totals.max()), totals.idxmax()))
+    else:
+        summaries = [
+            ('Trung bình', formatted(values.mean()), None),
+            ('Thấp nhất', formatted(values.min()), times.loc[values.idxmin()]),
+            ('Cao nhất', formatted(values.max()), times.loc[values.idxmax()]),
+        ]
+    for column, (label, value, when) in zip(st.columns(len(summaries)), summaries):
+        with column:
+            st.metric(label, value, border=True)
+            if when is not None:
+                hourly = isinstance(when, datetime)
+                caption = when.strftime('%d/%m/%Y %H:%M' if hourly else '%d/%m/%Y')
+                st.button(f'Xem {caption}', key=f'{key}_{label}_hour', icon=':material/arrow_downward:',
+                          on_click=_open_hour, args=(key, when))
+
+
 @st.fragment
 def render_stored_table(frame, timestamps, variables, collection_id, start, end):
     if frame.empty:
@@ -55,6 +110,7 @@ def render_stored_table(frame, timestamps, variables, collection_id, start, end)
     end = datetime.fromisoformat(end).astimezone(times.dt.tz)
     days = (end.date() - start.date()).days + 1
     key = f'stored_table_{collection_id}_{start.isoformat()}_{end.isoformat()}'
+    _render_highlights(frame, times, variables, key)
     default = 'Giờ' if days <= 7 else 'Ngày' if days <= 31 else 'Tháng'
     st.session_state.setdefault(key+'_level', default)
     level = st.segmented_control('Chi tiết bảng', LEVELS, required=True, key=key+'_level')
@@ -96,7 +152,14 @@ def render_stored_table(frame, timestamps, variables, collection_id, start, end)
                      key=selection_key, selection_mode='single-row',
                      on_select=lambda: _open_month(key, selection_key, visible.index))
     else:
-        st.dataframe(visible, hide_index=True, width='stretch', alt=f'Dữ liệu theo {level.lower()}')
+        highlighted = st.session_state.get(key+'_highlight_hour') if level == 'Giờ' else None
+        if highlighted is not None and selected_day == highlighted.date():
+            highlighted_rows = times.index[times == highlighted]
+            visible = visible.style.set_properties(subset=pd.IndexSlice[visible.index.intersection(highlighted_rows), :],
+                                                   **{'background-color': '#d6eee6', 'color': '#18332f'})
+            st.dataframe(visible, hide_index=True, width='stretch', height='content', alt='Dữ liệu giờ có dòng nổi bật')
+        else:
+            st.dataframe(visible, hide_index=True, width='stretch', alt=f'Dữ liệu theo {level.lower()}')
     if pages > 1:
         with st.container(horizontal=True, vertical_alignment='center'):
             st.button('Trang trước', key=page_key+'_prev', disabled=page == 0,

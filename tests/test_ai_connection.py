@@ -67,7 +67,7 @@ def test_timeout_is_sanitized_and_not_retried():
 
 
 @pytest.mark.parametrize('variant',['missing','unknown','extra_args','bad_json','wrong_nonce','two_calls'])
-def test_invalid_tool_requests_are_never_executed(variant):
+def test_invalid_tool_requests_era_never_executed(variant):
     calls=[]
     fixture=fixture_transport()
     def handle(request):

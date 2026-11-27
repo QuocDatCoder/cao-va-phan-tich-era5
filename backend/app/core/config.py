@@ -8,9 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        extra="ignore",
+    )
 
-    climate_provider: Literal["mock", "era5", "era5_land_timeseries"] = "era5"
+    climate_provider: Literal["mock", "era5", "era5_land_timeseries", "open_meteo"] = "open_meteo"
     data_dir: Path = Path("data")
     auth_enabled: bool = True
     auth_db_path: Path = Path("data/cache/auth.sqlite3")

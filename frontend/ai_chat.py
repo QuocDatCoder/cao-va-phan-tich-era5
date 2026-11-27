@@ -18,7 +18,7 @@ from frontend.components.weather_pet import PET_CSS, themed_pet_art
 
 SUGGESTIONS = ['Kho đang có những bộ dữ liệu nào?', 'Làm sao vẽ biểu đồ?', 'Ứng dụng hỗ trợ hỏi những gì?']
 CSS_PATH = Path(__file__).with_name('components').joinpath('ai_chat.css')
-LINES_PATH = CSS_PATH.with_name('are_launcher_lines.js')
+LINES_PATH = CSS_PATH.with_name('era_launcher_lines.js')
 
 
 @st.cache_data(max_entries=2,show_spinner=False)
@@ -80,7 +80,7 @@ def _clear():
     st.session_state.pop('ai_chat_history_error',None)
     st.session_state.pop('ai_chat_action_error',None)
     for key in list(st.session_state):
-        if key.startswith('are_collect_'):
+        if key.startswith('era_collect_'):
             del st.session_state[key]
     _unselect()
 
@@ -144,7 +144,7 @@ def _evidence(api,result, index):
                     st.caption(f"{_date_label(row['requested_start'])} → {_date_label(row['requested_end'])}")
                     st.button('Chọn và tiếp tục',key=f'ai_pick_{index}_{n}_{row["collection_id"]}',
                               on_click=_choose_and_continue,args=(api,row['collection_id'],row['name'],index),
-                              disabled=bool(st.session_state.get('ai_chat_pending')),help='Chọn bộ và gửi tiếp yêu cầu cho ARE')
+                              disabled=bool(st.session_state.get('ai_chat_pending')),help='Chọn bộ và gửi tiếp yêu cầu cho ERA')
                     with st.container(horizontal=True):
                         for target,label in [('open_data','Xem dữ liệu'),('open_chart','Biểu đồ')]:
                             action=UIAction(type=target,collection_id=row['collection_id']).model_dump(mode='json')
@@ -162,7 +162,7 @@ def _evidence(api,result, index):
             st.caption(f"{_date_label(p['start'])} → {_date_label(p['end'])}")
     data = last.get('data')
     if evidence[-1]['tool']=='prepare_collection' and last['status']=='ok':
-        from frontend.are_collection import render_collection_draft
+        from frontend.era_collection import render_collection_draft
         render_collection_draft(api,data,index)
         return
     if evidence[-1]['tool']=='prepare_view' and last['status']=='needs_clarification' and isinstance(data,dict) and data.get('choices'):
@@ -282,7 +282,7 @@ def _view_form(api,data,index):
                 execute_action(api,action,index)
 
 
-@st.fragment(key='are_chat')
+@st.fragment(key='era_chat')
 def render_ai_chat(api):
     st.session_state.setdefault('ai_chat_open',False)
     st.session_state.setdefault('ai_chat_messages',[])
@@ -294,7 +294,7 @@ def render_ai_chat(api):
             unsafe_allow_javascript=True)
     with st.container(key='ai_chat_launcher'):
         st.html('<div class="pet-launch-art">'+themed_pet_art(unread=st.session_state.get('ai_chat_unread',False))+
-                '<span class="pet-launch-caption">ARE</span></div>'
+                '<span class="pet-launch-caption">ERA</span></div>'
                 '<div class="pet-launch-lines" aria-hidden="true"><span></span></div>')
         st.button('AI chat',key='ai_chat_toggle',type='tertiary',
                   on_click=_toggle)
@@ -303,14 +303,14 @@ def render_ai_chat(api):
     with st.container(key='ai_chat_shell'):
         with st.container(horizontal=True,vertical_alignment='center',wrap=False,key='ai_chat_header'):
             st.html('<div class="pet-heading"><div class="pet-heading-art">'+themed_pet_art(small=True)+
-                    '</div><div><strong>ARE</strong></div></div>')
+                    '</div><div><strong>ERA</strong></div></div>')
             st.button('Làm mới',key='ai_chat_clear',on_click=_clear,disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),icon=':material/refresh:',type='tertiary',help='Xóa lịch sử và bắt đầu cuộc trò chuyện mới')
             st.button('Đóng chat',icon=':material/close:',key='ai_chat_close',on_click=_close,type='tertiary',help='Đóng khung chat và giữ cuộc trò chuyện')
         with st.container(height=320,key='ai_chat_messages',autoscroll=True,border=False):
             if not messages:
                 st.html('<div class="pet-welcome"><div class="pet-welcome-art">'+themed_pet_art(small=True)+
-                        '</div><strong>Chào bạn, mình là ARE!</strong></div>')
-                labels=['Tìm dữ liệu đã lưu','Hướng dẫn vẽ biểu đồ','ARE có thể giúp gì?']
+                        '</div><strong>Chào bạn, mình là ERA!</strong></div>')
+                labels=['Tìm dữ liệu đã lưu','Hướng dẫn vẽ biểu đồ','ERA có thể giúp gì?']
                 with st.container(key='ai_chat_suggestions', gap='xsmall'):
                     for n, suggestion in enumerate(SUGGESTIONS):
                         st.button(labels[n],key=f'ai_suggestion_{n}',disabled=bool(pending),
@@ -358,9 +358,9 @@ def render_ai_chat(api):
                     st.html('<div class="chat-context-label">'+escape(text)+'</div>')
         context=applied_view(st.session_state,st.query_params)
         if context and context.get('parameters'):
-            st.button('Phân tích bộ đang xem', key='are_analyze_current',disabled=bool(pending),
+            st.button('Phân tích bộ đang xem', key='era_analyze_current',disabled=bool(pending),
                       on_click=_submit,args=(api,'Phân tích chuyên gia biểu đồ đang xem. Tìm đặc điểm nổi bật và kiểm tra độ phủ.'))
-        st.chat_input('Hỏi ARE…',key='ai_chat_input',max_chars=2000,
+        st.chat_input('Hỏi ERA…',key='ai_chat_input',max_chars=2000,
                       disabled=bool(pending) or not st.session_state.get('ai_chat_history_loaded'),submit_mode='disable',on_submit=_submit_input,args=(api,))
         if not st.session_state.get('ai_chat_history_loaded'):
             st.caption('Đang khôi phục lịch sử…')

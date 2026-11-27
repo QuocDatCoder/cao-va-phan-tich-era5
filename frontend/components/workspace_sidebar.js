@@ -61,21 +61,27 @@ export default function({data, parentElement, setTriggerValue}) {
     root.dataset.theme = state.theme;
     const panel = document.createElement("aside");
     panel.className = "era5-workspace-sidebar";
-    panel.setAttribute("aria-label", "Điều hướng ERA5");
+    panel.setAttribute("aria-label", "Điều hướng khí tượng");
     panel.id = "era5-sidebar-panel";
     const header = document.createElement("header");
     header.className = "era5-sidebar-header";
     const brand = document.createElement("strong");
-    brand.textContent = "ERA5";
-    const collapse = button(state.collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar",
-      state.collapsed && !state.drawer ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left", "era5-sidebar-collapse",
+    brand.className = "weahub-wordmark";
+    brand.append("Weather ");
+    const hub = document.createElement("span");
+    hub.textContent = "Hub";
+    brand.append(hub);
+    const mobile = matchMedia(MOBILE).matches;
+    const collapse = button(mobile ? "Đóng menu điều hướng" : state.collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar",
+      mobile ? "close" : state.collapsed ? "keyboard_double_arrow_right" : "keyboard_double_arrow_left", "era5-sidebar-collapse",
       () => {
         if (matchMedia(MOBILE).matches) state.drawer = false;
         else state.collapsed = !state.collapsed;
         render();
         (matchMedia(MOBILE).matches ? root.querySelector(".era5-mobile-menu") : root.querySelector(".era5-sidebar-collapse"))?.focus();
       }, true);
-    collapse.setAttribute("aria-expanded", String(!state.collapsed));
+    collapse.setAttribute("aria-expanded", String(mobile ? state.drawer : !state.collapsed));
+    collapse.setAttribute("aria-controls", panel.id);
     header.append(brand, collapse);
     const nav = document.createElement("nav");
     nav.className = "era5-sidebar-nav";
@@ -83,7 +89,16 @@ export default function({data, parentElement, setTriggerValue}) {
       const row = button(item.label, item.icon, "era5-sidebar-row", () => {
         state.drawer = false;
         render();
-        if (item.id !== data.active) setTriggerValue("navigate", item.id);
+        if (item.id !== data.active) {
+          if (data.workspaceNavigation) {
+            document.documentElement.dataset.weahubDestination = String(data.navigation.indexOf(item));
+            document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
+          }
+          if (data.dismissAdminNoticeOnNavigate) {
+            document.querySelector(".admin-notice button")?.click();
+          }
+          setTriggerValue("navigate", item.id);
+        }
       });
       if (item.id === data.active) row.setAttribute("aria-current", "page");
       nav.append(row);

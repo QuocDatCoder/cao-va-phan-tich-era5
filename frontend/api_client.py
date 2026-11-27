@@ -126,7 +126,7 @@ class DashboardApiClient:
         return {**first, "issues": issues, "limit": len(issues), "offset": 0}
 
     def get_catalog(self, limit=100, offset=0):
-        if self.source not in {"land", "era5", "mock"}:
+        if self.source not in {"land", "era5", "mock", "open_meteo"}:
             raise DashboardApiError("Hãy chọn nguồn dữ liệu.")
         return self._get("/api/v1/stored/climate/catalog", params={"source": self.source, "limit": limit, "offset": offset})
 
@@ -174,7 +174,7 @@ class DashboardApiClient:
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.stored_only and path.startswith("/api/v1/climate/"):
-            if self.source not in {"land", "era5", "mock"}:
+            if self.source not in {"land", "era5", "mock", "open_meteo"}:
                 raise DashboardApiError("Hãy chọn nguồn dữ liệu cho truy vấn database.")
             path = path.replace("/api/v1/climate/", "/api/v1/stored/climate/", 1)
             params = {**(params or {}), "source": self.source}
@@ -198,7 +198,7 @@ class DashboardApiClient:
         authenticated: bool = True,
     ) -> dict[str, Any]:
         if self.stored_only and path == "/api/v1/downloads":
-            if self.source not in {"land", "era5", "mock"}:
+            if self.source not in {"land", "era5", "mock", "open_meteo"}:
                 raise DashboardApiError("Hãy chọn nguồn dữ liệu trước khi thu thập.")
             payload = {**payload, "source": self.source}
         try:

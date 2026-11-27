@@ -1,4 +1,4 @@
-"""Bounded live evaluation of expanded ARE, using synthetic climate data only."""
+"""Bounded live evaluation of expanded ERA, using synthetic climate data only."""
 import argparse
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ from backend.app.ai.responses_client import ResponsesClient
 from scripts.agent_fixtures import create_fixture
 
 CASES=[
-    ('greeting','Chào ARE','general',None),
+    ('greeting','Chào ERA','general',None),
     ('basic','Kelvin và Celsius khác nhau thế nào?','general',None),
     ('architecture','Giải thích kiến trúc dự án này: frontend, backend, DB phối hợp thế nào và vì sao tách thu thập khỏi xem dữ liệu?','project',None),
     ('quality','Trong đồ án này, tại sao nhiệt độ 25 có thể ra -248,15 độ C? Parser và Agent xử lý cảnh báo thế nào?','project',None),

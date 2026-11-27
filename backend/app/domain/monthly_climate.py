@@ -1,4 +1,4 @@
-"""Complete monthly temperature and rainfall pairs used in the chart and ARE."""
+"""Complete monthly temperature and rainfall pairs used in the chart and ERA."""
 import pandas as pd
 
 

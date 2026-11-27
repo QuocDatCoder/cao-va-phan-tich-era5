@@ -1,6 +1,9 @@
 """A library of named collection snapshots, not a merged cache inventory."""
 from datetime import datetime, timezone, timedelta
+from backend.app.domain.recent_weather import is_same_day_collection
 import json
+import re
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
@@ -78,10 +81,30 @@ def invalidate_job_list(*, keep_history=False):
     st.session_state['workflow_jobs_due'] = 0
 
 
+def collection_title(metadata):
+    place = metadata['place_name']
+    if metadata['source'] != 'open_meteo':
+        return f"{variable_label(metadata['primary_variable'])} · {place}"
+    number = r'[-]{0,1}\d+([.]\d+){0,1}'
+    parts = re.sub(rf'\s+\({number},\s*{number}\)$', '', place).split(', ')
+    names = {}
+    for part in parts:
+        key = ''.join(c for c in unicodedata.normalize('NFD', part.casefold())
+                      if not unicodedata.combining(c))
+        names.setdefault(key, part)
+    if place == 'Tọa độ nhập tay' and metadata.get('location'):
+        point = metadata['location']
+        place = f"{point['latitude']:.4f}, {point['longitude']:.4f}"
+    else:
+        place = ', '.join(names.values())
+    return f'Dữ liệu khí tượng · {place}'
+
+
 def label(entry):
     m=entry['metadata']
     a,b=(datetime.fromisoformat(m[k]).strftime('%d/%m/%Y') for k in ['requested_start','requested_end'])
-    return f"{variable_label(m['primary_variable'])} — {m['place_name']} — {a} đến {b} · {entry['id'][:8]}"
+    period = a if a == b else f'{a} đến {b}'
+    return f"{collection_title(m)} · {period} · {entry['id'][:8]}"
 
 
 def decode_saved_view(raw):
@@ -435,26 +458,54 @@ def render_collection_quality(api, prefix, entry):
     selected = entry['id']
     m, s = entry['metadata'], entry['summary']
     with st.expander('Thông tin thu thập và chất lượng'):
-        st.caption(f"{STATUS.get(entry['status'],entry['status'])}" + (' · DỮ LIỆU GIẢ LẬP' if m['source']=='mock' else ''))
-        if m.get('location'):
-            st.caption(f"Điểm yêu cầu: {m['location']['latitude']:.4f}, {m['location']['longitude']:.4f}")
-        else: st.caption('Phạm vi yêu cầu: '+str(m.get('area')))
-        x,y,z=st.columns(3)
-        x.metric('Giá trị chính đã lưu / yêu cầu',f"{s.get('available_count',0)} / {s.get('expected_count','—')}")
-        y.metric('Độ phủ biến chính',f"{s.get('coverage',0):.1%}")
-        z.metric('Cảnh báo',(s.get('quality') or {}).get('issue_count',0))
-        if entry['status'] in {'queued','running','cancelling'}:
-            st.info('Tác vụ chưa kết thúc. Nếu backend bị dừng giữa chừng, hãy kiểm tra tác vụ trước khi tạo lại; trạng thái này không chứng minh bộ dữ liệu đã hoàn tất.')
-        if entry['status']=='partial': st.warning('Bộ dữ liệu chưa đủ. Giá trị thiếu không được thay bằng 0.')
+        status = entry['status']
+        available, expected = s.get('available_count', 0), s.get('expected_count', 0)
+        issues = (s.get('quality') or {}).get('issue_count', 0)
+        measure = 'giờ' if s.get('grid_count', 1) <= 1 else 'giá trị theo giờ trên các điểm lưới'
+        counts = f'{available:,}/{expected:,} {measure}'
+        warnings = f'{issues:,} cảnh báo' if issues else 'Không có cảnh báo'
+        if status == 'complete':
+            message = st.warning if issues else st.success
+            message(f'**Đủ dữ liệu** · {counts} · {warnings}')
+        elif status == 'partial':
+            st.warning(f'**Thiếu {expected - available:,} {measure}** · Có {counts} · {warnings}')
+            st.caption('Các khoảng thiếu trong kết quả đang xem được liệt kê ở mục Khoảng giờ thiếu phía trên bảng.')
+        elif status in {'queued', 'running', 'cancelling'}:
+            st.info(f'**{STATUS.get(status, status)}** · Kết quả chất lượng sẽ có sau khi tác vụ kết thúc.')
+        else:
+            st.error(f'**{STATUS.get(status, status)}**')
+        if m['source'] == 'mock':
+            st.caption('Dữ liệu giả lập')
+        if m['source'] == 'open_meteo':
+            dataset = m.get('dataset')
+            source_label = ('Open-Meteo Forecast · Best Match' if dataset == 'open-meteo-forecast-best-match'
+                            else 'Open-Meteo Forecast · GFS' if is_same_day_collection(
+                                datetime.fromisoformat(m['requested_start']), datetime.fromisoformat(m['requested_end']),
+                                datetime.fromisoformat(entry['created_at']))
+                            else 'Open-Meteo Historical Forecast · GFS')
+            st.caption(f'Nguồn: {source_label}')
+        created = datetime.fromisoformat(entry['created_at']).astimezone(timezone(timedelta(hours=7)))
+        st.caption(f'Tạo lúc {created:%H:%M · %d/%m/%Y} (UTC+7)')
+        if expected:
+            primary = s.get('primary_variable') or m['primary_variable']
+            stored = s.get('counts_by_variable', {}).get(primary)
+            explanation = f'{counts} có dữ liệu {variable_label(primary).lower()} trong khoảng yêu cầu (UTC+7).'
+            if stored is not None and stored > available:
+                explanation += (f' Kho lưu {stored:,} giá trị của biến này, gồm {stored - available:,} '
+                                'giá trị ngoài khoảng yêu cầu do tải dữ liệu theo trọn ngày UTC.')
+            st.write(explanation)
         if s.get('grid_coordinates_verified') is False:
             st.warning('File nguồn thiếu tọa độ lưới. Điểm lưu là điểm thay thế do parser ghi nhận, chưa xác minh là điểm lưới thực.')
         if entry.get('error'):
             notify_error(f"Lỗi bộ dữ liệu: {entry['error']}")
-        with st.expander('Thông tin lần thu thập, file nguồn và các biến bổ sung'):
+        with st.expander('Chi tiết kỹ thuật'):
             st.write('Mã bộ dữ liệu: '+entry['id'])
-            st.write('Tạo lúc: '+entry['created_at'])
             st.write('Khoảng tải UTC: '+m['start_date']+' → '+m['end_date'])
-            st.caption('Số bên dưới gồm cả giờ UTC dư và biến bổ sung; không phải số giá trị chính trong khoảng bạn chọn.')
+            if m.get('location'):
+                st.caption(f"Điểm yêu cầu: {m['location']['latitude']:.4f}, {m['location']['longitude']:.4f}")
+            else:
+                st.caption('Phạm vi yêu cầu: '+str(m.get('area')))
+            st.caption('Bảng đếm các giá trị thực tế đã lưu theo từng biến trên toàn khoảng tải UTC.')
             st.dataframe([{'Biến':variable_label(v['variable']),'Vai trò':'Yêu cầu' if v['role']=='requested' else 'Bổ sung',
                            'Số giá trị lưu':s.get('counts_by_variable',{}).get(v['variable'],0)} for v in entry['variables']],hide_index=True)
             if entry['artifacts']: st.dataframe(entry['artifacts'],hide_index=True)
@@ -468,7 +519,6 @@ def render_collection_quality(api, prefix, entry):
 
 
 def render_saved(client, charts=False):
-    st.html('<script>'+_MULTISELECT_LABELS+'</script>', unsafe_allow_javascript=True)
     from frontend.dashboard import _show_timeseries, _show_heatmap, _show_map, _show_statistics, _show_trend
     api=client('land')  # Collection ID, rather than this client's default source, controls reads.
     prefix='chart' if charts else 'stored'
@@ -542,6 +592,7 @@ def render_saved(client, charts=False):
             _scroll_to(prefix+'_collection_list')
         return
     with st.container(key=prefix+'_collection_detail'):
+        st.html('<script>'+_MULTISELECT_LABELS+'</script>', unsafe_allow_javascript=True)
         st.session_state.pop(prefix+'_preferred_collection_id', None)
         selected=st.session_state.get(prefix+'_collection')
         if not selected:
@@ -585,9 +636,19 @@ def render_saved(client, charts=False):
                 if st.button('Thu thập tiếp', key=f'continue_{selected}', icon=':material/add:',
                              on_click=continue_collection, args=(m,)):
                     st.rerun(scope='app')
-        st.subheader(f"{variable_label(m['primary_variable'])} · {m['place_name']}", anchor=False)
+        st.subheader(collection_title(m), anchor=False)
         a,b=(datetime.fromisoformat(m[k]).astimezone(timezone(timedelta(hours=7))).strftime('%d/%m/%Y %H:%M') for k in ['requested_start','requested_end'])
         st.write(f"{a} → {b} (UTC+7)")
+        if m['source'] == 'open_meteo' and is_same_day_collection(
+            datetime.fromisoformat(m['requested_start']), datetime.fromisoformat(m['requested_end']),
+            datetime.fromisoformat(entry['created_at']),
+        ):
+            finished = entry.get('finished_at')
+            if finished:
+                completed = datetime.fromisoformat(finished).astimezone(timezone(timedelta(hours=7)))
+                st.caption(f'Dữ liệu mô hình GFS · Cập nhật lúc {completed:%H:%M · %d/%m/%Y} (UTC+7)')
+            else:
+                st.caption('Dữ liệu mô hình GFS')
         if charts:
             render_collection_quality(api, prefix, entry)
         result_area = st.container()
@@ -740,6 +801,11 @@ def render_saved(client, charts=False):
                     applied_summary.caption(
                         f'Đang xem {names} · {period} (UTC+7) · Điểm {grid["latitude"]:.4f}, {grid["longitude"]:.4f}'
                     )
+                    for item in multi or [payload]:
+                        available, expected = item['available_count'], item['expected_count']
+                        label = variable_label(item['variable']) + ' · ' if multi and len(multi) > 1 else ''
+                        status = f'Thiếu {expected - available:,} giờ' if available < expected else 'Đủ dữ liệu'
+                        applied_summary.markdown(f'**{label}{status}** · {available:,}/{expected:,} giờ')
                 else:
                     st.caption(f"Kết quả đã áp dụng: {variable_label(payload['variable'])} · {payload['unit']} · UTC+7 · điểm {grid['latitude']:.4f}, {grid['longitude']:.4f}")
                     st.caption(payload['requested_start']+' → '+payload['requested_end']+' (UTC+7)')
@@ -896,10 +962,16 @@ def render_library_list(api, prefix):
         meta,summary=item['metadata'],item['summary']
         with st.container(border=True):
             info=st.container()
-            info.markdown(f"**{variable_label(meta['primary_variable'])} · {meta['place_name']}**")
-            dates=[datetime.fromisoformat(meta[k]).strftime('%d/%m/%Y') for k in ['requested_start','requested_end']]
+            info.markdown(f"**{collection_title(meta)}**")
+            local = timezone(timedelta(hours=7))
+            start, end = (datetime.fromisoformat(meta[k]).astimezone(local)
+                          for k in ('requested_start', 'requested_end'))
+            if start.date() == end.date():
+                period = f'{start:%d/%m/%Y} · {start:%H:%M}–{end:%H:%M}'
+            else:
+                period = f'{start:%d/%m/%Y} → {end:%d/%m/%Y}'
             badge=' · Vừa thu thập' if item['id']==st.session_state.get('latest_collection_id') else ''
-            info.caption(f"{dates[0]} → {dates[1]}{badge}")
+            info.caption(f"{period}{badge}")
             status=STATUS.get(item['status'],item['status'])
             color='green' if item['status']=='complete' else 'orange' if item['status'] in {'partial','queued','running'} else 'red'
             info.badge(status,color=color)

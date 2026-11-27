@@ -1,13 +1,13 @@
 /* Public key classes scope all native-widget customization to the mini chat. */
 :root {
- --are-top-bar-height:61px;
- --are-chat-width:clamp(360px, 29vw, 440px);
- --are-chat-right:12px;
+ --era-top-bar-height:61px;
+ --era-chat-width:clamp(360px, 29vw, 440px);
+ --era-chat-right:12px;
 }
 .st-key-ai_chat_persistence {display:none;}
 .st-key-ai_chat_launcher {position:fixed;right:12px;top:3px;width:99px;height:55px;z-index:1000;isolation:isolate;}
 .st-key-ai_chat_launcher::before {
- content:"";position:fixed;inset:0 0 auto var(--era5-sidebar-width, 0px);height:var(--are-top-bar-height);
+ content:"";position:fixed;inset:0 0 auto var(--era5-sidebar-width, 0px);height:var(--era-top-bar-height);
  background:var(--background-color,#fff);border-bottom:1px solid var(--border-color,#d5e2df);z-index:-1;
 }
 .pet-launch-art {display:flex;align-items:center;gap:5px;width:99px;height:55px;pointer-events:none;}
@@ -24,45 +24,45 @@
  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
 .pet-launch-lines span:empty {display:none;}
-body:has(.are-notice) .pet-launch-lines {visibility:hidden;}
-.are-notice {
+body:has(.era-notice) .pet-launch-lines {visibility:hidden;}
+.era-notice {
  --notice-accent:#2563a5; --notice-background:#fff; --notice-text:#18332f;
  display:flex;align-items:center;gap:.55rem;padding:.45rem .6rem;
  border:1px solid var(--notice-accent);border-inline-start-width:3px;border-radius:10px;
  background:var(--notice-background);color:var(--notice-text);
  font-size:.82rem;line-height:1.4;
 }
-.are-notice-success {--notice-accent:#16804a;}
-.are-notice-warning {--notice-accent:#9b5b00;}
-.are-notice-error {--notice-accent:#bf3333;}
-body:has(.era5-shell[data-theme="dark"]) .are-notice {
+.era-notice-success {--notice-accent:#16804a;}
+.era-notice-warning {--notice-accent:#9b5b00;}
+.era-notice-error {--notice-accent:#bf3333;}
+body:has(.era5-shell[data-theme="dark"]) .era-notice {
  --notice-background:#282828;--notice-text:#f3f3f3;--notice-accent:#a7cbfc;
 }
-body:has(.era5-shell[data-theme="dark"]) .are-notice-success {--notice-accent:#68d8a0;}
-body:has(.era5-shell[data-theme="dark"]) .are-notice-warning {--notice-accent:#f3be65;}
-body:has(.era5-shell[data-theme="dark"]) .are-notice-error {--notice-accent:#ff9393;}
-:is(body, .are-notice-slot) > .are-notice {
+body:has(.era5-shell[data-theme="dark"]) .era-notice-success {--notice-accent:#68d8a0;}
+body:has(.era5-shell[data-theme="dark"]) .era-notice-warning {--notice-accent:#f3be65;}
+body:has(.era5-shell[data-theme="dark"]) .era-notice-error {--notice-accent:#ff9393;}
+:is(body, .era-notice-slot) > .era-notice {
  --notice-left:calc(var(--era5-sidebar-width, 0px) + 12px);
  --notice-right:116px;
  position:fixed;z-index:999991;inset:auto;margin:0;
- inset-block-start:calc(var(--are-top-bar-height) / 2);inset-inline-end:var(--notice-right);
+ inset-block-start:calc(var(--era-top-bar-height) / 2);inset-inline-end:var(--notice-right);
  transform:translateY(-50%);
  max-width:min(31rem,calc(100vw - var(--notice-left) - var(--notice-right)));
- max-height:calc(var(--are-top-bar-height) - 12px);padding-block:4px;box-sizing:border-box;
+ max-height:calc(var(--era-top-bar-height) - 12px);padding-block:4px;box-sizing:border-box;
  box-shadow:0 3px 12px #0002;
 }
-.are-notice-slot {display:contents;}
-body:has(.st-key-ai_chat_shell) > .are-notice,
-.st-key-ai_chat_shell .are-notice-slot > .are-notice {
+.era-notice-slot {display:contents;}
+body:has(.st-key-ai_chat_shell) > .era-notice,
+.st-key-ai_chat_shell .era-notice-slot > .era-notice {
  --notice-left:17px;
  --notice-right:12px;
  inset-inline-start:var(--notice-left);
  inset-inline-end:auto;
 }
-.are-notice-text {
+.era-notice-text {
  flex:1;min-width:0;max-height:40px;overflow:auto;overflow-wrap:anywhere;white-space:pre-line;
 }
-.are-notice button {
+.era-notice button {
  flex:none;border:0;background:transparent;color:inherit;cursor:pointer;
  font:inherit;font-size:1rem;line-height:1;padding:0 .2rem;
 }
@@ -140,23 +140,23 @@ body:has(.era5-shell[data-theme="dark"]) .st-key-ai_chat_shell [class*="st-key-a
  .st-key-ai_chat_shell {bottom:12px;height:calc(100dvh - 96px);}
 }
 @media(prefers-reduced-motion:reduce) {.chat-wait-dots i {animation:none;}}
-/* Reserve space for ARE on desktop. Narrow layouts use a dedicated chat view. */
+/* Reserve space for ERA on desktop. Narrow layouts use a dedicated chat view. */
 @media (min-width: 1280px) {
  body:has(.st-key-ai_chat_shell) .st-key-are_workspace {
-  width:calc(100% - var(--are-chat-width));
+  width:calc(100% - var(--era-chat-width));
  }
  body:has(.st-key-ai_chat_shell) .st-key-ai_chat_shell {
-  top:4.5rem;right:var(--are-chat-right);bottom:12px;width:var(--are-chat-width);
+  top:4.5rem;right:var(--era-chat-right);bottom:12px;width:var(--era-chat-width);
   height:auto;max-width:none;border-radius:16px;
  }
- body:has(.st-key-ai_chat_shell) > .are-notice,
- .st-key-ai_chat_shell .are-notice-slot > .are-notice {
-  --notice-left:calc(100vw - var(--are-chat-right) - var(--are-chat-width) + 17px);
+ body:has(.st-key-ai_chat_shell) > .era-notice,
+ .st-key-ai_chat_shell .era-notice-slot > .era-notice {
+  --notice-left:calc(100vw - var(--era-chat-right) - var(--era-chat-width) + 17px);
  }
 }
 @media (max-width: 1279px) {
  body:has(.st-key-ai_chat_shell) .st-key-ai_chat_shell {
-  inset:var(--are-top-bar-height) 0 0;width:100%;height:auto;max-width:none;border-radius:0;
+  inset:var(--era-top-bar-height) 0 0;width:100%;height:auto;max-width:none;border-radius:0;
   z-index:1001;
  }
 }
@@ -165,8 +165,8 @@ body:has(.era5-shell[data-theme="dark"]) .st-key-ai_chat_shell [class*="st-key-a
   left:var(--era5-sidebar-width);width:auto;
   padding-inline:clamp(16px,3vw,36px);
  }
- body:has(.st-key-ai_chat_shell) > .are-notice,
- .st-key-ai_chat_shell .are-notice-slot > .are-notice {
+ body:has(.st-key-ai_chat_shell) > .era-notice,
+ .st-key-ai_chat_shell .era-notice-slot > .era-notice {
   --notice-left:calc(var(--era5-sidebar-width) + 17px);
  }
 }
@@ -174,9 +174,9 @@ body:has(.st-key-ai_chat_shell) .st-key-ai_chat_launcher :is(.pet-launch-art,.st
 body:has(.st-key-ai_chat_shell) .pet-launch-lines {display:none;}
 @media(max-width:760px) {
  .st-key-ai_chat_launcher::before {left:0;}
- :is(body, .are-notice-slot) > .are-notice {--notice-left:60px;}
- body:has(.st-key-ai_chat_shell) > .are-notice,
- .st-key-ai_chat_shell .are-notice-slot > .are-notice {
+ :is(body, .era-notice-slot) > .era-notice {--notice-left:60px;}
+ body:has(.st-key-ai_chat_shell) > .era-notice,
+ .st-key-ai_chat_shell .era-notice-slot > .era-notice {
   --notice-left:60px;
  }
  .st-key-ai_chat_shell .st-key-ai_chat_messages {

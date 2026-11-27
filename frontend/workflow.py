@@ -1,5 +1,7 @@
 """User workflow. Only submitted forms perform collection or data queries."""
 from datetime import date, datetime, timedelta, timezone
+
+from backend.app.domain.recent_weather import historical_date_bounds, latest_weather_hour
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +18,7 @@ from frontend.dashboard import _render_job_status, _show_timeseries, _show_heatm
 from frontend.notifications import notify_error, notify_warning, notify_success, notify_info, notify_job_failures
 from frontend.auth import render_login_gate
 from frontend.home import render_home
-from frontend.workspace_sidebar import HOME_SECTION, render_sidebar
+from frontend.workspace_sidebar import HOME_SECTION, NAVIGATION, render_sidebar
 
 FREQUENCIES = {"Giờ": "hourly", "Ngày": "daily", "Tháng": "monthly", "Năm": "yearly"}
 
@@ -29,14 +31,14 @@ def client(source):
 
 
 def render_dashboard():
-    st.set_page_config(page_title="Bảng điều khiển khí hậu ERA5", layout="wide")
+    st.set_page_config(page_title="Weather Hub · Dữ liệu khí tượng", layout="wide")
     apply_appearance()
     if st.query_params.get('retry_admin') == '1':
         st.session_state['admin_handoff_done'] = False
         del st.query_params['retry_admin']
     if not render_login_gate(client(None)):
         return
-    if st.session_state.pop('are_open_collection_jobs', False):
+    if st.session_state.pop('era_open_collection_jobs', False):
         st.session_state['workflow_section'] = 'Thu thập'
         st.session_state['apply_shared'] = True
         st.session_state['ai_chat_open'] = False
@@ -45,7 +47,7 @@ def render_dashboard():
     from frontend.ai_chat import render_ai_chat
     with st.container(key='era5_floating_chat'):
         render_ai_chat(client(None))
-    with st.container(key='are_workspace'):
+    with st.container(key='era_workspace'):
         render_workspace()
 
 
@@ -68,43 +70,23 @@ def render_workspace():
             st.query_params[prefix+'_mode'] = 'details' if visible else 'list'
             if visible:
                 st.session_state[prefix+'_restore_filters'] = True
-    if section == 'Thu thập':
-        with st.container(key='workflow_section_header', horizontal=True,
-                          vertical_alignment='center', gap='small', wrap=False,
-                          height=44, border=False):
-            st.header(section, anchor=False)
     with st.container(key='workflow_stage'):
-        loading = st.empty()
-        if switching and section == 'Dữ liệu đã lưu':
-            loading.html("""
-                <style>
-                .st-key-workflow_stage {position:relative;min-height:65vh;}
-                .st-key-workflow_stage .st-key-workflow_content {visibility:hidden;opacity:0;pointer-events:none;}
-                .workflow-loading {position:absolute;inset:0;z-index:10;
-                    display:flex;align-items:center;justify-content:center;gap:.75rem;
-                    min-height:65vh;}
-                .workflow-loading-ring {width:1.5rem;height:1.5rem;flex:none;
-                    border:3px solid var(--secondary-background-color, #d5e2df);
-                    border-top-color:var(--primary-color, #0f766e);border-radius:50%;
-                    animation:workflow-spin .8s linear infinite;}
-                @keyframes workflow-spin {to {transform:rotate(360deg);}}
-                @media(prefers-reduced-motion:reduce) {
-                    .workflow-loading-ring {animation:none;}
-                }
-                </style>
-                <div class="workflow-loading" role="status" aria-live="polite">
-                    <span class="workflow-loading-ring" aria-hidden="true"></span>
-                    <span>Đang tải nội dung…</span>
-                </div>
-            """)
-        try:
-            with st.container(key='workflow_content'):
+        with st.container(key='workflow_content'):
+            # Separate each route's widget tree so old blocks are replaced as a unit.
+            route_key = tuple(NAVIGATION).index(section)
+            with st.container(key=f'workflow_page_{route_key}'):
+                if section == 'Thu thập':
+                    with st.container(key='workflow_section_header', horizontal=True,
+                                      vertical_alignment="center", gap="small", wrap=False,
+                                      height=44, border=False):
+                        st.header(section, anchor=False)
                 render_section(section)
-                if switching and section == HOME_SECTION and st.session_state.get('rendered_workflow_section'):
-                    from frontend.library import _scroll_to
-                    _scroll_to('era5_home_hero')
-        finally:
-            loading.empty()
+        if switching:
+            st.html(f"""<script>
+                if (document.documentElement.dataset.weahubDestination === "{route_key}") {{
+                    delete document.documentElement.dataset.weahubDestination;
+                }}
+            </script>""", unsafe_allow_javascript=True)
         st.session_state['rendered_workflow_section'] = section
 
 
@@ -123,7 +105,11 @@ def render_section(section):
 
 
 def source_input(prefix):
-    return 'land'
+    if prefix == "collect":
+        from backend.app.core.config import get_settings
+        if get_settings().climate_provider == "open_meteo":
+            return "open_meteo"
+    return "land"
 
 
 def remember(source, params):
@@ -153,6 +139,9 @@ def restore_filter(prefix):
         label = next((k for k,v in VARIABLES.items() if v == selected_variable), list(VARIABLES)[0])
         st.session_state[prefix+'_variable'] = label
         if prefix == 'collect':
+            if shared['source'] == 'open_meteo':
+                st.session_state['collect_location_mode'] = 'Nhập tọa độ'
+                st.session_state['collect_period'] = 'Tùy chọn'
             for edge, delta, coord in [('north',.25,'latitude'),('south',-.25,'latitude'),('west',-.25,'longitude'),('east',.25,'longitude')]:
                 limit = 90 if coord == 'latitude' else 180
                 st.session_state['collect_'+edge] = max(-limit,min(limit,shared[coord]+delta))
@@ -191,7 +180,7 @@ def location_search(prefix):
         field, action = st.columns([4, 1], vertical_alignment="bottom", wrap=False)
         query = field.text_input("Tìm địa điểm", key=prefix+"_place_query",
             persist_state="session", live="0ms", on_change="ignore",
-            placeholder="Tìm thành phố hoặc nhập tọa độ bên dưới",
+            placeholder="Ví dụ: Hà Nội, Đà Nẵng, Côn Đảo",
             help="Chỉ tên tìm kiếm được gửi đến Open-Meteo khi bấm Tìm. Có thể nhập tọa độ trực tiếp.")
         submitted = action.button("Tìm", key=prefix+"_find_place", width="stretch")
     st.html("""<script>
@@ -260,10 +249,52 @@ def submit_collection_job(api, payload, params):
     return response
 
 
-def render_collection():
-    restore_filter('collect')
-    source = source_input("collect")
+def render_open_meteo_collection_form():
+    first_day, yesterday = historical_date_bounds()
+    with st.container(border=True):
+        mode = st.radio("Địa điểm", ["Tìm theo tên", "Nhập tọa độ"],
+                        horizontal=True, key="collect_location_mode", persist_state="session")
+        selected_place = None
+        if mode == "Tìm theo tên":
+            location_search("collect")
+            selected_place = next((place for place in st.session_state.get("collect_places", [])
+                                   if place["label"] == st.session_state.get("collect_place")), None)
+            point = {key: selected_place[key] if selected_place else None
+                     for key in ("latitude", "longitude")}
+        else:
+            point = point_inputs("collect")
+
+        period = st.radio("Khoảng thời gian (UTC+7)", ["7 ngày gần nhất", "30 ngày gần nhất", "Hôm nay", "Tùy chọn"],
+                          horizontal=True, key="collect_period", persist_state="session")
+        start = max(first_day, yesterday - timedelta(days=29 if period == "30 ngày gần nhất" else 6))
+        end = yesterday
+        if period == "Hôm nay":
+            latest_hour = latest_weather_hour()
+            start = end = latest_hour.date()
+            st.caption(f"{start:%d/%m/%Y} · 00:00 – {latest_hour:%H:%M} · Dữ liệu mô hình GFS")
+        elif period == "Tùy chọn":
+            left, right = st.columns(2)
+            for key, default in (("collect_start", start), ("collect_end", end)):
+                value = st.session_state.get(key)
+                if value is not None and not first_day <= value <= yesterday:
+                    st.session_state[key] = default
+            start = left.date_input("Ngày bắt đầu", value=None if "collect_start" in st.session_state else start,
+                                    min_value=first_day, max_value=yesterday, key="collect_start",
+                                    format="DD/MM/YYYY", persist_state="session")
+            end = right.date_input("Ngày kết thúc", value=None if "collect_end" in st.session_state else end,
+                                   min_value=first_day, max_value=yesterday, key="collect_end",
+                                   format="DD/MM/YYYY", persist_state="session")
+        else:
+            st.caption(f"{start:%d/%m/%Y} – {end:%d/%m/%Y}")
+        st.caption("Mỗi lần thu thập lấy đủ 6 biến khí hậu.")
+        submitted = st.button("Bắt đầu thu thập", key="collect_now", type="primary",
+                              disabled=mode == "Tìm theo tên" and selected_place is None)
+    return start, end, point, selected_place, submitted
+
+
+def render_legacy_collection_form(source):
     location_search("collect")
+    point = area = None
     with st.form("collection_form"):
         if source in {"land", "era5"}:
             variable = "temperature"  # Primary variable required by the existing download API.
@@ -285,31 +316,45 @@ def render_collection():
             south = c_s.number_input("Nam", min_value=-90., max_value=90., value=10., key="collect_south")
             west = c_w.number_input("Tây", min_value=-180., max_value=180., value=106., key="collect_west")
             east = c_e.number_input("Đông", min_value=-180., max_value=180., value=107., key="collect_east")
+            area = dict(north=north, south=south, west=west, east=east)
         submitted = st.form_submit_button("Bắt đầu thu thập", key="collect_now", type="primary")
+    selected_place = next((p for p in st.session_state.get('collect_places', [])
+                           if p['label'] == st.session_state.get('collect_place')), None)
+    return start, end, point, area, variable, selected_place, submitted
 
+
+def render_collection():
+    restore_filter('collect')
+    source = source_input("collect")
+    if source == "open_meteo":
+        start, end, point, selected_place, submitted = render_open_meteo_collection_form()
+        variable, area = "temperature", None
+    else:
+        start, end, point, area, variable, selected_place, submitted = render_legacy_collection_form(source)
     if submitted:
         if start is None or end is None:
             notify_error('Chọn đầy đủ ngày bắt đầu và ngày kết thúc.')
         elif start > end:
             msg = "Khoảng ngày không hợp lệ: Ngày bắt đầu phải trước hoặc bằng ngày kết thúc!"
             notify_error(msg)
-        elif source in {'land', 'mock'} and None in point.values():
+        elif source in {'land', 'mock', 'open_meteo'} and None in point.values():
             notify_error('Nhập đầy đủ vĩ độ và kinh độ của điểm thu thập.')
-        elif source == 'era5' and None in (north, south, west, east):
+        elif source == 'era5' and None in area.values():
             notify_error('Nhập đầy đủ tọa độ giới hạn vùng thu thập.')
-        elif source == "era5" and (north < south or west > east):
+        elif source == "era5" and (area['north'] < area['south'] or area['west'] > area['east']):
             msg = "Tọa độ vùng không hợp lệ: Vĩ độ Bắc phải lớn hơn Nam, và Kinh độ Tây phải nhỏ hơn Đông!"
             notify_error(msg)
         else:
             a,b = local_date_range(start,end)
-            centre = point if source != 'era5' else dict(latitude=(north+south)/2,longitude=(west+east)/2)
+            if source == 'open_meteo' and st.session_state.get('collect_period') == 'Hôm nay':
+                b = min(datetime.fromisoformat(b), latest_weather_hour()).isoformat()
+            centre = point if area is None else dict(latitude=(area['north']+area['south'])/2,
+                                                     longitude=(area['west']+area['east'])/2)
             params = dict(variable=variable, **centre, start=a, end=b, frequency='hourly',aggregation='auto')
             utc = timezone.utc
             payload = dict(source=source, variable=variable,
                 start_date=datetime.fromisoformat(a).astimezone(utc).date().isoformat(),
                 end_date=datetime.fromisoformat(b).astimezone(utc).date().isoformat(), frequency="hourly")
-            selected_place = next((p for p in st.session_state.get('collect_places', [])
-                if p['label'] == st.session_state.get('collect_place')), None)
             payload.update(requested_start=a, requested_end=b, request_timezone='UTC+7')
             if source == "era5":
                 payload['all_variables'] = True
@@ -317,15 +362,14 @@ def render_collection():
                 place_point = {key: selected_place[key] for key in point}
                 if point == place_point:
                     payload.update(place_name=selected_place['label'], selected_place=place_point)
-            payload.update({"area": dict(north=north, south=south, west=west, east=east)}
-                           if source == "era5" else {"location": point})
+            payload.update({"area": area} if source == "era5" else {"location": point})
             api = client(source)
             try:
                 submit_collection_job(api, payload, params)
             except DashboardApiError as exc:
                 notify_error(f'Chưa gửi được tác vụ thu thập: {exc}')
             else:
-                notify_success("Đã tiếp nhận tác vụ thu thập ERA5 thành công!")
+                notify_success("Đã tiếp nhận tác vụ thu thập!")
     render_collection_jobs(source)
 
 

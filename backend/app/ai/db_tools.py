@@ -23,10 +23,10 @@ MAX_QUERY_HOURS = 366*24
 MAX_GRID_CHOICES = 20
 MAX_MISSING_RANGES = 24
 GUIDES = {
-    'supported_questions': 'ARE hỗ trợ xã giao ngắn, khí tượng liên quan và giải thích code/thiết kế dự án kèm nguồn. Có thể tìm bộ đã lưu, kiểm tra thiếu/cảnh báo, thống kê, tổng hợp và phân tích biểu đồ đang xem qua DB. Khi có bộ lọc đã áp dụng, không cần nhập lại ngày/biến/lưới. Phân tích gồm cực trị, biến động và xu hướng mô tả; chưa kết luận nguyên nhân, dự báo, anomaly khí hậu hoặc tự thu thập.',
+    'supported_questions': 'ERA hỗ trợ xã giao ngắn, khí tượng liên quan và giải thích code/thiết kế dự án kèm nguồn. Có thể tìm bộ đã lưu, kiểm tra thiếu/cảnh báo, thống kê, tổng hợp và phân tích biểu đồ đang xem qua DB. Khi có bộ lọc đã áp dụng, không cần nhập lại ngày/biến/lưới. Phân tích gồm cực trị, biến động và xu hướng mô tả; chưa kết luận nguyên nhân, dự báo, anomaly khí hậu hoặc tự thu thập.',
     'collect': 'Mở Thu thập, chọn nguồn, địa điểm hoặc vùng, biến và ngày rồi bấm Bắt đầu thu thập. Theo dõi job và đọc cảnh báo. Agent không tạo job hay gọi CDS thay bạn.',
     'saved_data': 'Vào Kho dữ liệu, tìm và bấm Xem dữ liệu. Chọn biến, điểm lưới và ngày rồi Áp dụng bộ lọc; có thể tải CSV. Bộ khác nhau không được tự trộn.',
-    'charts': 'Có thể nhờ ARE chuẩn bị nút Mở trong Biểu đồ với biến, lưới, khoảng ngày giờ và chu kỳ cụ thể. Bấm nút để mở kết quả trên trang Biểu đồ. Nếu chưa đủ tham số, chọn trong form ở chat hoặc Bộ lọc biểu đồ. Kỳ tháng/năm chưa trọn không đại diện cho cả kỳ; Agent không tự tải CDS.',
+    'charts': 'Có thể nhờ ERA chuẩn bị nút Mở trong Biểu đồ với biến, lưới, khoảng ngày giờ và chu kỳ cụ thể. Bấm nút để mở kết quả trên trang Biểu đồ. Nếu chưa đủ tham số, chọn trong form ở chat hoặc Bộ lọc biểu đồ. Kỳ tháng/năm chưa trọn không đại diện cho cả kỳ; Agent không tự tải CDS.',
     'quality': 'Xem báo cáo chất lượng của bộ/tác vụ. Dữ liệu thiếu không được thay bằng 0. Cảnh báo nghi vấn đơn vị phải được kiểm tra trước khi diễn giải số liệu; hướng gió có thể không xác định khi lặng gió.',
     'missing_data': 'Độ phủ phụ thuộc đúng bộ, biến, lưới và khoảng giờ. Khi thiếu, chỉ thống kê phần đã có và nói rõ giới hạn; sang Thu thập nếu muốn chủ động bổ sung. Agent không tải ngầm.',
 }

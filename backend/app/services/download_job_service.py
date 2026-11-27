@@ -13,6 +13,7 @@ from backend.app.domain.schemas import (
 )
 from backend.app.core.config import Settings
 from backend.app.domain.sources import configured_source, source_dataset
+from backend.app.domain.recent_weather import is_same_day_collection, latest_weather_hour
 from backend.app.providers.era5_provider import ERA5_VARIABLES
 from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS
 from backend.app.providers.errors import UnsupportedVariableError
@@ -51,6 +52,8 @@ class DownloadJobService:
     def create_job(self, request: DownloadRequest) -> DownloadCreateResponse:
         if self._settings is not None:
             source = request.source or configured_source(self._settings)
+            if configured_source(self._settings) == "open_meteo" and source in {"land", "era5"}:
+                raise ValueError("Tác vụ mới dùng Open-Meteo Historical Forecast. Bộ ERA5 đã lưu vẫn xem được.")
             updates = {"source": source}
             if source == "land" and request.location is None:
                 # Preserve legacy area callers, but persist the true point semantics.
@@ -58,11 +61,13 @@ class DownloadJobService:
                     latitude=round((request.area.north + request.area.south) / 2, 4),
                     longitude=round((request.area.west + request.area.east) / 2, 4)), area=None)
             request = DownloadRequest(**{**request.model_dump(), **updates})
+            if source == "open_meteo" and request.requested_end and request.requested_end > latest_weather_hour():
+                raise ValueError("Chỉ thu thập đến giờ hiện tại theo giờ Việt Nam.")
             if request.variable not in ERA5_VARIABLES:
                 raise UnsupportedVariableError(f"Unsupported variable '{request.variable}'.")
             variable = ERA5_VARIABLES[request.variable].cds_name
             variables = (sorted({spec.cds_name for name, spec in ERA5_VARIABLES.items()
-                                 if name not in DERIVED_WIND_UNITS}) if source == "land" or (source == "era5" and request.all_variables) else
+                                 if name not in DERIVED_WIND_UNITS}) if source in {"land", "open_meteo"} or (source == "era5" and request.all_variables) else
                          list(WIND_COMPONENTS) if variable in DERIVED_WIND_UNITS else [variable])
             job = self._repository.create(
                 job_id=str(uuid4()), request=request, dataset=source_dataset(source, self._settings),
@@ -179,6 +184,8 @@ class DownloadJobService:
                 provider = self._provider
             spatial = {"location": job.location} if job.location is not None else {"area": job.area}
             download = provider.download_point if job.location is not None else provider.download_area
+            if job.source == "open_meteo" and is_same_day_collection(job.requested_start, job.requested_end, job.created_at):
+                spatial["live_interval"] = (job.requested_start, job.requested_end)
             collector = (QualityCollector(lambda issues: self._repository.add_quality_issues(job_id, issues))
                          if hasattr(self._repository, "save_quality") else None)
             token = current_quality.set(collector)

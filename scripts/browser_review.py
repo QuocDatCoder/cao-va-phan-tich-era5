@@ -87,7 +87,7 @@ def main():
             base = f'http://127.0.0.1:{ui_port}/'
             if '--home-only' in sys.argv:
                 page.goto(base)
-                home = page.get_by_role('heading', name='Khám phá khí hậu với ERA5', exact=True)
+                home = page.get_by_role('heading', name='Khám phá dữ liệu khí tượng', exact=True)
                 expect(home).to_be_visible()
                 hero = page.locator('.st-key-era5_home_hero')
                 canvas = hero.locator('canvas')
@@ -124,11 +124,21 @@ def main():
                 page.screenshot(path=str(OUT/'home-dark.png'), full_page=True)
                 page.get_by_role('button', name='Bật chế độ sáng').click()
                 expect(canvas).to_have_attribute('data-poster', 'day')
-                page.get_by_text('Lượng mưa', exact=True).click()
+                preview = page.locator('.st-key-era5_home_preview')
+                preview.get_by_text('Lượng mưa', exact=True).click()
                 expect(page.get_by_text('Chưa có dữ liệu lượng mưa trong các bộ gần đây để xem nhanh.')).to_be_visible()
-                page.get_by_text('Nhiệt độ', exact=True).click()
+                preview.get_by_text('Nhiệt độ', exact=True).click()
                 expect(page.locator('.st-key-home_preview_plot .js-plotly-plot')).to_be_visible()
-                nav = page.get_by_role('complementary', name='Điều hướng ERA5')
+                nav = page.get_by_role('complementary', name='Điều hướng khí tượng')
+                for name, title in (('Thu thập', 'Thu thập'), ('Kho dữ liệu', 'Dữ liệu đã lưu'),
+                                    ('Biểu đồ', 'Biểu đồ'), ('Trang chủ', 'Khám phá dữ liệu khí tượng')):
+                    before = finished[0]
+                    nav.get_by_role('button', name=name, exact=True).click()
+                    wait_done(before)
+                    expect(page.locator('html[data-weahub-destination]')).to_have_count(0)
+                    expect(page.get_by_role('heading', name=title, exact=True)).to_be_visible()
+                    if name != 'Trang chủ':
+                        expect(hero).to_have_count(0)
                 for label, title in [('Bắt đầu thu thập', 'Thu thập'), ('Mở kho dữ liệu', 'Dữ liệu đã lưu'),
                                      ('Mở trong Biểu đồ', None)]:
                     before = finished[0]
@@ -146,7 +156,7 @@ def main():
                 expect(page.get_by_role('heading', name='Dữ liệu gần đây', exact=True)).to_be_visible()
                 footer = page.locator('.st-key-era5_home_sources')
                 expect(footer.get_by_text('Thời gian hiển thị theo giờ Việt Nam (UTC+7).')).to_be_visible()
-                expect(footer.get_by_role('link', name='Copernicus CDS')).to_be_visible()
+                expect(footer.get_by_role('link', name='Open-Meteo Historical Forecast')).to_be_visible()
                 assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
                 hero.scroll_into_view_if_needed()
                 page.screenshot(path=str(OUT/'home-portrait.png'), full_page=True)
@@ -155,7 +165,7 @@ def main():
                 return
             page.goto(base+'?'+urllib.parse.urlencode({'view':'D\u1eef li\u1ec7u \u0111\u00e3 l\u01b0u'}))
             if '--chart-draft-only' in sys.argv:
-                nav = page.get_by_role('complementary', name='Điều hướng ERA5')
+                nav = page.get_by_role('complementary', name='Điều hướng khí tượng')
                 chart = page.locator('.js-plotly-plot')
                 filters = page.locator('.st-key-chart_filters_'+cid+' details')
                 for section in ('Kho dữ liệu', 'Biểu đồ'):
@@ -185,7 +195,7 @@ def main():
                 print(json.dumps(dict(passed=True, output=str(OUT), scope='chart-draft-only')))
                 return
             if '--job-history-only' in sys.argv:
-                nav = page.get_by_role('complementary', name='Điều hướng ERA5')
+                nav = page.get_by_role('complementary', name='Điều hướng khí tượng')
                 nav.get_by_role('button', name='Thu thập', exact=True).click()
                 history = page.locator('.st-key-collection_job_history details')
                 choice = page.get_by_role('combobox', name='Xem chi tiết tác vụ')
@@ -201,7 +211,7 @@ def main():
                 print(json.dumps(dict(passed=True, output=str(OUT), scope='job-history-only')))
                 return
             if '--headers-only' in sys.argv:
-                nav=page.get_by_role('complementary', name='Điều hướng ERA5')
+                nav=page.get_by_role('complementary', name='Điều hướng khí tượng')
                 measurements=[]
                 for width in [1280,620,390]:
                     page.set_viewport_size(dict(width=width,height=900))
@@ -225,7 +235,7 @@ def main():
                 print(json.dumps(dict(passed=True,output=str(OUT),scope='headers-only')))
                 return
             launcher_line = page.locator('.pet-launch-lines span')
-            expect(launcher_line).to_have_text('Chào bạn, mình là ARE ☁️', timeout=12000)
+            expect(launcher_line).to_have_text('Chào bạn, mình là ERA ☁️', timeout=12000)
             page.get_by_role('textbox', name='Tìm bộ dữ liệu đã lưu', exact=True).focus()
             expect(launcher_line).to_have_text('')
             page.get_by_role('button',name='Xem d\u1eef li\u1ec7u',exact=True).click(timeout=30000)
@@ -355,7 +365,7 @@ def main():
             page.get_by_text('B\u1ea3ng d\u1eef li\u1ec7u v\u00e0 t\u1ea3i CSV',exact=True).click()
             page.get_by_role('button',name='T\u1ea3i b\u1ea3ng d\u1eef li\u1ec7u (CSV)',exact=True).wait_for()
             page.screenshot(path=str(OUT/'chart.png'),full_page=True)
-            nav = page.get_by_role('complementary', name='Điều hướng ERA5')
+            nav = page.get_by_role('complementary', name='Điều hướng khí tượng')
             nav.get_by_role('button', name='Kho dữ liệu', exact=True).click()
             export.wait_for()
             nav.get_by_role('button', name='Biểu đồ', exact=True).click()

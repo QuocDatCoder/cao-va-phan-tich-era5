@@ -20,7 +20,7 @@ def http_error(status):
 
 
 @pytest.mark.parametrize('error', [http_error(429), http_error(503), requests.Timeout(), requests.ConnectionError()])
-def test_transient_retries_are_bounded(error):
+def test_transient_retries_era_bounded(error):
     class Client:
         calls = 0
         def retrieve(self, *args):

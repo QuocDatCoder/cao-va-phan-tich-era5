@@ -57,7 +57,7 @@ def test_accumulations_use_hour_ending_data_for_correct_local_day(variable, unit
     assert response.data[0].complete
 
 
-def test_monthly_partial_periods_are_explicit():
+def test_monthly_partial_periods_era_explicit():
     response = ClimateService(RecordingProvider()).get_aggregate(request(
         start=datetime.fromisoformat("2025-01-31T00:00:00+07:00"),
         end=datetime.fromisoformat("2025-02-02T23:00:00+07:00"), frequency="monthly",

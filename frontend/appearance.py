@@ -23,6 +23,17 @@ def apply_appearance():
     [data-testid="stMetricValue"] {font-size:1.6rem;}
     .st-key-workflow_section {margin-bottom:.4rem;}
     .st-key-workflow_content {min-height:65vh;}
+    .st-key-workflow_section_header h2 {
+        font-size:clamp(1.5rem, 2.5vw, 2rem)!important;
+        font-weight:750;
+        line-height:1.2;
+        letter-spacing:-.025em;
+    }
+    html[data-weahub-destination="0"] [class*="st-key-workflow_page_"]:not(.st-key-workflow_page_0),
+    html[data-weahub-destination="1"] [class*="st-key-workflow_page_"]:not(.st-key-workflow_page_1),
+    html[data-weahub-destination="2"] [class*="st-key-workflow_page_"]:not(.st-key-workflow_page_2),
+    html[data-weahub-destination="3"] [class*="st-key-workflow_page_"]:not(.st-key-workflow_page_3),
+    html[data-weahub-destination] .st-key-workflow_content [data-stale="true"] {display:none;}
     .latest-job-pulse {
         display:flex;align-items:center;gap:.22rem;
     }

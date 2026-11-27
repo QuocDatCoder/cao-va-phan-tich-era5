@@ -32,7 +32,7 @@ def test_collection_preview_requires_explicit_confirmation():
     from streamlit.testing.v1 import AppTest
     app=AppTest.from_string("""
 import streamlit as st
-from frontend.are_collection import render_collection_draft
+from frontend.era_collection import render_collection_draft
 
 class API:
     base_url = "http://fixture"
@@ -52,15 +52,15 @@ def card():
 st.session_state.setdefault('ai_chat_messages',[{'result':{}}])
 card()
 """).run()
-    app.button(key='are_collect_0_geocode').click().run()
+    app.button(key='era_collect_0_geocode').click().run()
     next(b for b in app.button if b.label=='Kiểm tra kho').click().run()
     assert 'submitted_payload' not in app.session_state
-    app.button(key='are_collect_0_confirm').click().run()
+    app.button(key='era_collect_0_confirm').click().run()
     assert not app.exception
     payload=app.session_state['submitted_payload']
     assert payload['start_date']=='2025-11-09'
     assert payload['requested_end']=='2025-11-17T23:00:00+07:00'
     assert app.session_state['ai_chat_messages'][0]['result']['collection_job']=='fixture-1'
     assert app.session_state['workflow_selected_job']=='fixture-1'
-    assert app.session_state['are_open_collection_jobs']
+    assert app.session_state['era_open_collection_jobs']
     assert app.session_state['job_filters']['fixture-1']['source']=='land'

@@ -1,7 +1,8 @@
 @echo off
+setlocal
 REM Chay ca backend (FastAPI) va frontend (Streamlit) trong 2 cua so rieng.
-REM   run_all.bat        -> dung cau hinh trong file .env (ERA5 that)
-REM   run_all.bat mock   -> du lieu gia lap, khong can CDS key
+REM   run_all.bat        -> dung cau hinh trong file .env
+REM   run_all.bat mock   -> du lieu gia lap
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
@@ -17,7 +18,8 @@ if /i "%~1"=="mock" (
   set "PREFIX=set CLIMATE_PROVIDER=mock&& set ERA5_SYNC_ENABLED=false&& "
   echo Che do MOCK: du lieu gia lap.
 ) else (
-  echo Che do theo file .env. Kiem tra CLIMATE_PROVIDER va CDS_API_KEY trong .env.
+  set "CLIMATE_PROVIDER="
+  echo Che do theo CLIMATE_PROVIDER trong file .env cua du an.
 )
 
 start "Backend ERA5 (cong 8000)" cmd /k "%PREFIX%.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"

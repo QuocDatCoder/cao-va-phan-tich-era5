@@ -1,6 +1,6 @@
 (() => {
-  if (window.era5AreLauncherLinesActive) return;
-  window.era5AreLauncherLinesActive = true;
+  if (window.era5EraLauncherLinesActive) return;
+  window.era5EraLauncherLinesActive = true;
 
   const lines = {
     home: [
@@ -36,7 +36,7 @@
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const editable = "input:not([type=checkbox]):not([type=radio]), textarea, [contenteditable=true], [role=spinbutton], [role=combobox]";
   const busy = [
-    ".st-key-ai_chat_shell", ".are-notice", ".era5-shell[data-drawer=true]",
+    ".st-key-ai_chat_shell", ".era-notice", ".era5-shell[data-drawer=true]",
     "[data-testid=stDateInputCalendar]", "[role=listbox]", "[role=dialog]",
     '[class*="st-key-stored_filters_"] details[open]',
     '[class*="st-key-chart_filters_"] details[open]',
@@ -62,7 +62,7 @@
     if (route !== page) {
       page = route;
       queue = [...(lines[page] ?? [])];
-      if (!greeted && queue.length) queue.unshift("Chào bạn, mình là ARE ☁️");
+      if (!greeted && queue.length) queue.unshift("Chào bạn, mình là ERA ☁️");
       queue.length = Math.min(queue.length, 3);
       nextLineAt = now + 1000;
       bubble.textContent = "";

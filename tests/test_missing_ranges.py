@@ -3,7 +3,7 @@ from datetime import datetime
 from backend.app.domain.time_utils import hourly_timestamps, missing_hour_ranges
 
 
-def test_gaps_at_start_middle_and_end_are_separate():
+def test_gaps_at_start_middle_and_end_era_separate():
     hours = hourly_timestamps(datetime(2025, 2, 1), datetime(2025, 2, 1, 8))
     available = {hours[2], hours[3], hours[6]}
     assert missing_hour_ranges(hours[0], hours[-1], available) == [

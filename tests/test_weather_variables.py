@@ -124,7 +124,7 @@ def test_point_wind_reuses_components_for_speed_direction_and_source_queries(pro
 @pytest.mark.parametrize("variable,expected,unit", [
     ("dewpoint", 21.85, "°C"), ("solar_radiation", 1.8, "MJ/m²"),
 ])
-def test_dewpoint_and_radiation_units_are_not_converted_twice(provider, variable, expected, unit):
+def test_dewpoint_and_radiation_units_era_not_converted_twice(provider, variable, expected, unit):
     data, client, settings = provider
     climate = ClimateService(data)
     first = climate.get_timeseries(request(variable))

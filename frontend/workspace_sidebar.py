@@ -40,5 +40,6 @@ def render_sidebar(api):
         'navigation': [{'id': key, 'label': label, 'icon': icon}
                        for key, (label, icon) in NAVIGATION.items()],
         'active': st.session_state['workflow_section'],
+        'workspaceNavigation': True,
         'username': st.session_state.get('auth_username', ''),
     }, on_navigate_change=_navigate, on_logout_change=lambda: logout_account(api))

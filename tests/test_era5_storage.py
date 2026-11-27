@@ -140,7 +140,7 @@ def test_partial_cds_result_is_not_reported_as_complete(stored_provider, monkeyp
         request(provider)
 
 
-def test_raw_file_names_are_isolated_between_datasets(stored_provider):
+def test_raw_file_names_era_isolated_between_datasets(stored_provider):
     provider, settings, calls = stored_provider
     kwargs = dict(variable="temperature", latitude=10.8231, longitude=106.6297,
                   start=datetime(2025, 2, 1), end=datetime(2025, 2, 1, 2))

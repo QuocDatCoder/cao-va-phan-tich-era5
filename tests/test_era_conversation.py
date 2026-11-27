@@ -12,7 +12,7 @@ def prose(text,category='general',sources=None):
 
 
 @pytest.mark.parametrize('question,answer',[
-    ('Chào ARE','Chào bạn! ARE sẵn sàng hỗ trợ dữ liệu ERA5 và cách sử dụng ứng dụng.'),
+    ('Chào ERA','Chào bạn! ERA sẵn sàng hỗ trợ dữ liệu ERA5 và cách sử dụng ứng dụng.'),
     ('Kelvin là gì?','Kelvin là đơn vị nhiệt độ.'),
     ('UTC là gì?','UTC là chuẩn thời gian.'),
     ('Độ phủ là gì?','Độ phủ thể hiện phần dữ liệu có so với phần cần có.'),
@@ -112,5 +112,5 @@ def test_added_tool_schemas_remain_strict_and_bounded():
     assert needs_database('Average temperature in this collection please')
     assert needs_database('Tính trung bình gió ở Hà Nội')
     assert not needs_database('Why use circular statistics for wind?')
-    assert needs_project_sources('ARE dùng model nào?')
+    assert needs_project_sources('ERA dùng model nào?')
     assert needs_project_sources('Đợt 4 của dự án đã làm gì?')

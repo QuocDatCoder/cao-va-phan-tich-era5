@@ -1,14 +1,16 @@
-"""Editable collection requests and status cards for ARE."""
+"""Editable collection requests and status cards for ERA."""
 from datetime import date, datetime, timedelta, timezone
 
 import streamlit as st
 
+from backend.app.domain.recent_weather import historical_date_bounds
+from backend.app.domain.sources import OPEN_METEO_DATASET
 from frontend.api_client import DashboardApiError
 from frontend.components.controls import VARIABLES, local_date_range, search_places
 from frontend.chat_actions import execute_action
 
 
-def _matching_collection(api, label, variable, point, start, end):
+def _matching_collection(api, label, variable, point, start, end, source='land'):
     # Search the current account's inventory, then verify actual hourly coverage.
     from backend.app.providers.era5_provider import ERA5_VARIABLES
     canonical = ERA5_VARIABLES[variable].cds_name
@@ -16,7 +18,9 @@ def _matching_collection(api, label, variable, point, start, end):
     for row in listing.get('collections', []):
         metadata = row.get('metadata', {})
         location = metadata.get('location') or {}
-        if metadata.get('source') != 'land' or any(location.get(k) != v for k, v in point.items()):
+        if metadata.get('source') != source or any(location.get(k) != v for k, v in point.items()):
+            continue
+        if source == 'open_meteo' and metadata.get('dataset') != OPEN_METEO_DATASET:
             continue
         a = metadata.get('requested_start')
         b = metadata.get('requested_end')
@@ -35,7 +39,10 @@ def _matching_collection(api, label, variable, point, start, end):
 
 
 def render_collection_draft(api, draft, index):
-    prefix = f'are_collect_{index}'
+    from frontend.workflow import source_input
+
+    source = source_input("collect")
+    prefix = f'era_collect_{index}'
     message=st.session_state['ai_chat_messages'][index]['result']
     if message.get('collection_job') and not st.session_state.get(prefix+'_job'):
         st.session_state[prefix+'_job']=dict(job_id=message['collection_job'])
@@ -68,23 +75,27 @@ def render_collection_draft(api, draft, index):
     if submitted:
         st.session_state.pop(prefix+'_preview', None)
         today=datetime.now(timezone(timedelta(hours=7))).date()
-        if not (label and a and b) or a>b or b>today or (b-a).days>=366:
-            st.error('Chọn biến và khoảng ngày hợp lệ, tối đa 366 ngày.')
+        earliest, latest = historical_date_bounds()
+        if source == 'open_meteo' and a and b and not (earliest <= a <= b <= latest):
+            st.error('Open-Meteo hỗ trợ khoảng 5 năm đã qua, tính đến hết hôm qua.')
+            return
+        if not (label and a and b) or a>b or b>today or (source != 'open_meteo' and (b-a).days>=366):
+            st.error('Chọn biến và khoảng ngày hợp lệ.')
             return
         point = {k: rows[chosen][k] for k in ('latitude','longitude')}
         start,end = local_date_range(a,b)
-        payload = dict(source='land', variable=VARIABLES[label], frequency='hourly',
+        payload = dict(source=source, variable=VARIABLES[label], frequency='hourly',
                        start_date=datetime.fromisoformat(start).astimezone(timezone.utc).date().isoformat(),
                        end_date=datetime.fromisoformat(end).astimezone(timezone.utc).date().isoformat(),
                        requested_start=start, requested_end=end, request_timezone='UTC+7',
                        location=point, selected_place=point, place_name=rows[chosen]['label'])
         try:
-            existing = _matching_collection(api, payload['place_name'], payload['variable'], point, start, end)
+            existing = _matching_collection(api, payload['place_name'], payload['variable'], point, start, end, source=source)
         except DashboardApiError as exc:
             st.error(str(exc))
             return
         latest=None
-        if not existing:
+        if not existing and source == 'land':
             try:
                 latest=api.get_sync_config().get('latest_available_date')
             except DashboardApiError:
@@ -107,7 +118,8 @@ def render_collection_draft(api, draft, index):
 
 
 def _confirm_collection(api, prefix, payload, message):
-    st.caption('CDS có thể công bố dữ liệu gần đây chậm hơn ngày yêu cầu. Tác vụ sẽ báo lỗi nếu nguồn chưa có dữ liệu.')
+    if payload['source'] == 'land':
+        st.caption('CDS có thể công bố dữ liệu gần đây chậm hơn ngày yêu cầu. Tác vụ sẽ báo lỗi nếu nguồn chưa có dữ liệu.')
     queued=st.session_state.pop(prefix+'_submission', None)
     if queued is not None:
         try:
@@ -122,7 +134,7 @@ def _confirm_collection(api, prefix, payload, message):
         else:
             st.session_state[prefix+'_job']=job
             message['collection_job']=job['job_id']
-            st.session_state['are_open_collection_jobs']=True
+            st.session_state['era_open_collection_jobs']=True
             st.rerun()
     if error:=st.session_state.get(prefix+'_submit_error'):
         st.error(f'Chưa xác nhận được tác vụ: {error}')

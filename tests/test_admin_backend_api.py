@@ -176,6 +176,78 @@ def test_admin_collection_history_joins_scoped_snapshots_and_preserves_orphan_jo
     assert next(row for row in all_rows if row["user_id"] == other_id)["has_live_schedule"] is False
 
 
+def test_admin_collection_history_totals_count_jobs_beyond_both_history_limits(admin_api):
+    client, admin, _ = admin_api
+    user_ids = []
+    for index in range(6):
+        user_id, _ = register(client, f"totals_user_{index}")
+        user_ids.append(user_id)
+        db_path = get_settings_for_user(user_id).job_metadata_db_path
+        JobRepository(db_path)
+        statuses = ["running", "failed", "cancelled", "queued"] + ["completed"] * 197
+        with closing(sqlite3.connect(db_path)) as connection, connection:
+            connection.executemany(
+                """INSERT INTO download_jobs (
+                       job_id, status, created_at, updated_at, variable, start_date, end_date,
+                       north, west, south, east, frequency, progress
+                   ) VALUES (?, ?, ?, ?, ?, '2025-01-01', '2025-01-01', 0, 0, 0, 0, 'hourly', 0)""",
+                [
+                    (f"job_{job_index}", status, (START + timedelta(minutes=job_index)).isoformat(),
+                     START.isoformat(), VARIABLE)
+                    for job_index, status in enumerate(statuses)
+                ],
+            )
+
+    response = client.get(f"{ADMIN}/collection-history", headers=admin)
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["history"]) == 1000
+    assert payload["totals"] == {
+        "total_jobs": 1206, "completed_jobs": 1182, "running_jobs": 6,
+        "failed_jobs": 6, "cancelled_jobs": 6,
+    }
+
+    scoped = client.get(f"{ADMIN}/collection-history", params={"user_id": user_ids[0]}, headers=admin).json()
+    assert len(scoped["history"]) == 200
+    assert all(row["user_id"] == user_ids[0] for row in scoped["history"])
+    assert scoped["totals"] == {
+        "total_jobs": 201, "completed_jobs": 197, "running_jobs": 1,
+        "failed_jobs": 1, "cancelled_jobs": 1,
+    }
+
+
+@pytest.mark.parametrize("action", ["revoke-sessions", "reset-password", "disable", "update-password"])
+def test_admin_handoff_is_invalidated_by_account_security_changes(admin_api, action):
+    client, admin, _ = admin_api
+    username = "handoff_admin"
+    created = client.post(f"{AUTH}/users", json={**credentials(username), "is_admin": True}, headers=admin)
+    assert created.status_code == 201
+    user_path = f"{AUTH}/users/{created.json()['id']}"
+    target = bearer(client.post(f"{AUTH}/login", json=credentials(username)))
+    issued = client.post(f"{ADMIN}/handoff", headers=target)
+    assert issued.status_code == 200
+    ticket = issued.json()["ticket"]
+
+    if action == "revoke-sessions":
+        assert client.post(f"{user_path}/revoke-sessions", headers=admin).json() == {"revoked": 1}
+    elif action == "reset-password":
+        reset = client.post(
+            f"{user_path}/reset-password",
+            json={"password": "a different secure password", "revoke_sessions": False},
+            headers=admin,
+        )
+        assert reset.status_code == 200
+        assert reset.json()["revoked"] == 0
+        assert client.get(f"{AUTH}/me", headers=target).status_code == 200
+    elif action == "disable":
+        assert client.patch(user_path, json={"is_active": False}, headers=admin).status_code == 200
+        assert client.patch(user_path, json={"is_active": True}, headers=admin).status_code == 200
+    else:
+        get_auth_service().set_admin_password(username, "a different secure password")
+
+    assert client.post(f"{ADMIN}/handoff/redeem", json={"ticket": ticket}).status_code == 401
+
+
 def test_admin_account_actions_and_audit(admin_api):
     client, admin, repository = admin_api
     _, user_headers = register(client, "regular_user")
@@ -263,7 +335,6 @@ def test_admin_live_actions_and_cleanup(admin_api, monkeypatch):
     other_id, _ = register(client, "other_user")
     seed_job(user_id, "weather_job", collection_id="weather_collection", status="completed")
     seed_job(user_id, "unsupported_job", collection_id="unsupported", source="mock", status="completed")
-    activity_before = next(row["last_active_at"] for row in repository.list_users() if row["id"] == user_id)
     enable = f"{LIVE}/{user_id}/weather_collection/enable"
     refresh = f"{LIVE}/{user_id}/weather_collection/refresh"
     assert client.post(enable, json={}, headers=user_headers).status_code == 403
@@ -276,6 +347,7 @@ def test_admin_live_actions_and_cleanup(admin_api, monkeypatch):
     assert client.post(f"{LIVE}/{user_id}/other-0/disable", headers=admin).status_code == 200
     assert client.post(enable, json={"interval_hours": 6}, headers=admin).json()["effective_interval_hours"] == 6
     monkeypatch.setattr(live_refresh_service, "latest_weather_hour", lambda: START + timedelta(hours=1))
+    activity_before = next(row["last_active_at"] for row in repository.list_users() if row["id"] == user_id)
     assert client.post(refresh, headers=admin).json()["status"] == "up_to_date"
     assert next(row["last_active_at"] for row in repository.list_users() if row["id"] == user_id) == activity_before
 

@@ -1,5 +1,6 @@
 """Hourly weather model data from Open-Meteo Historical Forecast API."""
 from datetime import date, datetime, timedelta, timezone
+from itertools import groupby
 import json
 from math import cos, isfinite, radians, sin
 from urllib.error import URLError
@@ -12,6 +13,7 @@ from backend.app.domain.quality import current_quality
 from backend.app.domain.recent_weather import GFS_FIRST_DATE, historical_date_bounds
 from backend.app.domain.schemas import ClimatePoint, DownloadArtifact, Location, TimeSeriesResponse
 from backend.app.domain.sources import OPEN_METEO_BEST_MATCH_DATASET, source_dataset
+from backend.app.domain.time_utils import hourly_timestamps, to_utc_naive, to_vietnam_time
 from backend.app.domain.wind import WIND_COMPONENTS
 from backend.app.providers.base import ClimateDataProvider
 from backend.app.providers.era5_provider import ERA5_VARIABLES
@@ -34,42 +36,136 @@ OUTPUT_UNITS = {**{name: unit for name, (_, unit, _) in FIELDS.items()},
 
 
 class OpenMeteoProvider(ClimateDataProvider):
-    def __init__(self, settings, repository):
+    def __init__(self, settings, repository, shared_cache=None, singleflight=None):
         self._settings = settings
         self._repository = repository
         self._dataset = source_dataset("open_meteo", settings)
+        self._shared_cache = shared_cache
+        self._singleflight = singleflight
 
     def download_area(self, variable, area, start_date, end_date, frequency):
         raise ClimateDataError("Open-Meteo thu thập theo một tọa độ.")
 
     def _fetch(self, location, start_date, end_date, *, live_interval=None, refresh_archive=False, model="gfs_global"):
-        today = datetime.now(timezone.utc).date()
+        now = to_utc_naive(datetime.now(timezone.utc))
+        today = now.date()
         earliest, latest = historical_date_bounds()
         first = GFS_FIRST_DATE if refresh_archive else earliest - timedelta(days=1)
         if live_interval is None and not first <= start_date <= end_date <= min(today, latest):
             raise ClimateDataError("Chọn khoảng thời gian trong 5 năm đã qua.")
-        url = LIVE_FORECAST_URL if live_interval else FORECAST_URL
+
+        lower = datetime.combine(start_date, datetime.min.time())
+        cutoff = min(now, datetime.combine(end_date, datetime.max.time()))
+        if live_interval is not None:
+            lower, cutoff = map(to_utc_naive, live_interval)
+        options = dict(live_interval=live_interval, refresh_archive=refresh_archive, model=model)
+
+        check_cancelled()
+        if self._shared_cache is None:
+            payload = self._fetch_http(location, start_date, end_date, **options)
+            check_cancelled()
+            grid, series = self._parse_payload(payload, lower, cutoff)
+        else:
+            lower = lower.replace(minute=0, second=0, microsecond=0)
+            cutoff = cutoff.replace(minute=0, second=0, microsecond=0)
+            dataset = OPEN_METEO_BEST_MATCH_DATASET if model is None else self._dataset
+            # The live endpoint can cover the previous UTC date at Vietnam midnight.
+            historical_cutoff = min(today, lower.date()) if live_interval else today
+
+            def fetch_cached():
+                return self._fetch_cached(location, start_date, end_date, lower, cutoff,
+                                          dataset, historical_cutoff, options)
+
+            # Keep identical requests together until the observations are committed.
+            key = ("cache", self._shared_cache, dataset, model, live_interval is not None,
+                   round(location.latitude, 4), round(location.longitude, 4),
+                   start_date, end_date, lower, cutoff)
+            payload, grid, series = (self._singleflight.do(key, fetch_cached)
+                                     if self._singleflight is not None else fetch_cached())
+            check_cancelled()
+
+        if any(not values for values in series.values()):
+            raise ClimateDataError("Open-Meteo chưa có đủ biến trong khoảng ngày đã chọn.")
+        return payload, grid, series
+
+    def _fetch_cached(self, location, start_date, end_date, lower, cutoff, dataset, historical_cutoff, options):
+        cache = self._shared_cache
+
+        def fetch(start, end):
+            payload = self._fetch_http(location, start, end, **options)
+            grid, series = self._parse_payload(
+                payload, max(lower, datetime.combine(start, datetime.min.time())),
+                min(cutoff, datetime.combine(end, datetime.max.time())),
+            )
+            return payload, grid, series
+
+        def save(grid, series):
+            cache.write_range(dataset, location, grid, series, OUTPUT_UNITS,
+                              historical_cutoff_date=historical_cutoff)
+
+        grid = cache.lookup_grid(dataset, location)
+        if grid is None:
+            payload, grid, series = fetch(start_date, end_date)
+            save(grid, series)
+            return payload, grid, series
+
+        cached_series, valid_hours = cache.read_range(
+            dataset, grid, lower, cutoff, required_variables=set(FIELDS), live_ttl_seconds=1800,
+        )
+        expected_hours = hourly_timestamps(lower, cutoff)
+        missing_days = sorted({hour.date() for hour in expected_hours if hour not in valid_hours})
+        if not missing_days:
+            series = {name: cached_series.get(name, []) for name in FIELDS}
+            self._add_wind_components(series)
+            return self._cached_payload(grid, expected_hours, series), grid, series
+
+        merged = {name: {point.time: point for point in cached_series.get(name, [])} for name in FIELDS}
+        runs = groupby(enumerate(missing_days), key=lambda item: item[1].toordinal() - item[0])
+        for _, run in runs:
+            days = [day for _, day in run]
+            payload, fetched_grid, fresh_series = fetch(days[0], days[-1])
+            if (round(fetched_grid.latitude, 10), round(fetched_grid.longitude, 10)) != (
+                round(grid.latitude, 10), round(grid.longitude, 10)
+            ):
+                # A changed upstream grid requires a consistent set of observations for this request.
+                if (days[0], days[-1]) != (start_date, end_date):
+                    payload, fetched_grid, fresh_series = fetch(start_date, end_date)
+                save(fetched_grid, fresh_series)
+                return payload, fetched_grid, fresh_series
+            save(fetched_grid, fresh_series)
+            for name in FIELDS:
+                merged[name].update((point.time, point) for point in fresh_series[name])
+
+        series = {name: [points[hour] for hour in expected_hours if hour in points]
+                  for name, points in merged.items()}
+        self._add_wind_components(series)
+        return self._cached_payload(grid, expected_hours, series), grid, series
+
+    def _fetch_http(self, location, start_date, end_date, *, live_interval=None, refresh_archive=False, model="gfs_global"):
+        url = LIVE_FORECAST_URL if live_interval is not None else FORECAST_URL
         params = dict(latitude=location.latitude, longitude=location.longitude,
                       start_date=start_date.isoformat(), end_date=end_date.isoformat(),
                       hourly=",".join(field for field, _, _ in FIELDS.values()),
                       timezone="GMT", wind_speed_unit="ms")
         if model is not None:
             params["models"] = model
-        check_cancelled()
-        try:
-            with urlopen(f"{url}?{urlencode(params)}", timeout=30) as response:
-                payload = json.load(response)
-        except (OSError, URLError, ValueError) as exc:
-            raise ClimateProviderError("Không lấy được dữ liệu từ Open-Meteo. Vui lòng thử lại.") from exc
-        check_cancelled()
+        request_url = f"{url}?{urlencode(params)}"
+
+        def request():
+            try:
+                with urlopen(request_url, timeout=30) as response:
+                    return json.load(response)
+            except (OSError, URLError, ValueError) as exc:
+                raise ClimateProviderError("Không lấy được dữ liệu từ Open-Meteo. Vui lòng thử lại.") from exc
+
+        return self._singleflight.do(("http", request_url), request) if self._singleflight is not None else request()
+
+    @staticmethod
+    def _parse_payload(payload, lower, cutoff):
         try:
             grid = Location(latitude=payload["latitude"], longitude=payload["longitude"])
             hourly, units = payload["hourly"], payload["hourly_units"]
-            cutoff = datetime.now(timezone.utc).replace(tzinfo=None)
-            lower = datetime.combine(start_date, datetime.min.time())
-            if live_interval:
-                lower, cutoff = (stamp.astimezone(timezone.utc).replace(tzinfo=None) for stamp in live_interval)
-            times = [datetime.fromisoformat(value) for value in hourly["time"]]
+            times = [to_utc_naive(datetime.fromisoformat(value)) for value in hourly["time"]]
             series = {}
             for name, (field, unit, scale) in FIELDS.items():
                 values = hourly[field]
@@ -79,17 +175,31 @@ class OpenMeteoProvider(ClimateDataProvider):
                 series[name] = [ClimatePoint(time=stamp, value=value * scale + offset)
                                 for stamp, value in zip(times, values)
                                 if lower <= stamp <= cutoff and value is not None and isfinite(value)]
-            directions = {point.time: point.value for point in series["wind_direction"]}
-            for name, projection in zip(WIND_COMPONENTS, (sin, cos)):
-                series[name] = [
-                    ClimatePoint(time=point.time, value=-point.value * projection(radians(directions[point.time])))
-                    for point in series["wind_speed"] if point.time in directions
-                ]
         except (KeyError, AttributeError, TypeError, ValueError) as exc:
             raise ClimateDataError("Open-Meteo trả về dữ liệu không hợp lệ hoặc thiếu biến.") from exc
-        if any(not values for values in series.values()):
-            raise ClimateDataError("Open-Meteo chưa có đủ biến trong khoảng ngày đã chọn.")
-        return payload, grid, series
+        OpenMeteoProvider._add_wind_components(series)
+        return grid, series
+
+    @staticmethod
+    def _add_wind_components(series):
+        directions = {point.time: point.value for point in series["wind_direction"]}
+        for name, projection in zip(WIND_COMPONENTS, (sin, cos)):
+            series[name] = [
+                ClimatePoint(time=point.time, value=-point.value * projection(radians(directions[point.time])))
+                for point in series["wind_speed"] if point.time in directions
+            ]
+
+    @staticmethod
+    def _cached_payload(grid, hours, series, *, cached=True):
+        hourly = {"time": [hour.isoformat(timespec="minutes") for hour in hours]}
+        units = {"time": "iso8601"}
+        for name, (field, unit, scale) in FIELDS.items():
+            offset = 273.15 if unit == "°C" else 0
+            values = {point.time: (point.value - offset) / scale for point in series[name]}
+            hourly[field] = [values.get(hour) for hour in hours]
+            units[field] = unit
+        return dict(latitude=grid.latitude, longitude=grid.longitude, cached=cached,
+                    hourly=hourly, hourly_units=units)
 
     def fetch_refresh(self, location, first_hour, last_hour, latest, *, dataset):
         """Read the archive up to the UTC day containing today's Vietnam midnight."""
@@ -112,8 +222,46 @@ class OpenMeteoProvider(ClimateDataProvider):
             )
             yield grid, series
 
+    def _fetch_collection(self, location, start_date, end_date, live_interval):
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        _, latest = historical_date_bounds()
+        if live_interval is None:
+            if not start_date <= latest < end_date <= today:
+                return self._fetch(location, start_date, end_date)
+            lower = datetime.combine(start_date, datetime.min.time())
+            cutoff = to_utc_naive(now)
+        else:
+            start, end = live_interval
+            if not start_date < today <= end_date or to_vietnam_time(start).date() == to_vietnam_time(end).date():
+                return self._fetch(location, start_date, end_date, live_interval=live_interval)
+            lower, cutoff = map(to_utc_naive, live_interval)
+
+        # A Vietnam day can start on the preceding UTC date. Split longer
+        # collections at the UTC midnight of the current live day.
+        live_start = datetime.combine(today, datetime.min.time())
+        archive, archive_grid, archive_series = self._fetch(location, start_date, today - timedelta(days=1))
+        live, live_grid, live_series = self._fetch(
+            location, today, end_date, live_interval=(live_start, cutoff),
+        )
+        if (round(archive_grid.latitude, 10), round(archive_grid.longitude, 10)) != (
+            round(live_grid.latitude, 10), round(live_grid.longitude, 10)
+        ):
+            raise ClimateDataError("Dữ liệu lưu trữ và dự báo trực tiếp của Open-Meteo có tọa độ lưới khác nhau.")
+
+        hours = hourly_timestamps(lower, cutoff)
+        series = {}
+        for name, archive_points in archive_series.items():
+            points = {point.time: point for point in archive_points}
+            points.update((point.time, point) for point in live_series[name])
+            series[name] = [points[hour] for hour in hours if hour in points]
+        payload = self._cached_payload(
+            archive_grid, hours, series, cached=archive.get("cached", False) and live.get("cached", False),
+        )
+        return payload, archive_grid, series
+
     def download_point(self, variable, location, start_date: date, end_date: date, frequency, *, live_interval=None):
-        payload, grid, series = self._fetch(location, start_date, end_date, live_interval=live_interval)
+        payload, grid, series = self._fetch_collection(location, start_date, end_date, live_interval)
         path = self._settings.data_dir / "raw" / "open_meteo" / f"{uuid4().hex}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

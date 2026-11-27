@@ -334,6 +334,11 @@ def _render_collections_body(api: DashboardApiClient, users: list[dict], history
                 continue
         rows.append(job)
 
+    row_ids = tuple(job.get("job_id") for job in rows)
+    if st.session_state.get("admin_history_row_ids") != row_ids:
+        st.session_state["admin_history_row_ids"] = row_ids
+        st.session_state["admin_history_table"] = {"selection": {"rows": [], "columns": [], "cells": []}}
+
     if not rows:
         st.info("Chưa có lịch sử thu thập phù hợp.", icon=":material/info:")
         return

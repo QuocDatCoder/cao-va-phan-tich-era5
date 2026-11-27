@@ -7,6 +7,9 @@ from pydantic import BaseModel,ConfigDict,Field,ValidationError
 import streamlit as st
 
 
+MAX_HISTORY_BYTES = 150_000
+
+
 class SavedMessage(BaseModel):
     model_config=ConfigDict(extra='ignore',strict=True)
     role: Literal['user','assistant']
@@ -31,9 +34,18 @@ def storage_key(base_url, username=None):
     return 'era5.are.chat.v1.'+sha256((base_url.rstrip('/')+('\0'+username if username else '')).encode()).hexdigest()[:20]
 
 
+def _encode_snapshot(payload):
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(',', ':'))
+
+
 def snapshot(state):
-    messages=[]
-    for message in state.get('ai_chat_messages',[]):
+    payload = dict(version=1,messages=[],selected=state.get('ai_chat_selected'),
+        selected_name=state.get('ai_chat_selected_name'),opened=bool(state.get('ai_chat_open')),
+        unread=bool(state.get('ai_chat_unread')),theme=state.get('ai_pet_theme','auto'),
+        in_flight=bool(state.get('ai_chat_pending')),reset_token=state.get('ai_chat_reset_token',''))
+    remaining = MAX_HISTORY_BYTES - len(_encode_snapshot(payload).encode('utf-8'))
+    messages = payload['messages']
+    for message in reversed(state.get('ai_chat_messages', [])):
         saved=dict(role=message['role'],content=message['content'])
         result=message.get('result')
         if result:
@@ -41,11 +53,18 @@ def snapshot(state):
             saved['result']={key:result[key] for key in ['answer_kind','completed','verified','actions','collection_job'] if key in result}
             saved['result']['evidence']=[dict(tool=e['tool'],result=e['result'])
                 for e in result.get('evidence',[]) if e.get('tool')!='project_knowledge']
+        # The empty array is already in the envelope. Each entry adds its JSON and a comma.
+        size = len(_encode_snapshot(saved).encode('utf-8')) + int(bool(messages))
+        if not messages and size > remaining and 'result' in saved:
+            # Keep the most recent reply when its tool results alone exhaust the budget.
+            del saved['result']
+            size = len(_encode_snapshot(saved).encode('utf-8'))
+        if size > remaining:
+            break
         messages.append(saved)
-    return dict(version=1,messages=messages,selected=state.get('ai_chat_selected'),
-        selected_name=state.get('ai_chat_selected_name'),opened=bool(state.get('ai_chat_open')),
-        unread=bool(state.get('ai_chat_unread')),theme=state.get('ai_pet_theme','auto'),
-        in_flight=bool(state.get('ai_chat_pending')),reset_token=state.get('ai_chat_reset_token',''))
+        remaining -= size
+    messages.reverse()
+    return payload
 
 
 def restore(state,raw):
@@ -95,7 +114,7 @@ export default function(component) {
   if (data.action === 'save' && state.revision !== data.revision) {
     state.revision = data.revision;
     try {
-      window.localStorage.setItem(data.storage_key, JSON.stringify(data.snapshot));
+      window.localStorage.setItem(data.storage_key, data.snapshot);
       // Successful storage needs no server ACK: it would redraw the chat and
       // close native selectors while the user is interacting. Notify only when
       // recovering from a previously reported storage error.
@@ -133,13 +152,12 @@ def sync_history(api):
     ready=state.get('ai_chat_history_loaded',False)
     data=dict(action='load',storage_key=storage_key(api.base_url,state.get('auth_username')),pending=bool(state.get('ai_chat_pending')))
     if ready:
-        payload=snapshot(state)
-        encoded=json.dumps(payload,ensure_ascii=False,sort_keys=True,allow_nan=False)
+        encoded=_encode_snapshot(snapshot(state))
         revision=sha256(encoded.encode()).hexdigest()
         if state.get('ai_chat_history_blocked') or state.get('ai_chat_history_ack')==revision:
             data.update(action='idle',revision=revision)
         else:
-            data.update(action='save',snapshot=payload,revision=revision)
+            data.update(action='save',snapshot=encoded,revision=revision)
     with st.container(key='ai_chat_persistence'):
         result=_BRIDGE(key='ai_chat_browser_history',data=data,height=0,
                        on_loaded_change=_rerender_chat,on_saved_change=_saved_callback,on_poll_change=_rerender_chat)

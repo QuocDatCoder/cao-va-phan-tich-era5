@@ -94,6 +94,32 @@ def test_unauthenticated_admin_site_shows_login_form(admin_app, monkeypatch):
     assert not admin_app.get("link_button")
 
 
+@pytest.mark.parametrize("status_code", [503, None], ids=["service-unavailable", "timeout"])
+def test_current_user_transient_error_preserves_session_and_allows_retry(
+    admin_app, admin_session, monkeypatch, status_code,
+):
+    current_user = DashboardApiClient.current_user
+    error = DashboardApiError("API temporarily unavailable", status_code=status_code)
+    monkeypatch.setattr(DashboardApiClient, "current_user", Mock(side_effect=error))
+    admin_app.session_state["admin_username"] = admin_session["username"]
+    _open_admin_view(admin_app, admin_session, "overview")
+
+    assert not admin_app.exception
+    assert not admin_app.text_input
+    assert not admin_app.header
+    assert [item.value for item in admin_app.error] == [f"Tạm thời không kết nối được máy chủ API: {error}"]
+    assert admin_app.session_state["admin_access_token"] == admin_session["access_token"]
+    assert admin_app.session_state["admin_expires_at"] == admin_session["expires_at"]
+    assert admin_app.session_state["admin_username"] == admin_session["username"]
+
+    monkeypatch.setattr(DashboardApiClient, "current_user", current_user)
+    retry = next(button for button in admin_app.button if button.label == "Thử lại")
+    retry.click().run()
+    assert not admin_app.exception
+    assert not admin_app.error
+    assert admin_app.header[0].value == "Tổng quan hệ thống"
+
+
 def test_admin_login_opens_dashboard_and_writes_browser_session(admin_app, admin_session, monkeypatch):
     login = Mock(return_value=admin_session)
     bridge = Mock(wraps=admin_site._BRIDGE)

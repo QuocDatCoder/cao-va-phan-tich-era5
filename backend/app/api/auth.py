@@ -399,6 +399,7 @@ def admin_collection_history(user_id: int | None = None, _: dict = Depends(requi
         live_ids.setdefault(schedule["user_id"], set()).add(schedule["collection_id"])
     settings = get_settings()
     history = []
+    status_counts = Counter()
     for account in users:
         user_settings = get_settings_for_user(account["id"], settings)
         try:
@@ -410,8 +411,13 @@ def admin_collection_history(user_id: int | None = None, _: dict = Depends(requi
                           "progress", "created_at", "updated_at", "completed_at", "error")
                 select = ", ".join(name if name in columns else f"NULL AS {name}" for name in wanted)
                 rows = connection.execute(f"SELECT {select} FROM download_jobs ORDER BY created_at DESC LIMIT 200").fetchall()
+                status_column = "status" if "status" in columns else "NULL AS status"
+                counts = connection.execute(
+                    f"SELECT {status_column}, COUNT(*) FROM download_jobs GROUP BY status"
+                ).fetchall()
         except (OSError, sqlite3.Error):
             continue
+        status_counts.update(dict(counts))
         collections = _history_collections(user_settings.climate_data_db_path, [row["job_id"] for row in rows])
         scheduled = live_ids.get(account["id"], set())
         for row in rows:
@@ -420,7 +426,16 @@ def admin_collection_history(user_id: int | None = None, _: dict = Depends(requi
                 **_history_details(row, collections.get(row["job_id"], {}), scheduled),
             })
     history.sort(key=lambda item: item.get("created_at") or "", reverse=True)
-    return {"history": history[:1000]}
+    return {
+        "history": history[:1000],
+        "totals": {
+            "total_jobs": sum(status_counts.values()),
+            "completed_jobs": status_counts["completed"],
+            "running_jobs": status_counts["running"],
+            "failed_jobs": status_counts["failed"],
+            "cancelled_jobs": status_counts["cancelled"],
+        },
+    }
 
 
 @router.post("/admin/handoff")

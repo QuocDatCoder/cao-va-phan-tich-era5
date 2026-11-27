@@ -365,6 +365,11 @@ def notices(app):
     return [element for element in app.get('html') if '<template id="era-notice-' in element.value]
 
 
+def _open_collection_history(app):
+    app.session_state['collection_job_history'] = True
+    app.run()
+
+
 def test_geocoding_failure_keeps_manual_coordinates_usable(ui, monkeypatch):
     app, bridge, _ = ui
     monkeypatch.setattr(workflow, 'search_places', lambda query: None)
@@ -403,6 +408,9 @@ def test_visible_labels_have_valid_vietnamese_and_readable_job_names(ui):
         assert not any('?' in s or '\ufffd' in s for s in strings)
     app.selectbox(key='collect_source').set_value('mock').run()
     app.button(key='collect_now').click().run()
+    assert not app.dataframe
+    assert not any((w.key or '').startswith('workflow_job_choice_') for w in app.selectbox)
+    _open_collection_history(app)
     options = next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).options
     assert options
     assert all('Giả lập' in option and 'UTC+7' in option and 'Nhiệt độ' not in option for option in options)
@@ -889,6 +897,7 @@ def test_quality_details_load_only_when_open_and_terminal_job_is_cached(ui):
     before = len(bridge.calls)
     app.run()
     assert len(bridge.calls) == before
+    _open_collection_history(app)
     next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).select(jid).run()
     app.session_state['job_quality_'+jid] = True
     app.run()
@@ -896,11 +905,24 @@ def test_quality_details_load_only_when_open_and_terminal_job_is_cached(ui):
     assert not app.exception and not app.error
 
 
-def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
+def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui, monkeypatch):
     app, bridge, collection = ui
+    fragment = workflow.st.fragment
+    intervals = []
+
+    def track_interval(func=None, **kwargs):
+        if func is workflow._collection_jobs_fragment:
+            intervals.append(kwargs['run_every'])
+        return fragment(func, **kwargs)
+
+    monkeypatch.setattr(workflow.st, 'fragment', track_interval)
+    app.run()
+    assert intervals[-1] is None
     service = collection[3]
     created = service.create_job(DownloadRequest(source='mock', variable='temperature', location=POINT, **DATES))
     app.button(key='refresh_jobs').click().run()
+    assert intervals[-1] == 1
+    _open_collection_history(app)
     jid = created.job_id
     def job_choice():
         return next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_'))
@@ -911,6 +933,7 @@ def test_job_refresh_keeps_one_status_and_updates_history_without_resubmit(ui):
     assert any(e.label == 'Thông tin kỹ thuật' for e in app.expander)
     service.run_job(jid)
     app.button(key='refresh_jobs').click().run()
+    assert intervals[-1] is None
     assert job_choice().value == jid
     assert app.button(key='history_job_open_data')
     assert any('Đã hoàn tất thu thập' in toast.value for toast in notices(app))
@@ -972,6 +995,7 @@ def test_latest_card_keeps_job_details_closed_until_selected(ui):
         job_id=job.job_id, status='queued', place='Tọa độ nhập tay', period='01/01/2025',
     )
     app.button(key='refresh_jobs').click().run()
+    _open_collection_history(app)
     choice = next(widget for widget in app.selectbox if (widget.key or '').startswith('workflow_job_choice_'))
     assert choice.value is None
     assert not any('class="job-state job-state-' in item.value for item in app.html)
@@ -999,6 +1023,7 @@ def test_cancel_button_stops_selected_queued_job_and_updates_status(ui):
     app, bridge, collection = ui
     jid = collection[3].create_job(DownloadRequest(source='mock',variable='temperature',location=POINT,**DATES)).job_id
     app.button(key='refresh_jobs').click().run()
+    _open_collection_history(app)
     next(w for w in app.selectbox if (w.key or '').startswith('workflow_job_choice_')).select(jid).run()
     app.button(key='cancel_job_'+jid).click().run()
     assert not app.exception and not app.error

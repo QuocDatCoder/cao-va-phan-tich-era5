@@ -192,18 +192,19 @@ def _logout_admin(api: DashboardApiClient) -> None:
     st.query_params.clear()
 
 
-def _current_admin(api: DashboardApiClient) -> dict:
+def _current_admin(api: DashboardApiClient) -> dict | None:
     try:
         user = api.current_user()
     except DashboardApiError as exc:
+        if exc.status_code not in {401, 403}:
+            st.error(f"Tạm thời không kết nối được máy chủ API: {exc}")
+            st.button("Thử lại", type="primary", on_click=st.rerun)
+            return None
         st.session_state.pop(_TOKEN_KEY, None)
         st.session_state.pop(_EXPIRY_KEY, None)
         st.session_state.pop("admin_username", None)
         st.session_state["admin_restore_ready"] = True
-        st.session_state["admin_login_error"] = (
-            "Phiên quản trị không còn hợp lệ. Vui lòng đăng nhập lại."
-            if exc.status_code in {401, 403} else str(exc)
-        )
+        st.session_state["admin_login_error"] = "Phiên quản trị không còn hợp lệ. Vui lòng đăng nhập lại."
         st.rerun()
     if not user.get("is_admin"):
         st.session_state.clear()
@@ -370,7 +371,11 @@ def main() -> None:
         and valid_local
     )
     api = _client()
-    user = _current_admin(api) if valid_local and (not ticket or already_redeemed) else None
+    user = None
+    if valid_local and (not ticket or already_redeemed):
+        user = _current_admin(api)
+        if user is None:
+            return
     stage = st.empty()
     if not valid_local and not st.session_state.get("admin_restore_ready") and not ticket:
         restored = getattr(bridge, "restored", None)

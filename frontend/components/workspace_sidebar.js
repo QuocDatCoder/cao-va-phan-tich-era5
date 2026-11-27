@@ -85,13 +85,21 @@ export default function({data, parentElement, setTriggerValue}) {
     header.append(brand, collapse);
     const nav = document.createElement("nav");
     nav.className = "era5-sidebar-nav";
+    nav.setAttribute("aria-label", "Điều hướng");
+    const navLabel = document.createElement("span");
+    navLabel.className = "era5-sidebar-nav-label";
+    navLabel.setAttribute("aria-hidden", "true");
+    navLabel.textContent = "ĐIỀU HƯỚNG";
+    nav.append(navLabel);
     for (const item of data.navigation) {
       const row = button(item.label, item.icon, "era5-sidebar-row", () => {
         state.drawer = false;
         render();
         if (item.id !== data.active) {
           if (data.workspaceNavigation) {
-            document.documentElement.dataset.weahubDestination = String(data.navigation.indexOf(item));
+            if (!data.guest) {
+              document.documentElement.dataset.weahubDestination = String(data.navigation.indexOf(item));
+            }
             document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
           }
           if (data.dismissAdminNoticeOnNavigate) {
@@ -103,17 +111,10 @@ export default function({data, parentElement, setTriggerValue}) {
       if (item.id === data.active) row.setAttribute("aria-current", "page");
       nav.append(row);
     }
+    const bottom = document.createElement("div");
+    bottom.className = "era5-sidebar-bottom";
     const footer = document.createElement("footer");
     footer.className = "era5-sidebar-footer";
-    const profile = document.createElement("div");
-    profile.className = "era5-sidebar-profile";
-    const avatar = document.createElement("span");
-    avatar.className = "era5-sidebar-avatar";
-    avatar.textContent = data.username ? data.username.slice(0, 1).toUpperCase() : "·";
-    const name = document.createElement("strong");
-    name.className = "era5-button-label";
-    name.textContent = data.username;
-    profile.append(avatar, name);
     const theme = button(state.theme === "light" ? "Bật chế độ tối" : "Bật chế độ sáng",
       state.theme === "light" ? "dark_mode" : "light_mode", "era5-sidebar-theme", () => {
         state.theme = state.theme === "light" ? "dark" : "light";
@@ -123,9 +124,28 @@ export default function({data, parentElement, setTriggerValue}) {
         root.querySelector(".era5-sidebar-theme")?.focus();
       }, true);
     theme.setAttribute("aria-pressed", String(state.theme === "dark"));
-    footer.append(profile, theme,
-      button("Đăng xuất", "logout", "era5-sidebar-logout", () => setTriggerValue("logout", true), true));
-    panel.append(header, nav, footer);
+    if (data.guest) {
+      footer.append(button("Đăng nhập", "login", "era5-sidebar-login", () => {
+        state.drawer = false;
+        render();
+        document.querySelector('[data-testid="stMain"]')?.scrollTo(0, 0);
+        setTriggerValue("login", true);
+      }), theme);
+    } else {
+      const profile = document.createElement("div");
+      profile.className = "era5-sidebar-profile";
+      const avatar = document.createElement("span");
+      avatar.className = "era5-sidebar-avatar";
+      avatar.textContent = data.username ? data.username.slice(0, 1).toUpperCase() : "·";
+      const name = document.createElement("strong");
+      name.className = "era5-button-label";
+      name.textContent = data.username;
+      profile.append(avatar, name);
+      footer.append(profile, theme,
+        button("Đăng xuất", "logout", "era5-sidebar-logout", () => setTriggerValue("logout", true), true));
+    }
+    bottom.append(footer);
+    panel.append(header, nav, bottom);
     const open = button("Mở menu điều hướng", "menu", "era5-mobile-menu", () => {
       state.drawer = !state.drawer;
       render();

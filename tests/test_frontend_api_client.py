@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import requests
 import pytest
 
@@ -44,6 +46,29 @@ class FakeSession:
         if self.error:
             raise self.error
         return self.response
+
+
+def test_default_session_reuses_connections_without_retaining_credentials(monkeypatch):
+    sent = []
+
+    def send(session, request, **kwargs):
+        sent.append((session, request.headers.get("Authorization"), request.headers.get("Cookie")))
+        session.cookies.set("test_cookie", "private")
+        return FakeResponse({"status": "ok"})
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    alice = DashboardApiClient(access_token="alice")
+    bob = DashboardApiClient(access_token="bob")
+    alice.health()
+    bob.health()
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        worker.submit(alice.health).result()
+
+    assert sent[0][0] is sent[1][0]
+    assert sent[0][0] is not sent[2][0]
+    assert [(auth, cookie) for _, auth, cookie in sent] == [
+        ("Bearer alice", None), ("Bearer bob", None), ("Bearer alice", None),
+    ]
 
 
 def test_client_uses_expected_endpoint_params_and_timeout() -> None:

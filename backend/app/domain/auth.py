@@ -11,6 +11,7 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     username: str
     expires_at: int
+    is_admin: bool
 
 
 class UserResponse(BaseModel):

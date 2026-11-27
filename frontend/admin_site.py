@@ -1,6 +1,7 @@
 """Dedicated admin dashboard and account management interface."""
 import os
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from html import escape
@@ -17,6 +18,7 @@ from frontend.dashboard import _translate_status
 
 _TOKEN_KEY = "admin_access_token"
 _EXPIRY_KEY = "admin_expires_at"
+_ADMIN_ROLE_ERROR = "Tài khoản này không có quyền quản trị."
 _ADMIN_NAV = {
     "overview": ("Tổng quan", "dashboard"),
     "accounts": ("Quản lý tài khoản", "manage_accounts"),
@@ -46,8 +48,70 @@ def _client() -> DashboardApiClient:
     return DashboardApiClient(
         base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
         timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
-        access_token=st.session_state.get("admin_access_token"),
+        access_token=st.session_state.get(_TOKEN_KEY),
     )
+
+
+def _store_admin_session(payload: dict) -> None:
+    st.session_state.update({
+        _TOKEN_KEY: payload["access_token"],
+        _EXPIRY_KEY: payload["expires_at"],
+        "admin_username": payload["username"],
+        "admin_restore_ready": True,
+    })
+
+
+def _render_admin_login(api: DashboardApiClient) -> None:
+    with st.container(horizontal_alignment="center"):
+        with st.container(width=440):
+            with st.form("admin_login_form", clear_on_submit=True):
+                is_dark = getattr(getattr(st.context, "theme", None), "type", None) == "dark"
+                ink = "#fff" if is_dark else "#17221c"
+                hub_bg = "#ff9d24" if is_dark else "#237845"
+                hub_fg = "#101010" if is_dark else "#fff"
+                st.html(
+                    f'<strong style="display:inline-flex;align-items:center;gap:.11em;'
+                    f'color:{ink};font-size:1.55rem;font-weight:850;letter-spacing:-.065em;'
+                    f'line-height:1;margin-bottom:.35rem;">Weather '
+                    f'<span style="display:inline-block;padding:.14em .23em .17em;'
+                    f'border-radius:.27em;background:{hub_bg};color:{hub_fg};font-weight:650;">Hub</span></strong>'
+                )
+                st.header("Đăng nhập Quản trị", anchor=False)
+                st.caption("Weather Hub Admin")
+                username = st.text_input("Tên đăng nhập", key="admin_login_username", autocomplete="username")
+                password = st.text_input(
+                    "Mật khẩu", type="password", key="admin_login_password", autocomplete="current-password"
+                )
+                submitted = st.form_submit_button(
+                    "Đăng nhập quản trị", key="admin_login_submit", type="primary", width="stretch"
+                )
+                error = st.empty()
+
+    if message := st.session_state.pop("admin_login_error", None):
+        error.error(message)
+    if not submitted:
+        return
+    try:
+        payload = api.login(username, password)
+    except DashboardApiError as exc:
+        error.error(str(exc))
+        return
+    is_admin = payload.get("is_admin")
+    if is_admin is None and payload.get("access_token"):
+        try:
+            me = replace(api, access_token=payload["access_token"]).current_user()
+            is_admin = bool(me.get("is_admin"))
+        except DashboardApiError:
+            is_admin = False
+    if is_admin is not True:
+        try:
+            replace(api, access_token=payload["access_token"]).logout()
+        except DashboardApiError:
+            pass
+        error.error(_ADMIN_ROLE_ERROR)
+        return
+    _store_admin_session(payload)
+    st.rerun()
 
 
 def _navigate_admin() -> None:
@@ -135,6 +199,46 @@ def main() -> None:
         .block-container [data-testid="stVerticalBlock"]:has(> div > .st-key-admin_workspace) {
             gap: 0 !important;
         }
+        :is(.st-key-admin_workspace, [data-testid="stPopoverBody"]:has([class*="st-key-admin_account_actions_"])) {
+            --admin-accent:#0f766e;
+            --admin-surface:#fff;
+            --admin-border:#d5e2df;
+            --admin-muted:#50645f;
+            --admin-header:#edf5f3;
+            --admin-hover:#f2f8f6;
+            --admin-active-ink:#176044;
+            --admin-active-bg:#e3f5ea;
+            --admin-locked-ink:#922f34;
+            --admin-locked-bg:#fcebec;
+        }
+        body:has(.era5-shell[data-theme="dark"])
+        :is(.st-key-admin_workspace, [data-testid="stPopoverBody"]:has([class*="st-key-admin_account_actions_"])) {
+            --admin-accent:#60a5fa;
+            --admin-surface:#202124;
+            --admin-border:#3c414a;
+            --admin-muted:#b6bfce;
+            --admin-header:#232d3d;
+            --admin-hover:#242b38;
+            --admin-active-ink:#91e2b4;
+            --admin-active-bg:#19382d;
+            --admin-locked-ink:#ffb4b8;
+            --admin-locked-bg:#43282e;
+        }
+        .st-key-admin_workspace :is(h1, h2) {
+            font-size:clamp(1.55rem, 2.5vw, 1.9rem) !important;
+            letter-spacing:-.025em;
+            line-height:1.2;
+        }
+        .st-key-admin_workspace [data-testid="stMetric"] {
+            background:var(--admin-surface);
+            border-color:var(--admin-border);
+            border-radius:.75rem;
+        }
+        .st-key-admin_workspace [data-testid="stMetricLabel"] {color:var(--admin-muted)}
+        .st-key-admin_workspace [data-testid="stMetricValue"] {
+            font-weight:700;
+            font-variant-numeric:tabular-nums;
+        }
         @media (min-width: 761px) {
             body:has(.era5-shell) .block-container:has(.st-key-admin_workspace) {
                 padding-top: 3rem !important;
@@ -151,25 +255,23 @@ def main() -> None:
             "mode": "write" if valid_local else "clear" if st.session_state.get("admin_restore_ready") else "read",
             "session": {"access_token": token, "expires_at": expires_at} if valid_local else None,
         }, height=0, on_restored_change=lambda: None)
-    if not valid_local and not st.session_state.get("admin_restore_ready") and not st.query_params.get("handoff"):
-        restored = getattr(bridge, "restored", None)
-        if not isinstance(restored, dict):
-            st.caption("Đang khôi phục phiên quản trị…")
-            return
-        saved = restored.get("session")
-        if isinstance(saved, dict):
-            saved_token, saved_expiry = saved.get("access_token"), saved.get("expires_at")
-            if isinstance(saved_token, str) and type(saved_expiry) is int and saved_expiry > int(time.time()):
-                st.session_state[_TOKEN_KEY] = saved_token
-                st.session_state[_EXPIRY_KEY] = saved_expiry
-        st.session_state["admin_restore_ready"] = True
-        st.rerun()
     ticket = st.query_params.get("handoff")
+    if not valid_local and not st.session_state.get("admin_restore_ready") and not ticket:
+        restored = getattr(bridge, "restored", None)
+        if isinstance(restored, dict):
+            st.session_state["admin_restore_ready"] = True
+            saved = restored.get("session")
+            if isinstance(saved, dict):
+                saved_token, saved_expiry = saved.get("access_token"), saved.get("expires_at")
+                if isinstance(saved_token, str) and saved_token and type(saved_expiry) is int and saved_expiry > int(time.time()):
+                    st.session_state[_TOKEN_KEY] = saved_token
+                    st.session_state[_EXPIRY_KEY] = saved_expiry
+                    st.rerun()
     redeemed_ticket_key = sha256(ticket.encode()).hexdigest() if ticket else None
     already_redeemed = bool(
         ticket
         and st.session_state.get("admin_handoff_ticket_key") == redeemed_ticket_key
-        and st.session_state.get(_TOKEN_KEY)
+        and valid_local
     )
     if ticket and not already_redeemed:
         try:
@@ -185,36 +287,35 @@ def main() -> None:
             retry_url = os.getenv("MAIN_APP_URL", "http://localhost:8501").rstrip("/") + "/?retry_admin=1"
             st.link_button("Tạo lại liên kết từ trang chính", retry_url, type="primary")
             return
-        st.session_state["admin_access_token"] = session["access_token"]
-        st.session_state[_EXPIRY_KEY] = session["expires_at"]
-        st.session_state["admin_username"] = session["username"]
+        _store_admin_session(session)
         st.session_state["admin_handoff_ticket_key"] = redeemed_ticket_key
-        st.session_state["admin_restore_ready"] = True
         st.query_params.clear()
         st.rerun()
     elif already_redeemed:
         # Streamlit can rerun before the browser applies query-param removal.
         # The exchange is one-time, so continue with the session already issued.
         st.query_params.clear()
-    if not st.session_state.get("admin_access_token"):
-        st.info("Đăng nhập tài khoản admin tại trang chính để mở khu vực quản trị.")
-        st.link_button("Đến trang chính", os.getenv("MAIN_APP_URL", "http://localhost:8501"), type="primary")
+    if not valid_local:
+        _render_admin_login(replace(_client(), access_token=None))
         return
     api = _client()
     try:
         user = api.current_user()
     except DashboardApiError as exc:
-        st.session_state.pop("admin_access_token", None)
+        st.session_state.pop(_TOKEN_KEY, None)
         st.session_state.pop(_EXPIRY_KEY, None)
         st.session_state.pop("admin_username", None)
         st.session_state["admin_restore_ready"] = True
-        st.error("Phiên quản trị không còn hợp lệ. Vui lòng đăng nhập lại." if exc.status_code in {401, 403} else str(exc))
+        st.session_state["admin_login_error"] = (
+            "Phiên quản trị không còn hợp lệ. Vui lòng đăng nhập lại."
+            if exc.status_code in {401, 403} else str(exc)
+        )
         st.rerun()
     if not user.get("is_admin"):
         st.session_state.clear()
         st.session_state["admin_restore_ready"] = True
-        st.error("Tài khoản này không được cấp quyền quản trị.")
-        return
+        st.session_state["admin_login_error"] = _ADMIN_ROLE_ERROR
+        st.rerun()
     _render_admin_sidebar(api, user["username"])
     accounts = st.session_state.get("admin_section") == "accounts"
     with st.container(key="admin_workspace"):
@@ -288,67 +389,105 @@ def _confirm_account_action(api, account, action, label):
 def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
     st.html("""
         <style>
-        .st-key-admin_workspace {
-            --account-columns:minmax(0, 1.5fr) 3rem minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1.55fr) 5rem;
-        }
+        .st-key-admin_accounts_view {container-type:inline-size}
         :is(.st-key-admin_accounts_table, .st-key-admin_account_filters) [data-testid="stHorizontalBlock"] {
-            display:grid; grid-template-columns:var(--account-columns);
-            align-items:center; gap:.65rem;
+            display:grid; gap:.65rem;
+        }
+        .st-key-admin_account_filters [data-testid="stHorizontalBlock"] {
+            grid-template-columns:minmax(0, 1.5fr) repeat(2, minmax(0, 1fr)) minmax(0, 1.25fr);
+            align-items:end;
+        }
+        .st-key-admin_accounts_table [data-testid="stHorizontalBlock"] {
+            grid-template-columns:minmax(0, 1.5fr) 3rem minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.5fr) 4.5rem;
+            align-items:center;
         }
         :is(.st-key-admin_accounts_table, .st-key-admin_account_filters) [data-testid="stColumn"] {
             width:100%; min-width:0;
         }
-        .st-key-admin_accounts_table {padding:.5rem .85rem; container-type:inline-size}
-        .st-key-admin_account_filters {padding-inline:calc(.85rem + 1px); container-type:inline-size}
-        .st-key-admin_account_filters [data-testid="stColumn"]:first-child {grid-column:span 2}
-        .st-key-admin_account_filters [data-testid="stColumn"]:nth-child(2) {display:none}
-        .st-key-admin_account_count {padding-inline:calc(.85rem + 1px)}
-        .st-key-admin_accounts_header {
-            background:color-mix(in srgb, var(--primary-color, #0f766e) 12%, transparent);
-            border-radius:.4rem; padding-block:.4rem;
+        .st-key-admin_account_filters [data-testid="stWidgetLabel"] p {
+            color:var(--admin-muted); font-weight:600;
         }
-        .era5-account-heading {font-size:.86rem; font-weight:700}
+        .st-key-admin_accounts_table {
+            --account-inset:1rem;
+            gap:0; padding:0; border-color:var(--admin-border);
+            background:var(--admin-surface); border-radius:.75rem;
+        }
+        .st-key-admin_accounts_header {
+            background:var(--admin-header);
+            border-radius:.75rem .75rem 0 0; padding:.65rem var(--account-inset);
+            border-bottom:1px solid var(--admin-border);
+        }
+        .era5-account-heading {color:var(--admin-muted); font-size:.82rem; font-weight:700}
         .st-key-admin_accounts_table [data-testid="stColumn"] > [data-testid="stVerticalBlock"] {
             align-items:center; text-align:center;
         }
-        .era5-account-id, .era5-account-empty {font-size:.82rem; opacity:.72}
+        .st-key-admin_accounts_table [data-testid="stColumn"]:first-child > [data-testid="stVerticalBlock"] {
+            align-items:flex-start; text-align:left;
+        }
+        .era5-account-id, .era5-account-empty, .era5-account-login {
+            color:var(--admin-muted); font-size:.85rem; font-variant-numeric:tabular-nums;
+        }
         .era5-account-name {font-weight:650; overflow-wrap:anywhere}
         .era5-account-field-label {display:none}
         .era5-account-role-admin, .era5-account-status {
-            display:inline-block; border-radius:.35rem; padding:.15rem .42rem;
-            font-size:.87rem; font-weight:600;
+            display:inline-flex; align-items:center; gap:.35rem;
+            border-radius:.4rem; padding:.18rem .45rem; font-size:.8rem; font-weight:650;
         }
-        .era5-account-role-admin {background:#dfeafb; color:#214877}
-        .era5-account-status {background:#e2f5eb; color:#18573a}
-        .era5-account-status.disabled {background:#fce3e0; color:#852923}
+        .era5-account-role-admin {
+            background:var(--admin-header); color:var(--admin-accent);
+        }
+        .era5-account-status {background:var(--admin-active-bg); color:var(--admin-active-ink)}
+        .era5-account-status.disabled {background:var(--admin-locked-bg); color:var(--admin-locked-ink)}
         .era5-account-status::before {
-            content:""; display:inline-block; width:.45rem; height:.45rem; border-radius:50%;
-            margin-right:.4rem; background:#2a9a67; vertical-align:middle;
+            content:""; flex:none; width:.38rem; height:.38rem;
+            border-radius:50%; background:currentColor;
         }
-        .era5-account-status.disabled::before {background:#bc5c3c}
-        .era5-login-recent, .era5-login-expired {
-            display:inline-block; padding:.12rem .4rem; border-radius:.25rem; font-size:.86rem;
-            font-variant-numeric:tabular-nums; font-weight:600;
+        .st-key-admin_accounts_table [class*="st-key-admin_account_row_"] {
+            padding:.55rem var(--account-inset);
         }
-        .era5-login-recent {background:#dcf5e6; color:#18573a}
-        .era5-login-expired {background:#fce3e0; color:#852923}
-        [class*="st-key-admin_account_row_"] {padding:.5rem 0; border-top:1px solid var(--border-color, #d5e2df)}
-        [class*="st-key-admin_account_menu_"] button {padding-inline:.65rem}
+        .st-key-admin_accounts_table > :not(:last-child) > [class*="st-key-admin_account_row_"] {
+            border-bottom:1px solid var(--admin-border);
+        }
+        .st-key-admin_accounts_table > :last-child > [class*="st-key-admin_account_row_"] {
+            border-radius:0 0 .75rem .75rem;
+        }
+        .st-key-admin_accounts_table [class*="st-key-admin_account_row_"]:is(:hover, :focus-within) {
+            background:var(--admin-hover);
+        }
+        [class*="st-key-admin_account_menu_"] [data-testid="stPopoverButton"],
+        .st-key-admin_accounts_table .stMarkdownBadge {
+            background:var(--admin-surface); border:1px solid var(--admin-border);
+            border-radius:.45rem; min-height:2.1rem; padding:.2rem .45rem;
+        }
+        .st-key-admin_accounts_table .stMarkdownBadge {
+            background:var(--admin-surface) !important; color:var(--admin-muted) !important;
+            min-width:2.1rem; justify-content:center;
+        }
+        [class*="st-key-admin_account_menu_"] [data-testid="stPopoverButton"] {color:var(--admin-accent)}
+        [class*="st-key-admin_account_menu_"] [data-testid="stPopoverButton"]:is(:hover, :focus-visible, [aria-expanded="true"]) {
+            background:var(--admin-header); border-color:var(--admin-accent); color:var(--admin-accent);
+        }
+        [class*="st-key-admin_account_menu_"] [data-testid="stPopoverButton"]:focus-visible {
+            outline:2px solid var(--admin-accent); outline-offset:2px;
+        }
         [data-testid="stPopoverBody"]:has([class*="st-key-admin_account_actions_"]) {
             width:min(15rem, calc(100vw - 1.5rem)); min-width:0; padding:.38rem;
+            background:var(--admin-surface); border-color:var(--admin-border);
         }
         [class*="st-key-admin_account_actions_"] button {
             justify-content:flex-start; min-height:2.3rem; padding:.36rem .55rem;
             border-radius:.45rem; text-align:left;
         }
         [class*="st-key-admin_account_actions_"] button:hover {
-            background:color-mix(in srgb, currentColor 8%, transparent);
+            background:var(--admin-hover);
         }
         [class*="st-key-admin_account_actions_"] hr {
-            margin:.2rem .4rem; border:0; border-top:1px solid var(--border-color, #d5e2df);
+            margin:.2rem .4rem; border:0; border-top:1px solid var(--admin-border);
         }
-        @container(max-width:620px) {
-            .era5-account-field-label {display:block; font-size:.75rem; opacity:.75; margin-bottom:.15rem}
+        @container (max-width:710px) {
+            .era5-account-field-label {
+                display:block; color:var(--admin-muted); font-size:.75rem; margin-bottom:.15rem;
+            }
             .st-key-admin_accounts_table [data-testid="stHorizontalBlock"] {
                 grid-template-columns:minmax(0,1fr) minmax(0,1fr) 2.8rem; gap:.4rem .55rem;
             }
@@ -356,12 +495,11 @@ def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
             .st-key-admin_account_filters [data-testid="stHorizontalBlock"] {
                 grid-template-columns:repeat(2, minmax(0,1fr));
             }
-            .st-key-admin_account_filters [data-testid="stColumn"]:is(:first-child,:nth-child(5)) {
+            .st-key-admin_account_filters [data-testid="stColumn"]:is(:first-child,:last-child) {
                 grid-column:1 / -1;
             }
-            .st-key-admin_account_filters [data-testid="stColumn"]:last-child {display:none}
-            [class*="st-key-admin_account_row_"] {padding:.75rem .1rem}
-            [class*="st-key-admin_account_row_"] [data-testid="stColumn"] > [data-testid="stVerticalBlock"] {
+            .st-key-admin_accounts_table [class*="st-key-admin_account_row_"] {padding-block:.75rem}
+            .st-key-admin_accounts_table [data-testid="stColumn"] > [data-testid="stVerticalBlock"] {
                 align-items:flex-start; text-align:left;
             }
             [class*="st-key-admin_account_row_"] [data-testid="stColumn"]:nth-child(1) {grid-area:1 / 1}
@@ -383,7 +521,7 @@ def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
         return
 
     with st.container(key="admin_account_filters"):
-        search, _, role_field, state_field, login_field, _ = st.columns(6)
+        search, role_field, state_field, login_field = st.columns(4)
         query = search.text_input("Tìm tài khoản", placeholder="Tên đăng nhập hoặc ID",
                                   key="account_search").strip().casefold()
         role_filter = role_field.selectbox("Vai trò", ["Tất cả", "Người dùng", "Quản trị viên"], key="admin_account_role")
@@ -457,8 +595,7 @@ def _render_accounts(api: DashboardApiClient, current_user: dict) -> None:
                     login.html(login_label + '<span class="era5-account-empty">Chưa ghi nhận</span>')
                 else:
                     timestamp = datetime.fromtimestamp(account["last_login_at"], local_timezone)
-                    tone = "recent" if recency == "Trong 7 ngày" else "expired"
-                    login.html(login_label + f'<time class="era5-login-{tone}" datetime="{timestamp.isoformat()}" title="{recency}">'
+                    login.html(login_label + f'<time class="era5-account-login" datetime="{timestamp.isoformat()}" title="{recency}">'
                                f'{timestamp:%H:%M · %d/%m/%Y}</time>')
                 fixed = account["username"] == os.getenv("ADMIN_USERNAME", "admin").casefold()
                 if fixed or account_id == current_user["id"]:

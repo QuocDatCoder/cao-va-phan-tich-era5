@@ -113,13 +113,13 @@ def render_collection_draft(api, draft, index):
             args=(api,preview['existing'],index))
     else:
         if preview['latest'] and payload['end_date']>preview['latest']:
-            st.warning(f"Ngày cuối vượt mốc khả dụng ước tính {preview['latest']} (UTC). CDS có thể chưa công bố đủ dữ liệu.")
+            st.warning(f"Ngày kết thúc vượt mốc khả dụng ước tính {preview['latest']} (UTC). Nguồn dữ liệu có thể chưa có đủ dữ liệu cho khoảng đã chọn.")
         _confirm_collection(api, prefix, payload, message)
 
 
 def _confirm_collection(api, prefix, payload, message):
     if payload['source'] == 'land':
-        st.caption('CDS có thể công bố dữ liệu gần đây chậm hơn ngày yêu cầu. Tác vụ sẽ báo lỗi nếu nguồn chưa có dữ liệu.')
+        st.caption('Dữ liệu gần đây có thể được công bố trễ. Tác vụ sẽ báo lỗi nếu nguồn chưa có dữ liệu cho ngày yêu cầu.')
     queued=st.session_state.pop(prefix+'_submission', None)
     if queued is not None:
         try:

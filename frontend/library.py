@@ -28,7 +28,10 @@ LEGACY_CHART_TYPES = {'Bản đồ nhiệt': 'heatmap', 'Không gian (điểm)':
 LIBRARY_PAGE_SIZE = 8
 
 # Streamlit's bulk action label is hard-coded. Keep the native action and translate its DOM text.
-_MULTISELECT_LABELS = Path(__file__).with_name('components').joinpath('multiselect_labels.js').read_text(encoding='utf-8')
+_MULTISELECT_LABELS = (
+    '<script>' + Path(__file__).with_name('components').joinpath('multiselect_labels.js').read_text(encoding='utf-8')
+    + '</script>'
+)
 
 
 def read_derived_chart(api, collection_id, kind, params, entry):
@@ -577,10 +580,20 @@ def render_saved(client, charts=False):
             st.button('Làm mới', key=prefix+'_refresh_library', icon=':material/refresh:',
                       on_click=invalidate_reads)
         if charts:
-            if st.toggle('So sánh 2 bộ dữ liệu (địa điểm / khoảng thời gian)', key='chart_compare_enabled'):
+            mode = st.segmented_control(
+                'Chế độ biểu đồ', ['Biểu đồ đơn', 'So sánh 2 bộ dữ liệu'],
+                default='Biểu đồ đơn', selection_mode='single', required=True,
+                label_visibility='collapsed', key='chart_display_mode',
+            )
+            was_comparing = st.session_state.get('chart_compare_enabled', False)
+            st.session_state['chart_compare_enabled'] = (mode == 'So sánh 2 bộ dữ liệu')
+            if was_comparing != st.session_state['chart_compare_enabled'] and st.session_state.get('ai_chat_open'):
+                # ERA renders before the workspace, so refresh it after updating the mode.
+                st.rerun(scope='app')
+            if st.session_state['chart_compare_enabled']:
                 from frontend.components.comparison_view import render_comparison_panel
                 render_comparison_panel(api)
-                st.divider()
+                return
         search_key = prefix+'_library_text'
         st.session_state.setdefault(search_key, st.session_state.get(prefix+'_search', ''))
         with st.form(prefix+'_library_search', border=False):
@@ -599,7 +612,7 @@ def render_saved(client, charts=False):
             _scroll_to(prefix+'_collection_list')
         return
     with st.container(key=prefix+'_collection_detail'):
-        st.html('<script>'+_MULTISELECT_LABELS+'</script>', unsafe_allow_javascript=True)
+        st.html(_MULTISELECT_LABELS, unsafe_allow_javascript=True)
         st.session_state.pop(prefix+'_preferred_collection_id', None)
         selected=st.session_state.get(prefix+'_collection')
         if not selected:
@@ -873,7 +886,11 @@ def render_saved(client, charts=False):
                     with st.container(horizontal=True):
                         st.button('Vẽ biểu đồ từ dữ liệu này', type='primary', icon=':material/bar_chart:',
                                   on_click=open_chart_from_data, args=(selected, multi or [payload], selected_grid))
-                        st.download_button('Tải CSV theo giờ',export.to_csv(index=False).encode('utf-8-sig'),file_name=f'collection_{selected}.csv',mime='text/csv',key='download_timeseries_csv',on_click='ignore',icon=':material/download:')
+                        st.download_button(
+                            'Tải CSV theo giờ', data=lambda: export.to_csv(index=False).encode('utf-8-sig'),
+                            file_name=f'collection_{selected}.csv', mime='text/csv',
+                            key='download_timeseries_csv', on_click='ignore', icon=':material/download:',
+                        )
                         st.download_button(
                             'Tải Excel (.xlsx)', data=partial(build_collection_excel, multi or [payload]),
                             file_name=f'collection_{selected}.xlsx', mime=EXCEL_MIME,
@@ -965,7 +982,7 @@ def render_library_list(api, prefix):
             msg = f"Không tìm thấy bộ dữ liệu nào khớp với '{search_query}'."
             notify_warning(msg, icon="🔍")
         else:
-            notify_warning("Chưa có dữ liệu: Bạn chưa tải bộ dữ liệu nào. Vui lòng vào mục Thu thập để tải dữ liệu ERA5 trước!", icon="⚠️")
+            notify_warning("Kho dữ liệu đang trống. Vào mục Thu thập để lấy dữ liệu khí tượng Open-Meteo.", icon="⚠️")
             render_empty_data_notice("dữ liệu" if prefix == "stored" else "biểu đồ")
         if page:
             st.button('Về trang đầu', on_click=set_library_page, args=(prefix, 0))
@@ -973,8 +990,13 @@ def render_library_list(api, prefix):
     for item in entries:
         meta,summary=item['metadata'],item['summary']
         with st.container(border=True):
-            info=st.container()
-            info.markdown(f"**{collection_title(meta)}**")
+            status = STATUS.get(item['status'], item['status'])
+            color = 'green' if item['status'] == 'complete' else 'orange' if item['status'] in {'partial','queued','running'} else 'red'
+            with st.container(horizontal=True, horizontal_alignment='distribute',
+                              vertical_alignment='center', gap='small', wrap=True):
+                st.markdown(f"**{collection_title(meta)}**")
+                st.badge(status, color=color)
+
             local = timezone(timedelta(hours=7))
             start, end = (datetime.fromisoformat(meta[k]).astimezone(local)
                           for k in ('requested_start', 'requested_end'))
@@ -982,22 +1004,27 @@ def render_library_list(api, prefix):
                 period = f'{start:%d/%m/%Y} · {start:%H:%M}–{end:%H:%M}'
             else:
                 period = f'{start:%d/%m/%Y} → {end:%d/%m/%Y}'
-            badge=' · Vừa thu thập' if item['id']==st.session_state.get('latest_collection_id') else ''
-            info.caption(f"{period}{badge}")
-            status=STATUS.get(item['status'],item['status'])
-            color='green' if item['status']=='complete' else 'orange' if item['status'] in {'partial','queued','running'} else 'red'
-            info.badge(status,color=color)
+            metadata = [period]
+            if item['id'] == st.session_state.get('latest_collection_id'):
+                metadata.append('Vừa thu thập')
             if summary:
-                info.caption(f"Đã lưu {summary.get('available_count',0)}/{summary.get('expected_count','—')} giá trị chính")
-            info.caption('Thu thập lúc: '+datetime.fromisoformat(item['created_at']).astimezone(timezone(timedelta(hours=7))).strftime('%d/%m/%Y %H:%M')+' (UTC+7)')
+                metadata.append(f"Đã lưu {summary.get('available_count', 0)}/{summary.get('expected_count', '—')} giá trị chính")
+            collected_at = datetime.fromisoformat(item['created_at']).astimezone(local)
+            st.caption(' · '.join(metadata) + f'  \nThu thập lúc: {collected_at:%d/%m/%Y %H:%M} (UTC+7)')
             with st.container(horizontal=True):
-                if st.button('Xem dữ liệu',icon=':material/table_view:',key=prefix+'_view_'+item['id'],on_click=open_details,args=(item['id'],)):
+                if st.button('Xem dữ liệu', icon=':material/table_view:', key=prefix+'_view_'+item['id'],
+                             on_click=open_details, args=(item['id'],),
+                             type='primary' if prefix == 'stored' else 'secondary'):
                     st.rerun()
-                if st.button('Vẽ biểu đồ',icon=':material/bar_chart:',key=prefix+'_draw_'+item['id'],on_click=open_chart_options,args=(item['id'],),disabled=not item['grids'],help='Bộ dữ liệu chưa có điểm lưới để vẽ.' if not item['grids'] else None):
+                if st.button('Vẽ biểu đồ', icon=':material/bar_chart:', key=prefix+'_draw_'+item['id'],
+                             on_click=open_chart_options, args=(item['id'],), disabled=not item['grids'],
+                             help='Bộ dữ liệu chưa có điểm lưới để vẽ.' if not item['grids'] else None,
+                             type='primary' if prefix == 'chart' else 'secondary'):
                     st.rerun()
                 if prefix == 'stored':
                     with st.popover('Xóa', key=prefix+'_delete_popover_'+item['id'], icon=':material/delete:',
-                                    disabled=item['status'] in {'queued', 'running', 'cancelling'}):
+                                    disabled=item['status'] in {'queued', 'running', 'cancelling'},
+                                    type='secondary'):
                         st.write('Xóa bộ dữ liệu này và lịch sử tác vụ. Thao tác không thể hoàn tác.')
                         st.caption(label(item))
                         st.caption('File nguồn và cache dùng chung được giữ lại.')

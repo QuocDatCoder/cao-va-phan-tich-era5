@@ -24,6 +24,7 @@ _SIDEBAR = st.components.v2.component(
 def select_section(section):
     if section in NAVIGATION:
         st.session_state['workflow_section'] = section
+        st.session_state.pop('workflow_login_requested', None)
         st.session_state['ai_chat_expanded'] = False
         st.query_params['view'] = section
 
@@ -33,14 +34,22 @@ def _navigate():
     select_section(getattr(event, 'navigate', None))
 
 
-def render_sidebar(api):
+def _login():
+    select_section(HOME_SECTION)
+    st.session_state['workflow_login_requested'] = True
+
+
+def render_sidebar(api, *, guest=False):
     if st.session_state.get('workflow_section') not in NAVIGATION:
         requested = st.query_params.get('view')
         st.session_state['workflow_section'] = requested if requested in NAVIGATION else HOME_SECTION
     _SIDEBAR(key='era5_workspace_sidebar', height=0, data={
         'navigation': [{'id': key, 'label': label, 'icon': icon}
                        for key, (label, icon) in NAVIGATION.items()],
-        'active': st.session_state['workflow_section'],
+        'active': None if guest and st.session_state.get('workflow_login_requested')
+                  else st.session_state['workflow_section'],
         'workspaceNavigation': True,
-        'username': st.session_state.get('auth_username', ''),
-    }, on_navigate_change=_navigate, on_logout_change=lambda: logout_account(api))
+        'guest': guest,
+        'username': '' if guest else st.session_state.get('auth_username', ''),
+    }, on_navigate_change=_navigate, on_login_change=_login if guest else None,
+        on_logout_change=None if guest else lambda: logout_account(api))

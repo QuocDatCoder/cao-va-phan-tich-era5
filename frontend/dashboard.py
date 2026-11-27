@@ -95,7 +95,7 @@ def _render_collection(client, params):
     elif client.source == "mock":
         st.caption("Sinh dữ liệu giả lập tại một điểm và lưu riêng dưới nguồn mock.")
     else:
-        st.caption("Thu thập toàn bộ lưới trong vùng sau. ERA5 chung không phải bộ lọc chỉ lấy biển.")
+        st.caption("Thu thập toàn bộ điểm lưới trong vùng đã chọn, gồm cả đất liền và biển.")
         area = payload["area"]
         for key, label in [("north", "Bắc"), ("south", "Nam"), ("west", "Tây"), ("east", "Đông")]:
             limit = 90.0 if key in {"north", "south"} else 180.0
@@ -130,11 +130,11 @@ def _show_job_status(job):
         title += ' · Có cảnh báo'
     descriptions = {
         'queued': 'Yêu cầu đã được tiếp nhận, đang chờ đến lượt xử lý.',
-        'running': 'Hệ thống đang xử lý yêu cầu thu thập. CDS có thể cần thời gian xếp hàng và tải dữ liệu.',
+        'running': 'Hệ thống đang xử lý yêu cầu thu thập. Quá trình lấy và lưu dữ liệu có thể mất một lúc.',
         'completed': 'Tác vụ đã kết thúc. Bạn có thể xem dữ liệu đã lưu trong Kho dữ liệu.',
         'failed': 'Tác vụ đã dừng do lỗi. Xem thông báo bên dưới để biết nguyên nhân.',
         'cancelling': 'Đã nhận yêu cầu hủy. Đang chờ thao tác mạng hoặc nhập dữ liệu hiện tại dừng an toàn, rồi nhường lượt cho tác vụ tiếp theo.',
-        'cancelled': 'Đã dừng thu thập trên ứng dụng. Phần dữ liệu đã lưu được giữ lại; bạn có thể tạo yêu cầu khác. Không bảo đảm yêu cầu trên CDS đã bị xóa.',
+        'cancelled': 'Đã dừng thu thập trên ứng dụng. Phần dữ liệu đã lưu được giữ lại. Bạn có thể tạo yêu cầu khác.',
     }
     description = descriptions.get(status, 'Xem chi tiết tác vụ bên dưới.')
     if active:
@@ -210,7 +210,7 @@ def _render_job_status(client, context, job=None, show_quality: bool = True, com
                       disabled=job['status'] == 'cancelling',
                       on_click=_cancel_selected_job, args=(client,job_id))
             if not compact:
-                st.caption('Hủy sẽ dừng xử lý cục bộ và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để dừng; yêu cầu phía CDS có thể vẫn tồn tại.')
+                st.caption('Hủy sẽ dừng xử lý trên ứng dụng và giữ dữ liệu đã nhập. Thao tác mạng đang chờ có thể cần thêm thời gian để kết thúc.')
         cancel_error = st.session_state.get('cancel_job_error')
         if cancel_error and cancel_error[0] == job_id:
             notify_error(f"Lỗi khi hủy tác vụ: {cancel_error[1]}")
@@ -385,26 +385,29 @@ def _show_timeseries(
             st.info("Có kỳ chưa trọn ngày/tháng/năm vì khoảng truy vấn chỉ bao phủ một phần kỳ đó.")
         if any(point.get("coverage", 1) < 1 for point in payload["data"]):
             st.info("Có kỳ chưa đủ quan sát; riêng hướng gió bỏ qua các giờ lặng gió.")
+    frame = timeseries_frame(payload) if show_chart else None
     if show_chart:
-        st.plotly_chart(timeseries_figure(payload), width="stretch", key=chart_key)
+        st.plotly_chart(timeseries_figure(payload, frame=frame), width="stretch", key=chart_key)
     _show_extremes(payload)
-    _timeseries_table(payload, key_suffix=chart_key)
+    _timeseries_table(payload, key_suffix=chart_key, frame=frame)
 
 
 @st.fragment
-def _timeseries_table(payload, key_suffix=None):
+def _timeseries_table(payload, key_suffix=None, *, frame=None):
     suffix = f'_{key_suffix}' if key_suffix else ''
     panel = st.expander('Bảng dữ liệu và tải CSV', expanded=False, key=f'timeseries_table_panel{suffix}', on_change='rerun')
     if not panel.open:
         return
     with panel:
-        table = timeseries_frame(payload).rename(columns={
+        if frame is None:
+            frame = timeseries_frame(payload)
+        table = frame.rename(columns={
             "time": "Thời gian Việt Nam (UTC+7)", "value": "Giá trị", "period_end": "Kết thúc kỳ (không gồm)",
             "min": "Nhỏ nhất theo giờ", "max": "Lớn nhất theo giờ", "count": "Số quan sát",
             "expected_count": "Số giờ yêu cầu", "coverage": "Tỷ lệ quan sát",
             "partial_period": "Kỳ chưa trọn", "complete": "Kỳ đầy đủ",
         })
-        display_table = table.copy()
+        st.dataframe(table, hide_index=True, width="stretch")
         if payload.get("source"):
             grid = payload.get("grid_location") or {}
             for name, value in {
@@ -416,10 +419,9 @@ def _timeseries_table(payload, key_suffix=None):
                 "query_coverage": payload["coverage"], "query_complete": payload["complete"],
             }.items():
                 table[name] = value
-        st.dataframe(display_table, hide_index=True, width="stretch")
         st.download_button(
             "Tải bảng dữ liệu (CSV)",
-            data=table.to_csv(index=False).encode("utf-8-sig"),
+            data=lambda: table.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"{payload.get('source', 'era5')}_{payload.get('variable', 'data')}.csv",
             mime="text/csv",
             key=f"download_timeseries_csv{suffix}",
@@ -529,7 +531,7 @@ def _show_heatmap(payload: dict[str, Any], chart_key: str | None = None) -> None
         return
     st.caption("Phép tổng hợp: " + payload.get("aggregation", "mean")
                + ". Mỗi ô chỉ bao phủ khoảng ngày đã chọn, có thể chưa trọn tháng.")
-    st.plotly_chart(heatmap_figure(payload), use_container_width=True, key=chart_key)
+    st.plotly_chart(heatmap_figure(payload), width="stretch", key=chart_key)
 
 
 def _render_map(client: DashboardApiClient, params: dict[str, Any]) -> None:
@@ -552,12 +554,13 @@ def _show_map(payload: dict[str, Any], chart_key: str | None = None) -> None:
     if not payload.get("data"):
         st.info("Không có điểm bản đồ nào được trả về.")
         return
-    st.plotly_chart(map_figure(payload), use_container_width=True, key=chart_key)
+    frame = pd.DataFrame(payload["data"])
+    st.plotly_chart(map_figure(payload, frame=frame), width="stretch", key=chart_key)
     st.dataframe(
-        pd.DataFrame(payload["data"]).rename(
+        frame.rename(
             columns={"latitude": "Vĩ độ", "longitude": "Kinh độ", "value": "Giá trị"}
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -603,7 +606,7 @@ def _run_request(
             st.caption(f"Điểm lưới thực: {grid['latitude']}, {grid['longitude']}")
         if not payload["complete"]:
             st.warning(f"Chưa đủ dữ liệu: {payload['available_count']}/{payload['expected_count']} giờ "
-                       f"({payload['coverage']:.1%}). Kết quả chỉ dựa trên phần đã lưu; không tải CDS tự động.")
+                       f"({payload['coverage']:.1%}). Kết quả chỉ dựa trên dữ liệu đã lưu trong kho.")
             with st.expander("Khoảng giờ nguồn còn thiếu (UTC+7)"):
                 st.json(payload["missing_ranges"])
         if payload.get("undefined_count"):

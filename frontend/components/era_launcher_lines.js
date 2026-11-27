@@ -5,7 +5,7 @@
   const lines = {
     home: [
       "Bạn muốn bắt đầu từ đâu? Mình giúp nhé.",
-      "Mình có thể hướng dẫn bạn lấy dữ liệu ERA5.",
+      "Mình có thể hướng dẫn bạn lấy dữ liệu khí tượng Open-Meteo.",
     ],
     collect: [
       "Bạn muốn lấy dữ liệu ở đâu? Mình giúp nhé.",

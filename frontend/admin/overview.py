@@ -66,6 +66,7 @@ def _render_overview(api: DashboardApiClient) -> None:
 
 def _render_health(overview: dict) -> None:
     scheduler = overview.get("scheduler_status") or {}
+    last_error = scheduler.get("last_error")
     storage = format_bytes(overview.get("total_storage_bytes"))
     observations = overview.get("total_observations") or 0
     with st.container(border=True, key="admin_health"):
@@ -73,7 +74,11 @@ def _render_health(overview: dict) -> None:
         backend.caption("Backend API")
         backend.badge("Trực tuyến", icon=":material/check_circle:", color="green")
         live.caption("Live Scheduler")
-        if scheduler.get("running"):
+        if scheduler.get("running") and last_error:
+            live.badge(
+                "Đang chạy · Có lỗi gần đây", icon=":material/warning:", color="orange", help=last_error,
+            )
+        elif scheduler.get("running"):
             live.badge("Đang chạy · quét 1 phút", icon=":material/sync:", color="green")
         else:
             live.badge("Chưa chạy", icon=":material/schedule:", color="orange")

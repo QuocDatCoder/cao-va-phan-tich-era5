@@ -1,7 +1,9 @@
+import json
+
 from pydantic import ValidationError
 import pytest
 
-from frontend.chat_history import restore,snapshot,storage_key
+from frontend.chat_history import MAX_HISTORY_BYTES, restore, snapshot, storage_key
 
 
 def test_history_roundtrip_preserves_more_than_old_forty_message_limit():
@@ -26,6 +28,37 @@ def test_persistence_keeps_sources_but_omits_raw_project_excerpts_and_arguments(
     assert len(result['evidence'])==1 and 'arguments' not in result['evidence'][0]
     assert result['evidence'][0]['result']['data']['sources']==[source]
     assert 'usage' not in result
+
+
+def test_large_chat_snapshot_keeps_newest_messages_within_utf8_budget():
+    messages = [
+        dict(role='assistant' if index % 2 else 'user', content=f'{index}: ' + '\U0001F327' * 7500)
+        for index in range(12)
+    ]
+    state = dict(ai_chat_messages=messages, ai_chat_open=True, ai_chat_selected='chosen')
+    saved = snapshot(state)
+    encoded = json.dumps(saved, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    assert len(encoded) <= MAX_HISTORY_BYTES
+    assert saved['messages'] == messages[-4:]
+    assert len(state['ai_chat_messages']) == 12
+    restored = {}
+    restore(restored, json.loads(encoded))
+    assert [message['content'] for message in restored['ai_chat_messages']] == [
+        message['content'] for message in messages[-4:]
+    ]
+    assert restored['ai_chat_open'] and restored['ai_chat_selected'] == 'chosen'
+
+
+def test_oversized_latest_tool_result_preserves_recent_message_text():
+    messages = [
+        dict(role='user', content='Question'),
+        dict(role='assistant', content='Answer', result=dict(
+            evidence=[dict(tool='answer_question', result='x' * MAX_HISTORY_BYTES)],
+        )),
+    ]
+    saved = snapshot(dict(ai_chat_messages=messages))
+    assert saved['messages'] == [messages[0], dict(role='assistant', content='Answer')]
+    assert 'result' in messages[-1]
 
 
 def test_pending_refresh_restores_question_without_replaying_a_request():

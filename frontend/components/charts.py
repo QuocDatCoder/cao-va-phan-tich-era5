@@ -3,6 +3,7 @@ from typing import Any
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 
 VARIABLE_LABELS = {
     "temperature": "Nhiệt độ",
@@ -58,6 +59,8 @@ def timeseries_figure(payload: dict[str, Any], *, frame: pd.DataFrame | None = N
     unit = payload.get("unit", "")
     variable = variable_label(payload.get("variable"))
     style, color = SERIES_STYLE.get(variable, ("line", "#2366b1"))
+    if variable == "Tốc độ gió" and st.context.theme.type == "dark":
+        color = "#c084fc"
     if style == "bar" or payload.get("aggregation") == "sum":
         fig = px.bar(frame, x="time", y="value", color_discrete_sequence=[color])
         fig.update_yaxes(rangemode="tozero")

@@ -827,6 +827,7 @@ def render_saved(client, charts=False):
                     st.session_state.pop('saved_chart_kind', None)
                     st.session_state.pop('saved_chart_frequency', None)
                 st.session_state.pop(prefix + '_result', None)
+                st.query_params.pop(prefix + '_applied', None)
                 notify_info('Đã làm mới bộ lọc về mặc định.')
                 st.rerun()
             previous=st.session_state.get(prefix+'_result')
@@ -1127,7 +1128,8 @@ def render_library_list(api, prefix):
             schedules = {schedule['collection_id']: schedule for schedule in api.list_collection_live()}
         except DashboardApiError:
             schedules = {}
-        st.session_state['live_schedules_cache'] = dict(schedules)
+        else:
+            st.session_state['live_schedules_cache'] = dict(schedules)
     else:
         schedules = dict(live_cache)
     pinned_ids = sorted(

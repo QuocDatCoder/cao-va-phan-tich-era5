@@ -14,6 +14,7 @@ from backend.app.domain.schemas import (
 from backend.app.core.config import Settings
 from backend.app.domain.sources import configured_source, source_dataset
 from backend.app.domain.recent_weather import is_same_day_collection, latest_weather_hour
+from backend.app.domain.time_utils import to_vietnam_time
 from backend.app.providers.era5_provider import ERA5_VARIABLES
 from backend.app.domain.wind import DERIVED_WIND_UNITS, WIND_COMPONENTS
 from backend.app.providers.errors import UnsupportedVariableError
@@ -184,8 +185,12 @@ class DownloadJobService:
                 provider = self._provider
             spatial = {"location": job.location} if job.location is not None else {"area": job.area}
             download = provider.download_point if job.location is not None else provider.download_area
-            if job.source == "open_meteo" and is_same_day_collection(job.requested_start, job.requested_end, job.created_at):
-                spatial["live_interval"] = (job.requested_start, job.requested_end)
+            if job.source == "open_meteo" and job.requested_start and job.requested_end:
+                today_midnight = latest_weather_hour().replace(hour=0)
+                if to_vietnam_time(job.requested_end) >= today_midnight or is_same_day_collection(
+                    job.requested_start, job.requested_end, job.created_at,
+                ):
+                    spatial["live_interval"] = (job.requested_start, job.requested_end)
             collector = (QualityCollector(lambda issues: self._repository.add_quality_issues(job_id, issues))
                          if hasattr(self._repository, "save_quality") else None)
             token = current_quality.set(collector)

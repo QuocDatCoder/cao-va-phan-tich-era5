@@ -329,6 +329,11 @@ def _render_live_body(api: DashboardApiClient, schedules: list[dict]) -> None:
             continue
         rows.append(row)
 
+    row_ids = tuple((row.get("user_id"), row.get("collection_id")) for row in rows)
+    if st.session_state.get("admin_live_row_ids") != row_ids:
+        st.session_state["admin_live_row_ids"] = row_ids
+        st.session_state["admin_live_table"] = {"selection": {"rows": [], "columns": [], "cells": []}}
+
     if not rows:
         st.info("Không có lịch cập nhật nào phù hợp với bộ lọc hiện tại.", icon=":material/info:")
         return

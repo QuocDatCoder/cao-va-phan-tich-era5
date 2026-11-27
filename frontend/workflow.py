@@ -10,6 +10,10 @@ from time import monotonic
 
 import pandas as pd
 import streamlit as st
+from streamlit.proto.ClientState_pb2 import ClientState
+from streamlit.runtime import Runtime
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.runtime.scriptrunner_utils.script_run_context import ThreadState
 
 from frontend.api_client import DashboardApiClient, DashboardApiError, DEFAULT_TIMEOUT_SECONDS
 from frontend.components.controls import VARIABLES, local_date_range, search_places
@@ -426,6 +430,44 @@ def _submit_job_list(api):
     return _job_reader().submit(api.list_jobs)
 
 
+def _rerun_when_job_list_is_ready(future):
+    # Wake the idle fragment once when its background read finishes.
+    ctx = get_script_run_ctx()
+    if ctx is None or not Runtime.exists():
+        return
+    runtime = Runtime.instance()
+    session_id = ctx.session_id
+    session = runtime.get_app_session(session_id)
+    fragment_id = ThreadState.get().fragment_id
+    if session is None or fragment_id is None:
+        return
+
+    def rerun_fragment():
+        if runtime.get_app_session(session_id) is session and session.has_fragment(fragment_id):
+            state = ClientState()
+            state.CopyFrom(session._client_state)
+            state.ClearField("widget_states")
+            state.fragment_id = fragment_id
+            state.is_auto_rerun = True
+            session.request_rerun(state)
+
+    def on_done(done):
+        if not done.cancelled():
+            session._call_soon_on_event_loop(rerun_fragment)
+
+    future.add_done_callback(on_done)
+
+
+_ACTIVE_JOB_STATUSES = {'queued', 'running', 'cancelling'}
+
+
+def _has_active_collection_jobs():
+    latest = st.session_state.get('workflow_latest_submitted_job') or {}
+    return latest.get('status') in _ACTIVE_JOB_STATUSES or any(
+        job['status'] in _ACTIVE_JOB_STATUSES for job in st.session_state.get('workflow_job_list', [])
+    )
+
+
 def _update_job_list(api):
     revision = st.session_state.get('workflow_jobs_revision', 0)
     pending = st.session_state.get('workflow_jobs_pending')
@@ -441,27 +483,22 @@ def _update_job_list(api):
             jobs = [dict(job, _status_checked_at=checked_at) for job in pending[1].result()]
             tracked = st.session_state.setdefault('workflow_jobs_to_notify', set())
             failures = []
-            completed_now = False
+            completed = []
             for job in jobs:
                 jid, status = job['job_id'], job['status']
-                if status in {'queued','running','cancelling'}:
+                if status in _ACTIVE_JOB_STATUSES:
                     tracked.add(jid)
                 elif jid in tracked:
                     tracked.discard(jid)
                     if status == 'completed':
-                        completed_now = True
-                        name = job.get('collection_name')
-                        notify_success(f'Đã hoàn tất thu thập: {name}' if name else 'Đã hoàn tất thu thập dữ liệu.')
+                        completed.append(job)
                     elif status in {'failed', 'interrupted'}:
                         failures.append(job)
-            if completed_now:
+            if completed:
                 from frontend.library import invalidate_reads
                 invalidate_reads()
-            if failures:
-                notify_job_failures(failures)
-            active_jobs = [j for j in jobs if j['status'] in {'queued', 'running', 'cancelling'}]
-            if active_jobs:
-                next_delay = 2 if any(j.get('source') in {'open_meteo', 'mock'} for j in active_jobs) else 5
+            if completed or failures:
+                st.session_state['workflow_job_notifications'] = (completed, failures)
             st.session_state['workflow_job_list'] = jobs
             latest = st.session_state.get('workflow_latest_submitted_job')
             if latest:
@@ -478,33 +515,41 @@ def _update_job_list(api):
                     st.session_state.pop('workflow_latest_submitted_job', None)
                 else:
                     latest.update(status=match['status'], error=match.get('error'), checked_at=checked_at)
+            if _has_active_collection_jobs():
+                next_delay = 2 if any(j.get('source') in {'open_meteo', 'mock'}
+                                      for j in jobs if j['status'] in _ACTIVE_JOB_STATUSES) else 5
             st.session_state.pop('workflow_jobs_error', None)
         except DashboardApiError as exc:
             st.session_state['workflow_jobs_error'] = str(exc)
         st.session_state['workflow_jobs_due'] = monotonic() + next_delay
         pending = None
     jobs = st.session_state.get('workflow_job_list')
-    active = any(j['status'] in {'queued','running','cancelling'} for j in jobs or [])
     due = st.session_state.get('workflow_jobs_due', 0)
-    if pending is None and (jobs is None or active or due == 0) and monotonic() >= due:
+    if pending is None and (jobs is None or _has_active_collection_jobs() or due == 0) and monotonic() >= due:
         future = _submit_job_list(api)
         st.session_state['workflow_jobs_pending'] = (revision, future)
         # Handles already-completed reads without adding an artificial delay.
         if future.done():
             _update_job_list(api)
+        elif not _has_active_collection_jobs():
+            _rerun_when_job_list_is_ready(future)
 
 
-@st.fragment(run_every=1)
 def render_collection_jobs(source):
+    polling = _has_active_collection_jobs()
+    st.fragment(_collection_jobs_fragment, run_every=1 if polling else None)(source, polling)
+
+
+def _collection_jobs_fragment(source, polling):
     # All job widgets and details belong to one fragment. Polling replaces this
     # region instead of leaving outputs owned by a nested polling fragment.
     try:
-        _render_collection_jobs(client(source))
+        _render_collection_jobs(client(source), polling)
     except DashboardApiError as exc:
         notify_error(f"Lỗi API: {str(exc)}")
 
 
-def _render_collection_jobs(api):
+def _render_collection_jobs(api, polling):
     st.divider()
     from frontend.library import invalidate_reads, invalidate_job_list
     with st.container(horizontal=True, vertical_alignment='center', gap='small', wrap=False):
@@ -513,6 +558,15 @@ def _render_collection_jobs(api):
             invalidate_reads()
             invalidate_job_list(keep_history=True)
     _update_job_list(api)
+    if _has_active_collection_jobs() != polling:
+        st.rerun()
+
+    completed, failures = st.session_state.pop('workflow_job_notifications', ([], []))
+    for job in completed:
+        name = job.get('collection_name')
+        notify_success(f'Đã hoàn tất thu thập: {name}' if name else 'Đã hoàn tất thu thập dữ liệu.')
+    if failures:
+        notify_job_failures(failures)
     jobs = st.session_state.get("workflow_job_list", [])
     latest = st.session_state.get('workflow_latest_submitted_job')
     if latest:
@@ -526,6 +580,9 @@ def _render_collection_jobs(api):
         return
     if not jobs:
         st.info("Chưa có tác vụ thu thập. Bạn có thể gửi yêu cầu bằng form ở trên.")
+        return
+    history = st.expander(f"Lịch sử thu thập · {len(jobs)} tác vụ", key='collection_job_history', on_change='rerun')
+    if not history.open:
         return
     rows = []
     local = timezone(timedelta(hours=7))
@@ -550,7 +607,7 @@ def _render_collection_jobs(api):
             'Tạo lúc (UTC+7)': created.strftime('%d/%m/%Y %H:%M:%S'),
             'Trạng thái': _translate_status(job['status']),
         })
-    with st.expander("Lịch sử thu thập · "+str(len(rows))+" tác vụ", key='collection_job_history'):
+    with history:
         st.dataframe(rows, hide_index=True, width='stretch')
         jobs_by_id = {job['job_id']: (job, row) for job, row in zip(jobs, rows)}
         labels = {

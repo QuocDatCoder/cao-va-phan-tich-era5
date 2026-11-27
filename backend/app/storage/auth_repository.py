@@ -11,6 +11,7 @@ from backend.app.domain.live_refresh import (
     MAX_ACTIVE_LIVE_SCHEDULES,
     adaptive_backoff,
 )
+from backend.app.domain.time_utils import VIETNAM_TIMEZONE
 
 
 class UsernameAlreadyExistsError(Exception):
@@ -306,6 +307,11 @@ class AuthRepository:
     def update_user_password(self, username: str, password_hash: str) -> None:
         with self._connect() as connection:
             connection.execute("UPDATE users SET password_hash=? WHERE username=?", (password_hash, username))
+            connection.execute(
+                """UPDATE admin_handoffs SET consumed_at = COALESCE(consumed_at, ?)
+                   WHERE user_id = (SELECT id FROM users WHERE username = ?) AND consumed_at IS NULL""",
+                (int(time.time()), username),
+            )
 
     def list_users(self) -> list[dict]:
         with self._connect() as connection:
@@ -337,8 +343,17 @@ class AuthRepository:
             (now, user_id),
         ).rowcount
 
+    @staticmethod
+    def _revoke_user_handoffs(connection, user_id: int, now: int) -> None:
+        connection.execute(
+            """UPDATE admin_handoffs SET consumed_at = COALESCE(consumed_at, ?)
+               WHERE user_id = ? AND consumed_at IS NULL""",
+            (now, user_id),
+        )
+
     def revoke_user_sessions(self, user_id: int, now: int) -> int:
         with self._connect() as connection:
+            self._revoke_user_handoffs(connection, user_id, now)
             return self._revoke_user_sessions(connection, user_id, now)
 
     def reset_user_password(self, user_id: int, password_hash: str, now: int, *, revoke_sessions: bool) -> int | None:
@@ -346,6 +361,7 @@ class AuthRepository:
             result = connection.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
             if not result.rowcount:
                 return None
+            self._revoke_user_handoffs(connection, user_id, now)
             return self._revoke_user_sessions(connection, user_id, now) if revoke_sessions else 0
 
     def count_active_sessions(self, now: int, user_id: int | None = None) -> int:
@@ -374,7 +390,9 @@ class AuthRepository:
         with self._connect() as connection:
             cursor = connection.execute(f"UPDATE users SET {','.join(fields)} WHERE id=?", (*values, user_id))
             if cursor.rowcount and is_active is False:
-                connection.execute("UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at, strftime('%s','now')) WHERE user_id=?", (user_id,))
+                now = int(time.time())
+                self._revoke_user_sessions(connection, user_id, now)
+                self._revoke_user_handoffs(connection, user_id, now)
             return cursor.rowcount > 0
 
     def delete_user(self, user_id: int) -> dict | None:
@@ -386,13 +404,16 @@ class AuthRepository:
             return dict(row)
 
     def get_admin_overview(self) -> dict:
+        today_start = datetime.now(VIETNAM_TIMEZONE).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ).timestamp()
         with self._connect() as connection:
             row = connection.execute("""SELECT COUNT(*) AS total_users,
                 SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS active_users,
                 SUM(CASE WHEN is_active=0 THEN 1 ELSE 0 END) AS disabled_users,
                 SUM(CASE WHEN is_admin=1 THEN 1 ELSE 0 END) AS admin_users,
-                SUM(CASE WHEN created_at >= strftime('%s','now','start of day') THEN 1 ELSE 0 END) AS new_today
-                FROM users""").fetchone()
+                SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS new_today
+                FROM users""", (today_start,)).fetchone()
         return {key: int(value or 0) for key, value in dict(row).items()}
 
     def create_admin_handoff(self, ticket_hash: str, user_id: int, expires_at: int) -> None:
